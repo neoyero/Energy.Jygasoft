@@ -50,3 +50,14 @@ next-env.d.ts
 
 # scaffold temp (safety)
 scaffold-tmp/
+
+# Backups / volcados de BD — NUNCA al repo (contienen PII de leads y hashes de contraseñas).
+# Nota: los .sql legítimos viven en SQL/ y db/ (subcarpetas); aquí solo bloqueamos
+# dumps en la raíz y por extensión de volcado.
+/*.sql
+*.dump
+*.backup
+*.pgdump
+*.sql.gz
+*.dump.gz
+backups/
