@@ -27,7 +27,7 @@ const SLIDES: Slide[] = [
     kicker: "Residencial",
     title: (
       <>
-        Ahorra hasta <span className="text-brand-gold">99%</span> en tu recibo de luz
+        Reduce hasta un <span className="text-brand-gold">95%</span> tu recibo de luz
         con energía solar
       </>
     ),
