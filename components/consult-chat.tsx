@@ -9,7 +9,9 @@ import {
   User,
   MessageCircle,
 } from "lucide-react";
+import { Turnstile } from "@marsidev/react-turnstile";
 import { WHATSAPP_URL } from "@/lib/site";
+import { clientEnv } from "@/lib/env";
 
 interface Msg {
   id: string;
@@ -31,11 +33,18 @@ const SALUDO: Msg = {
 };
 
 export function ConsultChat() {
+  const siteKey = clientEnv.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([SALUDO]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [token, setToken] = useState<string | undefined>();
   const endRef = useRef<HTMLDivElement>(null);
+
+  // El usuario ya escribió al menos una vez → no se requiere verificación de nuevo.
+  const hasUserMsg = messages.some((m) => m.sender === "user");
+  // Bloquea el envío del PRIMER mensaje hasta que Turnstile entregue token.
+  const needsVerification = !hasUserMsg && Boolean(siteKey) && !token;
 
   useEffect(() => {
     if (open) endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -51,6 +60,7 @@ export function ConsultChat() {
   async function send(text: string) {
     const clean = text.trim();
     if (!clean || loading) return;
+    if (needsVerification) return; // espera a que el usuario pase Turnstile
     const userMsg: Msg = { id: `u${Date.now()}`, sender: "user", text: clean };
     const history = messages.slice(-10).map((m) => ({ sender: m.sender, text: m.text }));
     setMessages((prev) => [...prev, userMsg]);
@@ -60,7 +70,7 @@ export function ConsultChat() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: clean, history }),
+        body: JSON.stringify({ message: clean, history, turnstileToken: token }),
       });
       const data = (await res.json()) as { text?: string };
       setMessages((prev) => [
@@ -175,7 +185,8 @@ export function ConsultChat() {
               <button
                 key={s}
                 onClick={() => send(s)}
-                className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:bg-stone-100"
+                disabled={needsVerification}
+                className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {s}
               </button>
@@ -205,6 +216,16 @@ export function ConsultChat() {
         <span className="ml-auto text-[10px] text-stone-400">Asistente con IA</span>
       </div>
 
+      {/* Verificación anti-bot (solo al iniciar la conversación) */}
+      {!hasUserMsg && siteKey && (
+        <div className="flex flex-col items-center gap-1 border-t border-stone-200 bg-white px-3 pt-3">
+          <Turnstile siteKey={siteKey} onSuccess={setToken} options={{ theme: "auto" }} />
+          <span className="text-[10px] text-stone-400">
+            Verificación rápida para iniciar el chat
+          </span>
+        </div>
+      )}
+
       {/* Input */}
       <form
         onSubmit={(e) => {
@@ -216,13 +237,13 @@ export function ConsultChat() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Escribe tu pregunta…"
-          disabled={loading}
-          className="flex-1 rounded-xl border border-stone-200 bg-brand-surface px-3 py-2.5 text-sm outline-none transition-all focus:border-brand-green"
+          placeholder={needsVerification ? "Completa la verificación…" : "Escribe tu pregunta…"}
+          disabled={loading || needsVerification}
+          className="flex-1 rounded-xl border border-stone-200 bg-brand-surface px-3 py-2.5 text-sm outline-none transition-all focus:border-brand-green disabled:bg-stone-100"
         />
         <button
           type="submit"
-          disabled={loading || !input.trim()}
+          disabled={loading || !input.trim() || needsVerification}
           aria-label="Enviar"
           className="flex items-center justify-center rounded-xl bg-brand-green p-2.5 text-white transition-colors hover:bg-brand-green-dark disabled:bg-stone-300"
         >

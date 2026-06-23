@@ -10,7 +10,12 @@ import { Label } from "@/components/ui/label";
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const callbackUrl = params.get("callbackUrl") ?? "/admin";
+  // Solo permitir rutas internas relativas (evita open redirect / phishing).
+  const rawCallback = params.get("callbackUrl") ?? "/admin";
+  const callbackUrl =
+    rawCallback.startsWith("/") && !rawCallback.startsWith("//")
+      ? rawCallback
+      : "/admin";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

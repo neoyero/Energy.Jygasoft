@@ -3,6 +3,7 @@ import { z } from "zod";
 import { GoogleGenAI } from "@google/genai";
 import { serverEnv } from "@/lib/env";
 import { createRateLimiter } from "@/lib/rate-limit";
+import { verifyTurnstile } from "@/lib/turnstile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +21,7 @@ const bodySchema = z.object({
     )
     .max(20)
     .default([]),
+  turnstileToken: z.string().max(2048).optional(),
 });
 
 const SYSTEM_PROMPT = `Eres el "Asesor Solar" de Jygasoft Energy, una empresa de energía solar en Aguascalientes, México. Respondes en español (es-MX), con tono cordial, claro y profesional. Sé breve (2-5 frases) salvo que pidan detalle.
@@ -76,7 +78,21 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "validation" }, { status: 400 });
   }
-  const { message, history } = parsed.data;
+  const { message, history, turnstileToken } = parsed.data;
+
+  // Anti-bot: exige CAPTCHA al iniciar la conversación (primer turno del usuario).
+  // Protege el presupuesto de IA contra abuso automatizado. En desarrollo (sin
+  // TURNSTILE_SECRET) verifyTurnstile permite el paso.
+  const isFirstTurn = !history.some((m) => m.sender === "user");
+  if (isFirstTurn) {
+    const v = await verifyTurnstile(turnstileToken, clientIp(req));
+    if (!v.success) {
+      return NextResponse.json(
+        { text: "Verifica que no eres un robot para iniciar el chat." },
+        { status: 403 },
+      );
+    }
+  }
 
   const apiKey = serverEnv.GEMINI_API_KEY;
   if (!apiKey) {

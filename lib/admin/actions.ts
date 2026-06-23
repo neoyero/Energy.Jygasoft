@@ -8,9 +8,14 @@ import { auth } from "@/auth";
 type LeadEstado = (typeof schema.leadEstado.enumValues)[number];
 type OportEtapa = (typeof schema.oportunidadEtapa.enumValues)[number];
 
+/**
+ * Exige sesión autenticada y devuelve el tag del actor. Estas Server Actions son
+ * endpoints HTTP propios, así que NO basta el middleware: se valida aquí también.
+ */
 async function actorTag(): Promise<string> {
   const session = await auth();
-  return session?.user?.id ? `usuario:${session.user.id}` : "panel";
+  if (!session?.user) throw new Error("No autorizado");
+  return session.user.id ? `usuario:${session.user.id}` : "panel";
 }
 
 export async function updateLeadEstado(id: string, estado: LeadEstado) {
