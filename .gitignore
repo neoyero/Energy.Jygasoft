@@ -61,3 +61,5 @@ scaffold-tmp/
 *.sql.gz
 *.dump.gz
 backups/
+Backup-SQL/
+energydb*.sql
