@@ -17,7 +17,7 @@ CREATE TYPE tramite_cfe_estado  AS ENUM ('pendiente','solicitud_enviada','en_rev
 CREATE TYPE esquema_cfe         AS ENUM ('medicion_neta','facturacion_neta','venta_total');
 CREATE TYPE nivel_tension       AS ENUM ('bt_monofasica','bt_trifasica','mt1','mt2');
 CREATE TYPE uso_inmueble        AS ENUM ('residencial','comercial','mixto','industrial');
-CREATE TYPE usuario_rol         AS ENUM ('admin','gerente','vendedor','ingenieria','lider_cuadrilla','cuadrilla','operaciones','finanzas','marketing','lectura');
+CREATE TYPE usuario_rol         AS ENUM ('admin','gerente','vendedor','preventa','ingenieria','lider_cuadrilla','cuadrilla','operaciones','finanzas','marketing','lectura');
 CREATE TYPE cotizacion_estado   AS ENUM ('borrador','enviada','aceptada','rechazada','expirada');
 CREATE TYPE actividad_tipo      AS ENUM ('llamada','visita','email','whatsapp','tarea','nota','reunion');
 CREATE TYPE actividad_estado    AS ENUM ('pendiente','completada','cancelada');
@@ -43,11 +43,26 @@ CREATE TABLE usuarios (
   telefono text,
   password_hash text,
   activo boolean NOT NULL DEFAULT true,
+  ultimo_acceso timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX ux_usuarios_email ON usuarios (lower(email));
 CREATE TRIGGER trg_usuarios_upd BEFORE UPDATE ON usuarios FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Códigos de un solo uso (OTP) para login passwordless por correo (je-admin).
+CREATE TABLE login_codes (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email       text NOT NULL,
+  code_hash   text NOT NULL,
+  expires_at  timestamptz NOT NULL,
+  consumed_at timestamptz,
+  attempts    integer NOT NULL DEFAULT 0,
+  ip          inet,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_login_codes_email ON login_codes (lower(email), created_at DESC);
+CREATE INDEX ix_login_codes_active ON login_codes (lower(email), created_at DESC) WHERE consumed_at IS NULL;
 
 CREATE TABLE cuadrillas (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

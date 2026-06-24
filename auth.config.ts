@@ -8,7 +8,7 @@ import type { NextAuthConfig } from "next-auth";
 export const authConfig: NextAuthConfig = {
   session: { strategy: "jwt" },
   trustHost: true,
-  pages: { signIn: "/admin/login" },
+  pages: { signIn: "/je-admin/login" },
   callbacks: {
     jwt({ token, user }) {
       if (user) {

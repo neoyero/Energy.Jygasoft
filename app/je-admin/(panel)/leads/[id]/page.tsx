@@ -22,7 +22,7 @@ export default async function LeadDetail({ params }: Params) {
   return (
     <div className="max-w-3xl space-y-8">
       <div>
-        <Link href="/admin/leads" className="text-sm text-muted-foreground hover:underline">
+        <Link href="/je-admin/leads" className="text-sm text-muted-foreground hover:underline">
           ← Leads
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">

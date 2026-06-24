@@ -3,30 +3,17 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { navFor } from "@/lib/admin/rbac";
 
-const NAV = [
-  { href: "/admin", label: "Dashboard" },
-  { href: "/admin/leads", label: "Leads" },
-  { href: "/admin/oportunidades", label: "Pipeline" },
-  { href: "/admin/clientes", label: "Clientes" },
-  { href: "/admin/cotizaciones", label: "Cotizaciones" },
-  { href: "/admin/proyectos", label: "Proyectos" },
-  { href: "/admin/pagos", label: "Pagos" },
-  { href: "/admin/catalogo", label: "Catálogo" },
-  { href: "/admin/campanas", label: "Campañas" },
-  { href: "/admin/actividades", label: "Actividades" },
-  { href: "/admin/documentos", label: "Documentos" },
-  { href: "/admin/metricas", label: "Métricas" },
-];
-
-export function AdminNav() {
+export function AdminNav({ rol }: { rol?: string | null }) {
   const pathname = usePathname();
+  const items = navFor(rol);
   return (
     <nav className="space-y-1">
-      {NAV.map((item) => {
+      {items.map((item) => {
         const active =
-          item.href === "/admin"
-            ? pathname === "/admin"
+          item.href === "/je-admin"
+            ? pathname === "/je-admin"
             : pathname.startsWith(item.href);
         return (
           <Link

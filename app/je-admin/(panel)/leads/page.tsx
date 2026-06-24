@@ -35,7 +35,7 @@ export default async function LeadsKanban() {
                 {items.map((l) => (
                   <Link
                     key={l.id}
-                    href={`/admin/leads/${l.id}`}
+                    href={`/je-admin/leads/${l.id}`}
                     className="block rounded-lg border border-border p-3 text-sm transition-colors hover:bg-muted/50"
                   >
                     <p className="font-medium">{l.nombre ?? "Sin nombre"}</p>

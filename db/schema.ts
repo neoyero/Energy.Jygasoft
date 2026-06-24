@@ -20,7 +20,7 @@ export const proyectoFase = pgEnum("proyecto_fase", ['input_comercial', 'inicio'
 export const tipoPersona = pgEnum("tipo_persona", ['pf_residencial', 'pf_actividad_empresarial', 'pm_comercial', 'pm_industrial'])
 export const tramiteCfeEstado = pgEnum("tramite_cfe_estado", ['pendiente', 'solicitud_enviada', 'en_revision_cfe', 'estudio_mt', 'oficio_resolutivo', 'contratos_firmados', 'medidor_instalado', 'en_operacion', 'rechazado'])
 export const usoInmueble = pgEnum("uso_inmueble", ['residencial', 'comercial', 'mixto', 'industrial'])
-export const usuarioRol = pgEnum("usuario_rol", ['admin', 'gerente', 'vendedor', 'ingenieria', 'lider_cuadrilla', 'cuadrilla', 'operaciones', 'finanzas', 'marketing', 'lectura'])
+export const usuarioRol = pgEnum("usuario_rol", ['admin', 'gerente', 'vendedor', 'preventa', 'ingenieria', 'lider_cuadrilla', 'cuadrilla', 'operaciones', 'finanzas', 'marketing', 'lectura'])
 
 
 export const usuarios = pgTable("usuarios", {
@@ -32,11 +32,29 @@ export const usuarios = pgTable("usuarios", {
 	telefono: text(),
 	passwordHash: text("password_hash"),
 	activo: boolean().default(true).notNull(),
+	ultimoAcceso: timestamp("ultimo_acceso", { withTimezone: true, mode: 'string' }),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	uniqueIndex("ux_usuarios_email").using("btree", sql`lower(email)`),
 	unique("usuarios_folio_vendedor_key").on(table.folioVendedor),
+]);
+
+/**
+ * Códigos de un solo uso (OTP) para login passwordless por correo.
+ * Se guarda solo el hash del código; expira rápido y limita intentos.
+ */
+export const loginCodes = pgTable("login_codes", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	email: text().notNull(),
+	codeHash: text("code_hash").notNull(),
+	expiresAt: timestamp("expires_at", { withTimezone: true, mode: 'string' }).notNull(),
+	consumedAt: timestamp("consumed_at", { withTimezone: true, mode: 'string' }),
+	attempts: integer().default(0).notNull(),
+	ip: inet(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("ix_login_codes_email").using("btree", sql`lower(email)`, table.createdAt.desc().nullsFirst().op("timestamptz_ops")),
 ]);
 
 export const cuadrillas = pgTable("cuadrillas", {

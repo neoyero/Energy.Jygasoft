@@ -15,7 +15,7 @@ export default async function PanelLayout({
   children: React.ReactNode;
 }) {
   const session = await auth();
-  if (!session?.user) redirect("/admin/login");
+  if (!session?.user) redirect("/je-admin/login");
 
   return (
     <div className="flex min-h-screen">
@@ -25,7 +25,7 @@ export default async function PanelLayout({
           <p className="text-xs text-muted-foreground">{session.user.email}</p>
           <p className="text-xs text-muted-foreground">Rol: {session.user.rol}</p>
         </div>
-        <AdminNav />
+        <AdminNav rol={session.user.rol} />
         <div className="mt-6 border-t border-border pt-4">
           <SignOutButton />
         </div>

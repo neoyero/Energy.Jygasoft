@@ -1,17 +1,41 @@
 import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
 import { authConfig } from "@/auth.config";
+import { can, type Modulo } from "@/lib/admin/rbac";
 
 /**
  * Middleware transversal:
- *  - Guard de sesión (Auth.js, edge-safe vía JWT) para /admin.
+ *  - Guard de sesión (Auth.js, edge-safe vía JWT) para /je-admin.
  *  - Content-Security-Policy (allowlist: self, Meta Pixel/Connect, Turnstile, GA).
- *  - noindex para /admin (mini-CRM no debe indexarse).
+ *  - noindex para /je-admin (mini-CRM no debe indexarse).
  */
 
 const { auth } = NextAuth(authConfig);
 
 const isDev = process.env.NODE_ENV !== "production";
+
+// Mapea la primera parte de la ruta de je-admin a un módulo RBAC.
+const SECTION_TO_MODULO: Record<string, Modulo> = {
+  leads: "leads",
+  oportunidades: "oportunidades",
+  clientes: "clientes",
+  cotizaciones: "cotizaciones",
+  proyectos: "proyectos",
+  pagos: "pagos",
+  catalogo: "catalogo",
+  campanas: "campanas",
+  actividades: "actividades",
+  documentos: "documentos",
+  metricas: "metricas",
+  usuarios: "usuarios",
+};
+
+function moduloFromPath(pathname: string): Modulo | null {
+  const rest = pathname.replace(/^\/je-admin\/?/, "");
+  if (rest === "") return "dashboard";
+  const seg = rest.split("/")[0]!;
+  return SECTION_TO_MODULO[seg] ?? null;
+}
 
 function buildCsp(): string {
   const scriptSrc = [
@@ -58,18 +82,26 @@ function buildCsp(): string {
 
 export default auth((req) => {
   const { nextUrl } = req;
-  const isAdmin = nextUrl.pathname.startsWith("/admin");
-  const isLogin = nextUrl.pathname.startsWith("/admin/login");
+  const isAdmin = nextUrl.pathname.startsWith("/je-admin");
+  const isLogin = nextUrl.pathname.startsWith("/je-admin/login");
 
-  // Guard: /admin requiere sesión (excepto la página de login).
+  // Guard: /je-admin requiere sesión (excepto la página de login).
   if (isAdmin && !isLogin && !req.auth) {
-    const url = new URL("/admin/login", nextUrl.origin);
+    const url = new URL("/je-admin/login", nextUrl.origin);
     url.searchParams.set("callbackUrl", nextUrl.pathname);
     return NextResponse.redirect(url);
   }
-  // Si ya hay sesión y visita /admin/login, mándalo al panel.
+  // Si ya hay sesión y visita /je-admin/login, mándalo al panel.
   if (isLogin && req.auth) {
-    return NextResponse.redirect(new URL("/admin", nextUrl.origin));
+    return NextResponse.redirect(new URL("/je-admin", nextUrl.origin));
+  }
+
+  // Guard por sección (RBAC): bloquea acceso por URL directa a módulos sin permiso.
+  if (isAdmin && !isLogin && req.auth) {
+    const modulo = moduloFromPath(nextUrl.pathname);
+    if (modulo && !can(req.auth.user?.rol, modulo, "view")) {
+      return NextResponse.redirect(new URL("/je-admin", nextUrl.origin));
+    }
   }
 
   const response = NextResponse.next();

@@ -1,4 +1,4 @@
-import { sql, desc, eq } from "drizzle-orm";
+import { sql, desc, asc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 
 /** Lecturas del panel (read-side). Las mutaciones van por Server Actions. */
@@ -79,4 +79,20 @@ export async function getCatalogo() {
     .from(schema.catalogoEquipos)
     .orderBy(desc(schema.catalogoEquipos.createdAt))
     .limit(200);
+}
+
+export async function getUsuarios() {
+  return db
+    .select({
+      id: schema.usuarios.id,
+      nombre: schema.usuarios.nombre,
+      email: schema.usuarios.email,
+      rol: schema.usuarios.rol,
+      telefono: schema.usuarios.telefono,
+      activo: schema.usuarios.activo,
+      ultimoAcceso: schema.usuarios.ultimoAcceso,
+    })
+    .from(schema.usuarios)
+    .orderBy(asc(schema.usuarios.nombre))
+    .limit(500);
 }

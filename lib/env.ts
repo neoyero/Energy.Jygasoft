@@ -49,6 +49,18 @@ const serverSchema = z.object({
   AUTH_SECRET: z.string().min(16).optional(),
   AUTH_URL: z.string().url().optional(),
 
+  // je-admin — Microsoft 365 (Graph) para enviar el código OTP por correo.
+  // Si faltan, en dev se loguea el código a consola (fail-open) y en prod no envía.
+  M365_TENANT_ID: z.string().optional(),
+  M365_CLIENT_ID: z.string().optional(),
+  M365_CLIENT_SECRET: z.string().optional(),
+  M365_SENDER: z.string().email().optional(),
+
+  // je-admin — Login passwordless por código (OTP)
+  OTP_TTL_MINUTES: z.coerce.number().int().positive().default(10),
+  OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  OTP_REQUESTS_PER_EMAIL: z.coerce.number().int().positive().default(3),
+
   // Rate-limit (server) — valores por defecto razonables
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),

@@ -18,6 +18,7 @@
     "db:apply": "tsx db/scripts/apply-init.ts",
     "db:seed": "tsx db/scripts/seed.ts",
     "db:apply-cp": "tsx db/scripts/apply-cp-schema.ts",
+    "db:apply-sql": "tsx db/scripts/apply-sql.ts",
     "db:import-cp": "tsx db/scripts/import-cp.ts",
     "db:set-password": "tsx db/scripts/set-password.ts",
     "db:pull": "drizzle-kit pull",

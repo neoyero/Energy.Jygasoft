@@ -39,7 +39,7 @@ docker compose run --rm migrate pnpm db:set-password <email-admin> '<password>'
 curl -fsS https://energy.jygasoft.com/api/health   # {"status":"ok","db":true}
 ```
 
-- `/` y marketing sirven; `/admin` redirige a `/admin/login`.
+- `/` y marketing sirven; `/je-admin` redirige a `/je-admin/login`.
 - Un lead de prueba debe aparecer en `leads` + `form_submissions` y llegar firmado a n8n.
 
 ## Migraciones posteriores
