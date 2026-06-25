@@ -186,7 +186,7 @@ export default async function DashboardPage() {
               data={leadsSerieData}
               xKey="dia"
               lines={[{ key: "n", name: "Leads", area: true }]}
-              valueFormatter={formatInt}
+              valueFormat="int"
             />
           </ChartCard>
         ) : null}
@@ -202,7 +202,7 @@ export default async function DashboardPage() {
               data={pipelineDonut}
               centerLabel={formatMXN(pipelineTotal)}
               centerSub="pipeline"
-              valueFormatter={formatMXN}
+              valueFormat="mxn"
               showLegend
             />
           </ChartCard>
@@ -219,7 +219,7 @@ export default async function DashboardPage() {
               data={proyectosFaseData}
               xKey="etiqueta"
               bars={[{ key: "conteo", name: "Proyectos" }]}
-              valueFormatter={formatInt}
+              valueFormat="int"
             />
           </ChartCard>
         ) : null}

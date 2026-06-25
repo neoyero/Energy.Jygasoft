@@ -25,6 +25,20 @@ import {
 } from "recharts"
 
 import { cn } from "@/lib/utils"
+import { formatMXN, formatInt } from "@/lib/admin/format"
+
+/** Formato de valor serializable (no se pueden pasar funciones server->client). */
+export type ChartValueFormat = "mxn" | "int" | "number"
+
+/** Resuelve el formateador en el cliente a partir del formato declarado. */
+function resolveValueFormatter(
+  fmt?: ChartValueFormat,
+): ((value: number) => string) | undefined {
+  if (fmt === "mxn") return formatMXN
+  if (fmt === "int") return formatInt
+  if (fmt === "number") return (n) => String(n)
+  return undefined
+}
 
 /** Paleta de marca exportada para usar en series/leyendas. */
 export interface BrandChartPalette {
@@ -109,7 +123,7 @@ export interface BarChartMiniProps {
   /** Tooltip on/off. Default true. */
   showTooltip?: boolean
   /** Formateador de valores (tooltip/eje Y), ej. moneda. */
-  valueFormatter?: (value: number) => string
+  valueFormat?: ChartValueFormat
   /** Radio de barra. Default 6. */
   radius?: number
   /** Alto si se usa SIN ChartCard (modo standalone). */
@@ -124,11 +138,12 @@ export function BarChartMini({
   bars,
   showAxes = true,
   showTooltip = true,
-  valueFormatter,
+  valueFormat,
   radius = 6,
   height,
   className,
 }: BarChartMiniProps) {
+  const valueFormatter = resolveValueFormatter(valueFormat)
   return (
     <div className={cn("w-full", className)}>
       <ResponsiveContainer width="100%" height={height ?? "100%"}>
@@ -188,7 +203,7 @@ export interface LineChartMiniProps {
   lines: ReadonlyArray<{ key: string; name?: string; color?: string; area?: boolean; dashed?: boolean }>
   showAxes?: boolean
   showTooltip?: boolean
-  valueFormatter?: (value: number) => string
+  valueFormat?: ChartValueFormat
   /** Suaviza la curva (type="monotone"). Default true. */
   smooth?: boolean
   height?: number
@@ -202,11 +217,12 @@ export function LineChartMini({
   lines,
   showAxes = true,
   showTooltip = true,
-  valueFormatter,
+  valueFormat,
   smooth = true,
   height,
   className,
 }: LineChartMiniProps) {
+  const valueFormatter = resolveValueFormatter(valueFormat)
   const curveType = smooth ? "monotone" : "linear"
   // Si alguna serie es area, montamos AreaChart (soporta Area + Line indistintamente).
   const hasArea = lines.some((line) => line.area)
@@ -339,7 +355,7 @@ export interface DonutChartProps {
   thickness?: number
   showTooltip?: boolean
   showLegend?: boolean
-  valueFormatter?: (value: number) => string
+  valueFormat?: ChartValueFormat
   height?: number
   className?: string
 }
@@ -352,10 +368,11 @@ export function DonutChart({
   thickness = 28,
   showTooltip = true,
   showLegend = false,
-  valueFormatter,
+  valueFormat,
   height,
   className,
 }: DonutChartProps) {
+  const valueFormatter = resolveValueFormatter(valueFormat)
   // recharts solo parsea porcentajes simples ("80%") o numeros: calc() no sirve.
   // outerRadius en porcentaje del contenedor; innerRadius con un porcentaje
   // estimado a partir del grosor relativo a una altura de referencia (240px).
