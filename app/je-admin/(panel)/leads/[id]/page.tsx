@@ -1,7 +1,11 @@
 import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
 
-import { getLead, getLeadTimeline, getVendedores } from "@/lib/admin/queries";
+import {
+  getLead,
+  getLeadTimeline,
+  getAsesoresAsignables,
+} from "@/lib/admin/queries";
 import { requirePerm } from "@/lib/admin/guard";
 import { can } from "@/lib/admin/rbac";
 import { formatMXN, fmtFechaRel } from "@/lib/admin/format";
@@ -60,7 +64,7 @@ export default async function LeadDetail({ params }: Params) {
   const [lead, timeline, vendedores] = await Promise.all([
     getLead(id),
     getLeadTimeline(id),
-    getVendedores(),
+    getAsesoresAsignables(),
   ]);
 
   if (!lead) notFound();
@@ -160,7 +164,7 @@ export default async function LeadDetail({ params }: Params) {
             <CardTitle>Comercial</CardTitle>
           </CardHeader>
           <CardContent className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Field label="Vendedor" value={txt(vendedorNombre)} />
+            <Field label="Asesor" value={txt(vendedorNombre)} />
             <Field
               label="Estado"
               value={<StatusBadge value={lead.estado} />}

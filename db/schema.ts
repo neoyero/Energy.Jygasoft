@@ -702,3 +702,32 @@ export const tarifasCfe = pgTable("tarifas_cfe", {
 }, (table) => [
 	index("ix_tarifas_vig").using("btree", table.tarifa.asc().nullsLast().op("date_ops"), table.vigenteDesde.desc().nullsFirst().op("date_ops")),
 ]);
+
+// Asesores: subconjunto de usuarios habilitados para recibir/atender leads.
+// Lleva el id de agente de Chatwoot y reglas de ruteo (zonas/segmentos) para el
+// reparto automático (round-robin por `asignaciones`). Solo los usuarios con un
+// asesor activo y vinculado (usuario_id) pueden asignarse a un lead.
+export const asesores = pgTable("asesores", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	usuarioId: uuid("usuario_id"),
+	nombre: text().notNull(),
+	chatwootAgentId: integer("chatwoot_agent_id").notNull(),
+	msEmail: text("ms_email"),
+	telefono: text(),
+	// Municipios o CP que cubre (vacío = todas).
+	zonas: text().array().notNull().default(sql`'{}'`),
+	// {residencial,negocio} (vacío = ambos).
+	segmentos: text().array().notNull().default(sql`'{}'`),
+	activo: boolean().default(true).notNull(),
+	// Contador para round-robin / balanceo de carga.
+	asignaciones: integer().default(0).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("ix_asesores_activo").using("btree", table.activo.asc().nullsLast().op("bool_ops")),
+	foreignKey({
+			columns: [table.usuarioId],
+			foreignColumns: [usuarios.id],
+			name: "asesores_usuario_id_fkey"
+		}).onDelete("set null"),
+]);

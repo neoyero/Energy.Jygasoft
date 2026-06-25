@@ -313,7 +313,7 @@ export function LeadForm({ modo, lead, vendedores, onSuccess }: LeadFormProps) {
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="lead-vendedor">Vendedor</Label>
+        <Label htmlFor="lead-vendedor">Asesor</Label>
         <select
           id="lead-vendedor"
           value={form.vendedorId}

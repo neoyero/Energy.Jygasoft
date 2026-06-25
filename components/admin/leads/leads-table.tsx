@@ -98,7 +98,7 @@ export function LeadsTable({ rows, puedeEditar, vendedores }: LeadsTableProps) {
     },
     {
       id: "vendedor",
-      header: "Vendedor",
+      header: "Asesor",
       accessor: (row) => row.vendedorNombre ?? "",
       hideOnMobile: true,
       render: (row) => (

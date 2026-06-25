@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { eq, and, inArray, ne, sql, type SQL } from "drizzle-orm";
+import { eq, and, ne, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { assertPerm, actorOf } from "@/lib/admin/guard";
@@ -249,7 +249,28 @@ export async function toggleUsuarioActivo(
 
 /* ──────────────────────────── Leads / Pipeline (D3) ──────────────────────── */
 
-const COMERCIAL_ROLES = ["admin", "gerente", "vendedor", "preventa"] as const;
+/**
+ * ¿El usuario es un asesor ACTIVO (y por tanto asignable a leads)? Requiere un
+ * registro en `asesores` activo, vinculado a un usuario también activo.
+ */
+async function usuarioEsAsesorActivo(usuarioId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: schema.asesores.id })
+    .from(schema.asesores)
+    .innerJoin(
+      schema.usuarios,
+      eq(schema.asesores.usuarioId, schema.usuarios.id),
+    )
+    .where(
+      and(
+        eq(schema.asesores.usuarioId, usuarioId),
+        eq(schema.asesores.activo, true),
+        eq(schema.usuarios.activo, true),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
 
 /** Estados de lead que aún no han sido "trabajados" (pasan a asignado). */
 const LEAD_ESTADOS_ASIGNABLES: ReadonlySet<LeadEstado> = new Set<LeadEstado>([
@@ -284,19 +305,23 @@ export async function asignarLead(
 
   await db.transaction(async (tx) => {
     if (vid !== null) {
-      const [vendedor] = await tx
-        .select({ id: schema.usuarios.id })
-        .from(schema.usuarios)
+      const [asesor] = await tx
+        .select({ id: schema.asesores.id })
+        .from(schema.asesores)
+        .innerJoin(
+          schema.usuarios,
+          eq(schema.asesores.usuarioId, schema.usuarios.id),
+        )
         .where(
           and(
-            eq(schema.usuarios.id, vid),
+            eq(schema.asesores.usuarioId, vid),
+            eq(schema.asesores.activo, true),
             eq(schema.usuarios.activo, true),
-            inArray(schema.usuarios.rol, [...COMERCIAL_ROLES]),
           ),
         )
         .limit(1);
-      if (!vendedor) {
-        throw new Error("El vendedor no está activo o no es comercial.");
+      if (!asesor) {
+        throw new Error("Solo se puede asignar el lead a un asesor activo.");
       }
 
       const [lead] = await tx
@@ -464,6 +489,10 @@ export async function crearLead(
     };
   }
 
+  if (d.vendedorId !== null && !(await usuarioEsAsesorActivo(d.vendedorId))) {
+    return { ok: false, error: "El responsable debe ser un asesor activo." };
+  }
+
   try {
     await db.transaction(async (tx) => {
       const asignado = d.vendedorId !== null;
@@ -510,6 +539,10 @@ export async function actualizarLead(
   }
   const d = parsed.data;
 
+  if (d.vendedorId !== null && !(await usuarioEsAsesorActivo(d.vendedorId))) {
+    return { ok: false, error: "El responsable debe ser un asesor activo." };
+  }
+
   try {
     await db.transaction(async (tx) => {
       await tx
@@ -532,6 +565,119 @@ export async function actualizarLead(
 
   revalidatePath("/je-admin/leads");
   revalidatePath(`/je-admin/leads/${id}`);
+  return { ok: true };
+}
+
+/* ──────────────────────────── Asesores ──────────────────────────── */
+
+const asesorSchema = z.object({
+  usuarioId: z
+    .string()
+    .nullish()
+    .transform((v) => (v && v.length > 0 ? v : null))
+    .refine(
+      (v) => v === null || z.string().uuid().safeParse(v).success,
+      "Usuario no válido.",
+    ),
+  nombre: z.string().trim().min(2, "El nombre del asesor es obligatorio."),
+  chatwootAgentId: z
+    .union([z.string(), z.number()])
+    .transform((v, ctx) => {
+      const n = typeof v === "number" ? v : Number(String(v).trim());
+      if (!Number.isInteger(n) || n < 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "ID de agente Chatwoot no válido (entero ≥ 0).",
+        });
+        return z.NEVER;
+      }
+      return n;
+    }),
+  msEmail: emailOpcional,
+  telefono: textoOpcional,
+  zonas: z.array(z.string().trim().min(1)).default([]),
+  segmentos: z.array(z.enum(["residencial", "negocio"])).default([]),
+  activo: z.boolean().default(true),
+});
+
+/** Valores comunes para INSERT/UPDATE de un asesor. */
+function asesorValues(d: z.output<typeof asesorSchema>) {
+  return {
+    usuarioId: d.usuarioId,
+    nombre: d.nombre,
+    chatwootAgentId: d.chatwootAgentId,
+    msEmail: d.msEmail,
+    telefono: d.telefono,
+    zonas: d.zonas,
+    segmentos: d.segmentos,
+    activo: d.activo,
+  };
+}
+
+/** Registra un asesor (habilita a un usuario para recibir/atender leads). */
+export async function crearAsesor(
+  data: z.input<typeof asesorSchema>,
+): Promise<ActionResult> {
+  await assertPerm("usuarios", "edit");
+  const parsed = asesorSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  try {
+    await db.insert(schema.asesores).values(asesorValues(parsed.data));
+  } catch {
+    return { ok: false, error: "No se pudo crear el asesor." };
+  }
+  revalidatePath("/je-admin/usuarios");
+  revalidatePath("/je-admin/leads");
+  return { ok: true };
+}
+
+/** Actualiza los datos de un asesor. */
+export async function actualizarAsesor(
+  id: string,
+  data: z.input<typeof asesorSchema>,
+): Promise<ActionResult> {
+  await assertPerm("usuarios", "edit");
+  const parsed = asesorSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  try {
+    await db
+      .update(schema.asesores)
+      .set({ ...asesorValues(parsed.data), updatedAt: new Date().toISOString() })
+      .where(eq(schema.asesores.id, id));
+  } catch {
+    return { ok: false, error: "No se pudo actualizar el asesor." };
+  }
+  revalidatePath("/je-admin/usuarios");
+  revalidatePath("/je-admin/leads");
+  return { ok: true };
+}
+
+/** Activa o desactiva un asesor (desactivado = no asignable a leads). */
+export async function toggleAsesorActivo(
+  id: string,
+  activo: boolean,
+): Promise<ActionResult> {
+  await assertPerm("usuarios", "edit");
+  try {
+    await db
+      .update(schema.asesores)
+      .set({ activo, updatedAt: new Date().toISOString() })
+      .where(eq(schema.asesores.id, id));
+  } catch {
+    return { ok: false, error: "No se pudo cambiar el estado del asesor." };
+  }
+  revalidatePath("/je-admin/usuarios");
+  revalidatePath("/je-admin/leads");
   return { ok: true };
 }
 

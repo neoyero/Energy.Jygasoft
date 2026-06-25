@@ -5,7 +5,7 @@ import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getLeadsFiltrados,
   getLeadsResumen,
-  getVendedores,
+  getAsesoresAsignables,
   isScoped,
   type DashboardScope,
 } from "@/lib/admin/queries"
@@ -27,10 +27,11 @@ export default async function LeadsPage() {
     userId: user.id,
   }
 
+  // Asignables a un lead = asesores activos vinculados a un usuario.
   const [leads, resumen, vendedores] = await Promise.all([
     getLeadsFiltrados(scope, {}),
     getLeadsResumen(scope),
-    getVendedores(),
+    getAsesoresAsignables(),
   ])
 
   const puedeEditar = can(user.rol, "leads", "edit")

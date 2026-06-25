@@ -124,7 +124,7 @@ export function LeadActions({
 
         {/* Vendedor asignado */}
         <label className="flex flex-col gap-1.5">
-          <span className={fieldLabelClasses}>Vendedor</span>
+          <span className={fieldLabelClasses}>Asesor</span>
           <select
             value={vendedorId ?? ""}
             disabled={pending}

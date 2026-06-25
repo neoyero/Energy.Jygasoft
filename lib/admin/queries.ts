@@ -893,6 +893,74 @@ export async function getVendedores(): Promise<VendedorOption[]> {
   return rows.map((row) => ({ id: row.id, nombre: row.nombre, rol: row.rol }));
 }
 
+/** Fila de asesor para la gestión en el panel (con el usuario vinculado). */
+export interface AsesorRow {
+  id: string;
+  usuarioId: string | null;
+  nombre: string;
+  chatwootAgentId: number;
+  msEmail: string | null;
+  telefono: string | null;
+  zonas: string[];
+  segmentos: string[];
+  activo: boolean;
+  asignaciones: number;
+  usuarioNombre: string | null;
+  usuarioEmail: string | null;
+}
+
+/**
+ * Usuarios asignables a un lead = asesores ACTIVOS vinculados a un usuario
+ * ACTIVO. El `id` devuelto es el usuario_id (lo que se guarda en
+ * leads.vendedor_id). Esta es la única fuente de "asignables" para leads.
+ */
+export async function getAsesoresAsignables(): Promise<VendedorOption[]> {
+  const rows = await db
+    .select({
+      id: schema.asesores.usuarioId,
+      nombre: schema.usuarios.nombre,
+      rol: schema.usuarios.rol,
+    })
+    .from(schema.asesores)
+    .innerJoin(
+      schema.usuarios,
+      eq(schema.asesores.usuarioId, schema.usuarios.id),
+    )
+    .where(
+      and(
+        eq(schema.asesores.activo, true),
+        eq(schema.usuarios.activo, true),
+      ),
+    )
+    .orderBy(asc(schema.usuarios.nombre));
+
+  return rows
+    .filter((r) => r.id !== null)
+    .map((r) => ({ id: r.id as string, nombre: r.nombre, rol: r.rol }));
+}
+
+/** Lista completa de asesores para administración (con el usuario vinculado). */
+export async function getAsesores(): Promise<AsesorRow[]> {
+  return db
+    .select({
+      id: schema.asesores.id,
+      usuarioId: schema.asesores.usuarioId,
+      nombre: schema.asesores.nombre,
+      chatwootAgentId: schema.asesores.chatwootAgentId,
+      msEmail: schema.asesores.msEmail,
+      telefono: schema.asesores.telefono,
+      zonas: schema.asesores.zonas,
+      segmentos: schema.asesores.segmentos,
+      activo: schema.asesores.activo,
+      asignaciones: schema.asesores.asignaciones,
+      usuarioNombre: schema.usuarios.nombre,
+      usuarioEmail: schema.usuarios.email,
+    })
+    .from(schema.asesores)
+    .leftJoin(schema.usuarios, eq(schema.asesores.usuarioId, schema.usuarios.id))
+    .orderBy(asc(schema.asesores.nombre));
+}
+
 /**
  * Pipeline completo: oportunidades (con nombres de cliente/lead/vendedor vía
  * leftJoin) + forecast por etapa. Scoping por vendedor para roles acotados.

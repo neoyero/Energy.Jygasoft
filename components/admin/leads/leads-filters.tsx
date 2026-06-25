@@ -138,11 +138,11 @@ export function LeadsFilters({
         </select>
       </label>
 
-      {/* Vendedor (oculto para roles acotados) */}
+      {/* Asesor (oculto para roles acotados) */}
       {rolScoped ? null : (
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium text-stone-500 dark:text-muted-foreground">
-            Vendedor
+            Asesor
           </span>
           <select
             value={filtros.vendedor ?? ""}
