@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { assertPerm, actorOf } from "@/lib/admin/guard";
@@ -242,5 +242,208 @@ export async function toggleUsuarioActivo(
   }
 
   revalidatePath("/je-admin/usuarios");
+  return { ok: true };
+}
+
+/* ──────────────────────────── Leads / Pipeline (D3) ──────────────────────── */
+
+const COMERCIAL_ROLES = ["admin", "gerente", "vendedor", "preventa"] as const;
+
+/** Estados de lead que aún no han sido "trabajados" (pasan a asignado). */
+const LEAD_ESTADOS_ASIGNABLES: ReadonlySet<LeadEstado> = new Set<LeadEstado>([
+  "nuevo",
+  "sin_calificar",
+  "en_nutricion",
+  "calificado",
+]);
+
+const asignarLeadSchema = z.object({
+  leadId: z.string().uuid("Lead no válido."),
+  vendedorId: z.string().uuid("Vendedor no válido.").nullable(),
+});
+
+/**
+ * Asigna (o desasigna) un lead a un vendedor. Si `vendedorId` es null, limpia la
+ * asignación. Al asignar, valida que el usuario esté activo y sea comercial, y
+ * promueve el estado a `asignado` si aún no había sido trabajado. Deja traza en
+ * la bitácora (eventos).
+ */
+export async function asignarLead(
+  leadId: string,
+  vendedorId: string | null,
+): Promise<void> {
+  const actor = actorOf(await assertPerm("leads", "edit"));
+
+  const parsed = asignarLeadSchema.safeParse({ leadId, vendedorId });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Datos no válidos.");
+  }
+  const { leadId: id, vendedorId: vid } = parsed.data;
+
+  await db.transaction(async (tx) => {
+    if (vid !== null) {
+      const [vendedor] = await tx
+        .select({ id: schema.usuarios.id })
+        .from(schema.usuarios)
+        .where(
+          and(
+            eq(schema.usuarios.id, vid),
+            eq(schema.usuarios.activo, true),
+            inArray(schema.usuarios.rol, [...COMERCIAL_ROLES]),
+          ),
+        )
+        .limit(1);
+      if (!vendedor) {
+        throw new Error("El vendedor no está activo o no es comercial.");
+      }
+
+      const [lead] = await tx
+        .select({ estado: schema.leads.estado })
+        .from(schema.leads)
+        .where(eq(schema.leads.id, id))
+        .limit(1);
+      if (!lead) throw new Error("Lead no encontrado");
+
+      const nuevoEstado: LeadEstado = LEAD_ESTADOS_ASIGNABLES.has(lead.estado)
+        ? "asignado"
+        : lead.estado;
+
+      await tx
+        .update(schema.leads)
+        .set({
+          vendedorId: vid,
+          asignadoAt: new Date().toISOString(),
+          estado: nuevoEstado,
+        })
+        .where(eq(schema.leads.id, id));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "lead",
+        entidadId: id,
+        tipo: "asignacion",
+        descripcion: "Lead asignado a vendedor",
+        payload: { vendedorId: vid },
+        actor,
+      });
+    } else {
+      await tx
+        .update(schema.leads)
+        .set({ vendedorId: null, asignadoAt: null })
+        .where(eq(schema.leads.id, id));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "lead",
+        entidadId: id,
+        tipo: "asignacion",
+        descripcion: "Lead desasignado",
+        payload: { vendedorId: null },
+        actor,
+      });
+    }
+  });
+
+  revalidatePath("/je-admin/leads");
+  revalidatePath(`/je-admin/leads/${id}`);
+}
+
+const actualizarOportunidadSchema = z.object({
+  etapa: z.enum(schema.oportunidadEtapa.enumValues).optional(),
+  montoEstimado: z
+    .number()
+    .nonnegative("El monto no puede ser negativo.")
+    .nullable()
+    .optional(),
+  probabilidad: z
+    .number()
+    .int("La probabilidad debe ser un entero.")
+    .min(0, "La probabilidad mínima es 0.")
+    .max(100, "La probabilidad máxima es 100.")
+    .nullable()
+    .optional(),
+  fechaCierreEstimada: z
+    .string()
+    .date("Fecha de cierre no válida.")
+    .nullable()
+    .optional(),
+  motivoPerdida: z
+    .string()
+    .max(500, "El motivo es demasiado largo.")
+    .nullable()
+    .optional(),
+});
+
+type ActualizarOportunidadInput = z.input<typeof actualizarOportunidadSchema>;
+
+/** Campos persistibles de una oportunidad (tras validación). */
+type OportunidadUpdate = {
+  etapa?: OportEtapa;
+  montoEstimado?: string | null;
+  probabilidad?: number | null;
+  fechaCierreEstimada?: string | null;
+  motivoPerdida?: string | null;
+  cerradaAt?: string;
+};
+
+/**
+ * Actualiza campos de una oportunidad (etapa, monto, probabilidad, fecha de
+ * cierre, motivo de pérdida). Solo escribe los campos presentes. Si la etapa es
+ * `perdida` exige motivo; al cerrar (ganada/perdida) sella `cerradaAt`. Deja
+ * traza en la bitácora (eventos).
+ */
+export async function actualizarOportunidad(
+  id: string,
+  data: ActualizarOportunidadInput,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("oportunidades", "edit"));
+
+  const parsed = actualizarOportunidadSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+
+  if (d.etapa === "perdida" && !d.motivoPerdida) {
+    return { ok: false, error: "Indica el motivo de pérdida." };
+  }
+
+  const update: OportunidadUpdate = {};
+  if (d.etapa !== undefined) update.etapa = d.etapa;
+  if (d.montoEstimado !== undefined) {
+    update.montoEstimado =
+      d.montoEstimado === null ? null : String(d.montoEstimado);
+  }
+  if (d.probabilidad !== undefined) update.probabilidad = d.probabilidad;
+  if (d.fechaCierreEstimada !== undefined) {
+    update.fechaCierreEstimada = d.fechaCierreEstimada;
+  }
+  if (d.motivoPerdida !== undefined) update.motivoPerdida = d.motivoPerdida;
+  if (d.etapa === "ganada" || d.etapa === "perdida") {
+    update.cerradaAt = new Date().toISOString();
+  }
+
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(schema.oportunidades)
+        .set(update)
+        .where(eq(schema.oportunidades.id, id));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "oportunidad",
+        entidadId: id,
+        tipo: "cambio",
+        descripcion: "Oportunidad actualizada",
+        payload: { ...d },
+        actor,
+      });
+    });
+  } catch {
+    return { ok: false, error: "No se pudo actualizar la oportunidad." };
+  }
+
+  revalidatePath("/je-admin/oportunidades");
   return { ok: true };
 }

@@ -1,4 +1,18 @@
-import { sql, desc, asc, eq } from "drizzle-orm";
+import {
+  sql,
+  desc,
+  asc,
+  eq,
+  and,
+  or,
+  ilike,
+  gte,
+  lte,
+  lt,
+  isNull,
+  count,
+  type SQL,
+} from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { Rol } from "@/lib/admin/rbac";
 
@@ -28,9 +42,9 @@ export async function getDashboard() {
   return { leadsByEstado, oportByEtapa, totals: totals[0] };
 }
 
-export type LeadRow = typeof schema.leads.$inferSelect;
+export type LeadRecord = typeof schema.leads.$inferSelect;
 
-export async function getLeads(limit = 200): Promise<LeadRow[]> {
+export async function getLeads(limit = 200): Promise<LeadRecord[]> {
   return db
     .select()
     .from(schema.leads)
@@ -600,4 +614,353 @@ function sortByOrder<T>(
     const rb = rank.get(key(b)) ?? order.length;
     return ra - rb;
   });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * LEADS / PIPELINE (D3) — capa de datos
+ *
+ * Estilo: query builder de Drizzle (eq/ilike/and/or/gte/lte/lt/isNull/count) +
+ * leftJoin. Los numeric (mode:'string') se convierten con Number(...). Scoping
+ * por rol vía isScoped(): vendedor/preventa ven SOLO sus entidades.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+export type LeadEstado = (typeof schema.leadEstado.enumValues)[number];
+export type LeadCanal = (typeof schema.leadCanal.enumValues)[number];
+
+export interface LeadsFiltros {
+  estado?: LeadEstado;
+  canal?: LeadCanal;
+  vendedorId?: string | null;
+  scoreMin?: number;
+  busqueda?: string;
+  desde?: string;
+  hasta?: string;
+}
+
+export interface LeadRow {
+  id: string;
+  nombre: string | null;
+  email: string | null;
+  telefono: string | null;
+  segmento: string | null;
+  canal: string | null;
+  score: number;
+  estado: string;
+  vendedorId: string | null;
+  vendedorNombre: string | null;
+  municipio: string | null;
+  estadoMx: string | null;
+  consumoKwhMes: number | null;
+  reciboMxn: number | null;
+  sizingKwp: number | null;
+  createdAt: string;
+}
+
+export interface LeadsResumen {
+  porEstado: Array<{ estado: string; n: number }>;
+  total: number;
+}
+
+export interface VendedorOption {
+  id: string;
+  nombre: string;
+  rol: string;
+}
+
+export interface OportunidadRow {
+  id: string;
+  nombre: string;
+  etapa: string;
+  clienteId: string | null;
+  clienteNombre: string | null;
+  leadId: string | null;
+  leadNombre: string | null;
+  vendedorId: string | null;
+  vendedorNombre: string | null;
+  capacidadKwp: number | null;
+  montoEstimado: number;
+  probabilidad: number;
+  montoPonderado: number;
+  fechaCierreEstimada: string | null;
+  motivoPerdida: string | null;
+  createdAt: string;
+}
+
+export interface PipelineForecastEtapa {
+  etapa: string;
+  conteo: number;
+  monto: number;
+  ponderado: number;
+}
+
+export interface PipelineData {
+  oportunidades: OportunidadRow[];
+  forecast: PipelineForecastEtapa[];
+  forecastTotal: number;
+  montoTotalAbierto: number;
+}
+
+/** numeric(mode:'string') -> number | null. */
+function numOrNull(v: string | null): number | null {
+  if (v == null) return null;
+  const parsed = Number(v);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** numeric(mode:'string') con default 0 -> number. */
+function numOrZero(v: string | null): number {
+  return numOrNull(v) ?? 0;
+}
+
+const LEAD_QUERY_LIMIT = 500;
+const OPORTUNIDAD_QUERY_LIMIT = 500;
+
+/**
+ * Lista de leads filtrada. Scoping por vendedor para roles acotados. Filtros:
+ * estado, canal, vendedorId (null = sin asignar / isNull), scoreMin (gte),
+ * busqueda (ilike nombre/email/telefono), desde (gte) y hasta (lt) sobre
+ * created_at. Incluye nombre del vendedor vía leftJoin a usuarios.
+ */
+export async function getLeadsFiltrados(
+  scope: DashboardScope,
+  filtros: LeadsFiltros = {},
+): Promise<LeadRow[]> {
+  const conds: SQL[] = [];
+
+  if (isScoped(scope.rol)) {
+    conds.push(eq(schema.leads.vendedorId, scope.userId));
+  }
+
+  if (filtros.estado) conds.push(eq(schema.leads.estado, filtros.estado));
+  if (filtros.canal) conds.push(eq(schema.leads.canal, filtros.canal));
+
+  if (filtros.vendedorId !== undefined) {
+    conds.push(
+      filtros.vendedorId === null
+        ? isNull(schema.leads.vendedorId)
+        : eq(schema.leads.vendedorId, filtros.vendedorId),
+    );
+  }
+
+  if (typeof filtros.scoreMin === "number") {
+    conds.push(gte(schema.leads.score, filtros.scoreMin));
+  }
+
+  if (filtros.desde) conds.push(gte(schema.leads.createdAt, filtros.desde));
+  if (filtros.hasta) conds.push(lt(schema.leads.createdAt, filtros.hasta));
+
+  const q = filtros.busqueda?.trim();
+  if (q) {
+    const like = `%${q.toLowerCase()}%`;
+    const busquedaCond = or(
+      ilike(schema.leads.nombre, like),
+      ilike(schema.leads.email, like),
+      ilike(schema.leads.telefono, like),
+    );
+    if (busquedaCond) conds.push(busquedaCond);
+  }
+
+  const rows = await db
+    .select({
+      id: schema.leads.id,
+      nombre: schema.leads.nombre,
+      email: schema.leads.email,
+      telefono: schema.leads.telefono,
+      segmento: schema.leads.segmento,
+      canal: schema.leads.canal,
+      score: schema.leads.score,
+      estado: schema.leads.estado,
+      vendedorId: schema.leads.vendedorId,
+      vendedorNombre: schema.usuarios.nombre,
+      municipio: schema.leads.municipio,
+      estadoMx: schema.leads.estadoMx,
+      consumoKwhMes: schema.leads.consumoKwhMes,
+      reciboMxn: schema.leads.reciboMxn,
+      sizingKwp: schema.leads.sizingKwp,
+      createdAt: schema.leads.createdAt,
+    })
+    .from(schema.leads)
+    .leftJoin(schema.usuarios, eq(schema.leads.vendedorId, schema.usuarios.id))
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(schema.leads.createdAt))
+    .limit(LEAD_QUERY_LIMIT);
+
+  return rows.map((row) => ({
+    id: row.id,
+    nombre: row.nombre,
+    email: row.email,
+    telefono: row.telefono,
+    segmento: row.segmento,
+    canal: row.canal,
+    score: row.score,
+    estado: row.estado,
+    vendedorId: row.vendedorId,
+    vendedorNombre: row.vendedorNombre,
+    municipio: row.municipio,
+    estadoMx: row.estadoMx,
+    consumoKwhMes: numOrNull(row.consumoKwhMes),
+    reciboMxn: numOrNull(row.reciboMxn),
+    sizingKwp: numOrNull(row.sizingKwp),
+    createdAt: row.createdAt,
+  }));
+}
+
+/**
+ * Resumen de leads por estado (conteo). Mismo scoping que getLeadsFiltrados.
+ * Rellena con 0 las 8 claves del enum leadEstado y respeta su orden canónico.
+ */
+export async function getLeadsResumen(
+  scope: DashboardScope,
+): Promise<LeadsResumen> {
+  const scopeCond = isScoped(scope.rol)
+    ? eq(schema.leads.vendedorId, scope.userId)
+    : undefined;
+
+  const rows = await db
+    .select({ estado: schema.leads.estado, n: count() })
+    .from(schema.leads)
+    .where(scopeCond)
+    .groupBy(schema.leads.estado);
+
+  const conteos = new Map<string, number>(
+    rows.map((row) => [row.estado, Number(row.n)]),
+  );
+
+  const porEstado = schema.leadEstado.enumValues.map((estado) => ({
+    estado,
+    n: conteos.get(estado) ?? 0,
+  }));
+
+  const total = porEstado.reduce((acc, item) => acc + item.n, 0);
+
+  return { porEstado, total };
+}
+
+/**
+ * Opciones de vendedores activos con rol comercial (admin/gerente/vendedor/
+ * preventa), ordenadas por nombre. Para selects de asignación.
+ */
+export async function getVendedores(): Promise<VendedorOption[]> {
+  const rows = await db
+    .select({
+      id: schema.usuarios.id,
+      nombre: schema.usuarios.nombre,
+      rol: schema.usuarios.rol,
+    })
+    .from(schema.usuarios)
+    .where(
+      and(
+        eq(schema.usuarios.activo, true),
+        or(
+          eq(schema.usuarios.rol, "admin"),
+          eq(schema.usuarios.rol, "gerente"),
+          eq(schema.usuarios.rol, "vendedor"),
+          eq(schema.usuarios.rol, "preventa"),
+        ),
+      ),
+    )
+    .orderBy(asc(schema.usuarios.nombre));
+
+  return rows.map((row) => ({ id: row.id, nombre: row.nombre, rol: row.rol }));
+}
+
+/**
+ * Pipeline completo: oportunidades (con nombres de cliente/lead/vendedor vía
+ * leftJoin) + forecast por etapa. Scoping por vendedor para roles acotados.
+ * `montoPonderado = montoEstimado * probabilidad / 100` (en JS). El forecast
+ * total y el monto total abierto suman SOLO etapas distintas de ganada/perdida.
+ */
+export async function getOportunidadesPipeline(
+  scope: DashboardScope,
+): Promise<PipelineData> {
+  const leadAlias = schema.leads;
+
+  const scopeCond = isScoped(scope.rol)
+    ? eq(schema.oportunidades.vendedorId, scope.userId)
+    : undefined;
+
+  const rows = await db
+    .select({
+      id: schema.oportunidades.id,
+      nombre: schema.oportunidades.nombre,
+      etapa: schema.oportunidades.etapa,
+      clienteId: schema.oportunidades.clienteId,
+      clienteNombre: schema.clientes.nombre,
+      leadId: schema.oportunidades.leadId,
+      leadNombre: leadAlias.nombre,
+      vendedorId: schema.oportunidades.vendedorId,
+      vendedorNombre: schema.usuarios.nombre,
+      capacidadKwp: schema.oportunidades.capacidadKwp,
+      montoEstimado: schema.oportunidades.montoEstimado,
+      probabilidad: schema.oportunidades.probabilidad,
+      fechaCierreEstimada: schema.oportunidades.fechaCierreEstimada,
+      motivoPerdida: schema.oportunidades.motivoPerdida,
+      createdAt: schema.oportunidades.createdAt,
+    })
+    .from(schema.oportunidades)
+    .leftJoin(
+      schema.clientes,
+      eq(schema.oportunidades.clienteId, schema.clientes.id),
+    )
+    .leftJoin(leadAlias, eq(schema.oportunidades.leadId, leadAlias.id))
+    .leftJoin(
+      schema.usuarios,
+      eq(schema.oportunidades.vendedorId, schema.usuarios.id),
+    )
+    .where(scopeCond)
+    .orderBy(desc(schema.oportunidades.createdAt))
+    .limit(OPORTUNIDAD_QUERY_LIMIT);
+
+  const oportunidades: OportunidadRow[] = rows.map((row) => {
+    const montoEstimado = numOrZero(row.montoEstimado);
+    const probabilidad = row.probabilidad ?? 30;
+    const montoPonderado = (montoEstimado * probabilidad) / 100;
+    return {
+      id: row.id,
+      nombre: row.nombre,
+      etapa: row.etapa,
+      clienteId: row.clienteId,
+      clienteNombre: row.clienteNombre,
+      leadId: row.leadId,
+      leadNombre: row.leadNombre,
+      vendedorId: row.vendedorId,
+      vendedorNombre: row.vendedorNombre,
+      capacidadKwp: numOrNull(row.capacidadKwp),
+      montoEstimado,
+      probabilidad,
+      montoPonderado,
+      fechaCierreEstimada: row.fechaCierreEstimada,
+      motivoPerdida: row.motivoPerdida,
+      createdAt: row.createdAt,
+    };
+  });
+
+  const porEtapa = new Map<string, PipelineForecastEtapa>();
+  for (const op of oportunidades) {
+    const acc = porEtapa.get(op.etapa) ?? {
+      etapa: op.etapa,
+      conteo: 0,
+      monto: 0,
+      ponderado: 0,
+    };
+    porEtapa.set(op.etapa, {
+      etapa: op.etapa,
+      conteo: acc.conteo + 1,
+      monto: acc.monto + op.montoEstimado,
+      ponderado: acc.ponderado + op.montoPonderado,
+    });
+  }
+
+  const forecast = sortByOrder(
+    [...porEtapa.values()],
+    (r) => r.etapa,
+    ETAPA_ORDER,
+  );
+
+  const cerradas = new Set<string>(["ganada", "perdida"]);
+  const abiertas = forecast.filter((f) => !cerradas.has(f.etapa));
+  const forecastTotal = abiertas.reduce((acc, f) => acc + f.ponderado, 0);
+  const montoTotalAbierto = abiertas.reduce((acc, f) => acc + f.monto, 0);
+
+  return { oportunidades, forecast, forecastTotal, montoTotalAbierto };
 }
