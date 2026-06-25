@@ -1,9 +1,11 @@
 "use client"
 
-import { useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Menu } from "@base-ui/react/menu"
 import {
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronsUpDown,
   ChevronUp,
   MoreHorizontal,
@@ -12,6 +14,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Card } from "@/components/admin/ui/card"
 import { EmptyState, type EmptyStateProps } from "@/components/admin/ui/empty-state"
+import { ConfirmDialog } from "@/components/admin/ui/confirm-dialog"
 
 export type SortDirection = "asc" | "desc"
 
@@ -41,6 +44,22 @@ export interface DataTableColumn<T> {
   hideOnMobile?: boolean
 }
 
+/**
+ * Configuracion del modal de confirmacion de una accion de fila. Si esta
+ * presente, al seleccionar la accion se abre un ConfirmDialog y `onSelect` solo
+ * se ejecuta tras confirmar.
+ */
+export interface RowActionConfirm<T> {
+  /** Titulo corto del modal. */
+  title: string
+  /** Texto explicativo; puede depender de la fila (nombre, etc.). */
+  description?: ReactNode | ((row: T) => ReactNode)
+  /** Etiqueta del boton de confirmar. Default "Confirmar". */
+  confirmLabel?: string
+  /** Etiqueta del boton de cancelar. Default "Cancelar". */
+  cancelLabel?: string
+}
+
 export interface DataTableRowAction<T> {
   /** Etiqueta accesible/visible del item. */
   label: string
@@ -52,6 +71,8 @@ export interface DataTableRowAction<T> {
   destructive?: boolean
   /** Oculta condicionalmente la accion segun la fila. */
   hidden?: (row: T) => boolean
+  /** Si se define, la accion pide confirmacion en un modal antes de ejecutarse. */
+  confirm?: RowActionConfirm<T>
 }
 
 export interface DataTableSort {
@@ -85,6 +106,8 @@ export interface DataTableProps<T> {
   density?: "comfortable" | "compact"
   /** Envolver en Card del kit. Default true. */
   bordered?: boolean
+  /** Si se define, pagina en cliente con N filas por página (footer con nav). */
+  pageSize?: number
   className?: string
 }
 
@@ -157,6 +180,7 @@ export function DataTable<T>({
   empty,
   density = "comfortable",
   bordered = true,
+  pageSize,
   className,
 }: DataTableProps<T>) {
   // Estado de orden no controlado (si no se pasa `sort` desde fuera).
@@ -192,6 +216,21 @@ export function DataTable<T>({
     // Copia (immutabilidad): no mutamos el array recibido.
     return [...data].sort((a, b) => factor * compare(a, b))
   }, [data, sort, columnById])
+
+  // Paginacion en cliente (opcional). Pagina 1-based; se reinicia al cambiar el
+  // dataset (p. ej. tras filtrar) para no quedar en una pagina inexistente.
+  const [page, setPage] = useState(1)
+  useEffect(() => {
+    setPage(1)
+  }, [data, pageSize])
+
+  const pageCount = pageSize
+    ? Math.max(1, Math.ceil(sortedData.length / pageSize))
+    : 1
+  const currentPage = Math.min(page, pageCount)
+  const pagedData = pageSize
+    ? sortedData.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+    : sortedData
 
   // Ciclo de orden por columna: none -> asc -> desc -> none.
   function handleSort(column: DataTableColumn<T>): void {
@@ -322,7 +361,7 @@ export function DataTable<T>({
 
           {/* Filas de datos */}
           {!loading && !showEmpty
-            ? sortedData.map((row, rowIndex) => (
+            ? pagedData.map((row, rowIndex) => (
                 <tr
                   key={rowKey(row)}
                   onClick={isClickable ? () => onRowClick?.(row) : undefined}
@@ -380,13 +419,62 @@ export function DataTable<T>({
     </div>
   )
 
+  // Footer de paginacion: solo si hay pageSize, datos y mas de una pagina.
+  const pageBtn = cn(
+    "inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2.5 py-1 text-sm font-medium transition-colors",
+    "text-stone-600 hover:bg-stone-50 dark:border-border dark:text-muted-foreground dark:hover:bg-muted",
+    "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+    "disabled:pointer-events-none disabled:opacity-40"
+  )
+
+  const footer =
+    pageSize && !loading && sortedData.length > 0 ? (
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 px-4 py-3 dark:border-border">
+        <span className="text-sm text-stone-500 tabular-nums dark:text-muted-foreground">
+          Mostrando {(currentPage - 1) * pageSize + 1}–
+          {Math.min(currentPage * pageSize, sortedData.length)} de{" "}
+          {sortedData.length}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage <= 1}
+            className={pageBtn}
+          >
+            <ChevronLeft className="size-4" aria-hidden />
+            Anterior
+          </button>
+          <span className="text-sm text-stone-500 tabular-nums dark:text-muted-foreground">
+            Página {currentPage} de {pageCount}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+            disabled={currentPage >= pageCount}
+            className={pageBtn}
+          >
+            Siguiente
+            <ChevronRight className="size-4" aria-hidden />
+          </button>
+        </div>
+      </div>
+    ) : null
+
+  const content = (
+    <>
+      {table}
+      {footer}
+    </>
+  )
+
   if (!bordered) {
-    return <div className={cn("overflow-x-auto", className)}>{table}</div>
+    return <div className={cn("overflow-x-auto", className)}>{content}</div>
   }
 
   return (
     <Card padding="none" className={cn("overflow-hidden", className)}>
-      {table}
+      {content}
     </Card>
   )
 }
@@ -402,11 +490,30 @@ function RowActionsMenu<T>({
   row: T
   actions: ReadonlyArray<DataTableRowAction<T>>
 }) {
+  // Accion en espera de confirmacion (null = sin modal abierto).
+  const [confirming, setConfirming] = useState<DataTableRowAction<T> | null>(null)
+
   // Filtra acciones ocultas condicionalmente para esta fila.
   const visible = actions.filter((action) => !action.hidden?.(row))
   if (visible.length === 0) return null
 
+  // Ejecuta la accion: si requiere confirmacion abre el modal; si no, corre ya.
+  function trigger(action: DataTableRowAction<T>): void {
+    if (action.confirm) {
+      setConfirming(action)
+      return
+    }
+    action.onSelect(row)
+  }
+
+  const confirmCfg = confirming?.confirm
+  const confirmDescription =
+    typeof confirmCfg?.description === "function"
+      ? confirmCfg.description(row)
+      : confirmCfg?.description
+
   return (
+    <>
     <Menu.Root>
       <Menu.Trigger
         // Evita que el click abra el detalle de la fila.
@@ -443,7 +550,7 @@ function RowActionsMenu<T>({
                 key={action.label}
                 onClick={(event) => {
                   event.stopPropagation()
-                  action.onSelect(row)
+                  trigger(action)
                 }}
                 className={cn(
                   "flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none select-none",
@@ -465,5 +572,25 @@ function RowActionsMenu<T>({
         </Menu.Positioner>
       </Menu.Portal>
     </Menu.Root>
+
+    {confirmCfg ? (
+      <ConfirmDialog
+        open={confirming !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirming(null)
+        }}
+        title={confirmCfg.title}
+        description={confirmDescription}
+        confirmLabel={confirmCfg.confirmLabel}
+        cancelLabel={confirmCfg.cancelLabel}
+        destructive={confirming?.destructive}
+        onConfirm={() => {
+          const action = confirming
+          setConfirming(null)
+          action?.onSelect(row)
+        }}
+      />
+    ) : null}
+    </>
   )
 }

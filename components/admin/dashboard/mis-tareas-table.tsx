@@ -14,7 +14,6 @@ import { useRouter } from "next/navigation"
 
 import type { MiActividadRow } from "@/lib/admin/queries"
 import { fmtFechaRel } from "@/lib/admin/format"
-import { cn } from "@/lib/utils"
 import {
   DataTable,
   type DataTableColumn,

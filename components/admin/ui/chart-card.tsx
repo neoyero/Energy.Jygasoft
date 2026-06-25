@@ -3,7 +3,6 @@
 import type { ReactNode } from "react"
 import { BarChart3 } from "lucide-react"
 
-import { cn } from "@/lib/utils"
 import {
   Card,
   CardHeader,

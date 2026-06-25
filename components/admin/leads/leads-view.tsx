@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { LayoutGrid, Table2 } from "lucide-react"
+import { LayoutGrid, Plus, Table2, X } from "lucide-react"
 
 import type {
   LeadRow,
@@ -9,6 +9,7 @@ import type {
   VendedorOption,
 } from "@/lib/admin/queries"
 import { labelFor } from "@/components/admin/ui/status-badge"
+import { Button } from "@/components/ui/button"
 import {
   FILTROS_INICIALES,
   LeadsFilters,
@@ -17,6 +18,7 @@ import {
 } from "@/components/admin/leads/leads-filters"
 import { LeadsTable } from "@/components/admin/leads/leads-table"
 import { LeadsKanban } from "@/components/admin/leads/leads-kanban"
+import { LeadForm } from "@/components/admin/leads/lead-form"
 import { cn } from "@/lib/utils"
 
 type Vista = "tabla" | "kanban"
@@ -63,6 +65,7 @@ export function LeadsView({
 }: LeadsViewProps) {
   const [filtros, setFiltros] = useState<LeadsFiltrosUI>(FILTROS_INICIALES)
   const [vista, setVista] = useState<Vista>("tabla")
+  const [creando, setCreando] = useState(false)
 
   // Debounce simple de la busqueda: el input actualiza filtros.busqueda de
   // inmediato, pero el termino efectivo se aplica 250 ms despues.
@@ -156,27 +159,59 @@ export function LeadsView({
           rolScoped={rolScoped}
         />
 
-        <div
-          className="inline-flex shrink-0 rounded-lg border border-stone-200 p-0.5 dark:border-border"
-          role="group"
-          aria-label="Cambiar vista"
-        >
-          <BotonVista
-            activo={vista === "tabla"}
-            onClick={() => setVista("tabla")}
-            label="Tabla"
+        <div className="flex shrink-0 items-center gap-2">
+          {puedeEditar ? (
+            <Button
+              type="button"
+              size="sm"
+              variant={creando ? "outline" : "default"}
+              onClick={() => setCreando((prev) => !prev)}
+            >
+              {creando ? (
+                <>
+                  <X className="size-4" aria-hidden />
+                  Cerrar
+                </>
+              ) : (
+                <>
+                  <Plus className="size-4" aria-hidden />
+                  Nuevo lead
+                </>
+              )}
+            </Button>
+          ) : null}
+
+          <div
+            className="inline-flex rounded-lg border border-stone-200 p-0.5 dark:border-border"
+            role="group"
+            aria-label="Cambiar vista"
           >
-            <Table2 className="size-4" aria-hidden />
-          </BotonVista>
-          <BotonVista
-            activo={vista === "kanban"}
-            onClick={() => setVista("kanban")}
-            label="Kanban"
-          >
-            <LayoutGrid className="size-4" aria-hidden />
-          </BotonVista>
+            <BotonVista
+              activo={vista === "tabla"}
+              onClick={() => setVista("tabla")}
+              label="Tabla"
+            >
+              <Table2 className="size-4" aria-hidden />
+            </BotonVista>
+            <BotonVista
+              activo={vista === "kanban"}
+              onClick={() => setVista("kanban")}
+              label="Kanban"
+            >
+              <LayoutGrid className="size-4" aria-hidden />
+            </BotonVista>
+          </div>
         </div>
       </div>
+
+      {/* Form de alta (plegable) */}
+      {puedeEditar && creando ? (
+        <LeadForm
+          modo="crear"
+          vendedores={vendedores}
+          onSuccess={() => setCreando(false)}
+        />
+      ) : null}
 
       {/* Vista activa */}
       {vista === "tabla" ? (

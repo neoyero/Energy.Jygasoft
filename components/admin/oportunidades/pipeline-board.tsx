@@ -7,16 +7,16 @@ import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { formatMXN } from "@/lib/admin/format";
 import { labelFor } from "@/components/admin/ui/status-badge";
-import {
-  ETAPA_ORDER,
-  type OportunidadRow,
-  type PipelineData,
-} from "@/lib/admin/queries";
+import type { OportunidadRow, PipelineData } from "@/lib/admin/queries";
 import { updateOportunidadEtapa } from "@/lib/admin/actions";
-import { schema } from "@/db";
+import { oportunidadEtapa } from "@/db/schema";
 import { DealCard } from "@/components/admin/oportunidades/deal-card";
 
-type Etapa = (typeof schema.oportunidadEtapa.enumValues)[number];
+// Orden canónico de etapas = orden del enum. Local (desde @/db/schema, sin `pg`)
+// para no arrastrar la BD al bundle del cliente.
+const ETAPA_ORDER = oportunidadEtapa.enumValues;
+
+type Etapa = (typeof oportunidadEtapa.enumValues)[number];
 
 export interface PipelineBoardProps {
   data: PipelineData;
@@ -30,7 +30,7 @@ function rank(etapa: string): number {
 }
 
 /** Columnas del kanban = enum de etapas ordenado por ETAPA_ORDER. */
-const COLUMNAS: readonly Etapa[] = [...schema.oportunidadEtapa.enumValues].sort(
+const COLUMNAS: readonly Etapa[] = [...oportunidadEtapa.enumValues].sort(
   (a, b) => rank(a) - rank(b),
 );
 

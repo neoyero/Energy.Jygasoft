@@ -37,7 +37,6 @@ function normalizar(texto: string): string {
 export function CotizacionesView({
   cotizacionesIniciales,
   vendedores,
-  puedeEditar: _puedeEditar,
   rolScoped,
 }: CotizacionesViewProps) {
   const [filtros, setFiltros] = useState<CotizacionesFiltrosUI>(FILTROS_INICIALES)

@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Send, Check, X, Copy } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/admin/ui/confirm-button";
 import {
   cambiarEstadoCotizacion,
   nuevaVersionCotizacion,
@@ -67,53 +67,65 @@ export function EstadoActions({
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         {esBorrador ? (
-          <Button
+          <ConfirmButton
             size="sm"
             disabled={pending}
-            onClick={() =>
+            title="Enviar cotización"
+            description="La cotización pasará a estado «enviada» y quedará lista para la respuesta del cliente. ¿Continuar?"
+            confirmLabel="Enviar"
+            onConfirm={() =>
               run(() => cambiarEstadoCotizacion(cotizacionId, "enviada"))
             }
           >
             <Send aria-hidden />
             Enviar
-          </Button>
+          </ConfirmButton>
         ) : null}
 
         {esEnviada ? (
           <>
-            <Button
+            <ConfirmButton
               size="sm"
+              title="Aceptar cotización"
+              description="Se marcará la cotización como «aceptada». ¿Continuar?"
+              confirmLabel="Aceptar"
               disabled={pending}
-              onClick={() =>
+              onConfirm={() =>
                 run(() => cambiarEstadoCotizacion(cotizacionId, "aceptada"))
               }
             >
               <Check aria-hidden />
               Aceptar
-            </Button>
-            <Button
+            </ConfirmButton>
+            <ConfirmButton
               size="sm"
               variant="destructive"
+              title="Rechazar cotización"
+              description="Se marcará la cotización como «rechazada». ¿Continuar?"
+              confirmLabel="Rechazar"
               disabled={pending}
-              onClick={() =>
+              onConfirm={() =>
                 run(() => cambiarEstadoCotizacion(cotizacionId, "rechazada"))
               }
             >
               <X aria-hidden />
               Rechazar
-            </Button>
+            </ConfirmButton>
           </>
         ) : null}
 
-        <Button
+        <ConfirmButton
           size="sm"
           variant="outline"
+          title="Nueva versión"
+          description="Se creará una nueva versión en borrador clonando esta cotización. ¿Continuar?"
+          confirmLabel="Crear versión"
           disabled={pending}
-          onClick={() => run(() => nuevaVersionCotizacion(cotizacionId))}
+          onConfirm={() => run(() => nuevaVersionCotizacion(cotizacionId))}
         >
           <Copy aria-hidden />
           Nueva version
-        </Button>
+        </ConfirmButton>
       </div>
 
       {error ? (

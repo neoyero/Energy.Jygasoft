@@ -348,6 +348,193 @@ export async function asignarLead(
   revalidatePath(`/je-admin/leads/${id}`);
 }
 
+/* ── Alta / edición manual de leads ── */
+
+/** "" / null / undefined -> null; recorta espacios. */
+const textoOpcional = z
+  .string()
+  .trim()
+  .nullish()
+  .transform((v) => (v && v.length > 0 ? v : null));
+
+/** Numeric (string|number) -> string normalizada o null; no admite negativos. */
+const numericoOpcional = z
+  .union([z.string(), z.number()])
+  .nullish()
+  .transform((v, ctx) => {
+    if (v === null || v === undefined) return null;
+    const s = String(v).trim();
+    if (s === "") return null;
+    const n = Number(s);
+    if (!Number.isFinite(n) || n < 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Valor numérico no válido.",
+      });
+      return z.NEVER;
+    }
+    return s;
+  });
+
+/** Email opcional: vacío -> null; si hay valor, debe ser válido. */
+const emailOpcional = z
+  .string()
+  .trim()
+  .nullish()
+  .transform((v) => (v && v.length > 0 ? v.toLowerCase() : null))
+  .refine(
+    (v) => v === null || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v),
+    "Correo no válido.",
+  );
+
+/** Vendedor opcional: vacío -> null; si hay valor, debe ser un UUID. */
+const vendedorOpcional = z
+  .string()
+  .nullish()
+  .transform((v) => (v && v.length > 0 ? v : null))
+  .refine(
+    (v) => v === null || z.string().uuid().safeParse(v).success,
+    "Vendedor no válido.",
+  );
+
+const leadFormSchema = z.object({
+  nombre: textoOpcional,
+  email: emailOpcional,
+  telefono: textoOpcional,
+  segmento: z.enum(["residencial", "negocio"]).nullish().transform((v) => v ?? null),
+  uso: z.enum(schema.usoInmueble.enumValues).nullish().transform((v) => v ?? null),
+  cp: textoOpcional,
+  colonia: textoOpcional,
+  municipio: textoOpcional,
+  estadoMx: textoOpcional,
+  consumoKwhMes: numericoOpcional,
+  reciboMxn: numericoOpcional,
+  esTitular: z.boolean().nullish().transform((v) => v ?? null),
+  esPropietario: z.boolean().nullish().transform((v) => v ?? null),
+  canal: z.enum(schema.leadCanal.enumValues),
+  consentimientoDatos: z.boolean(),
+  consentimientoMarketing: z.boolean(),
+  notas: textoOpcional,
+  vendedorId: vendedorOpcional,
+});
+
+/** Campos comunes que se escriben en INSERT/UPDATE de un lead. */
+function leadValues(d: z.output<typeof leadFormSchema>) {
+  return {
+    nombre: d.nombre,
+    email: d.email,
+    telefono: d.telefono,
+    segmento: d.segmento,
+    uso: d.uso,
+    cp: d.cp,
+    colonia: d.colonia,
+    municipio: d.municipio,
+    estadoMx: d.estadoMx,
+    consumoKwhMes: d.consumoKwhMes,
+    reciboMxn: d.reciboMxn,
+    esTitular: d.esTitular,
+    esPropietario: d.esPropietario,
+    canal: d.canal,
+    consentimientoDatos: d.consentimientoDatos,
+    consentimientoMarketing: d.consentimientoMarketing,
+    notas: d.notas,
+    vendedorId: d.vendedorId,
+  };
+}
+
+/** Alta manual de un lead desde el panel. */
+export async function crearLead(
+  data: z.input<typeof leadFormSchema>,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("leads", "edit"));
+
+  const parsed = leadFormSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+
+  if (!d.nombre && !d.telefono && !d.email) {
+    return {
+      ok: false,
+      error: "Indica al menos un dato de contacto (nombre, teléfono o correo).",
+    };
+  }
+
+  try {
+    await db.transaction(async (tx) => {
+      const asignado = d.vendedorId !== null;
+      const [lead] = await tx
+        .insert(schema.leads)
+        .values({
+          ...leadValues(d),
+          estado: asignado ? "asignado" : "nuevo",
+          asignadoAt: asignado ? new Date().toISOString() : null,
+          origenForm: "alta_manual",
+        })
+        .returning({ id: schema.leads.id });
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "lead",
+        entidadId: lead.id,
+        tipo: "creado",
+        descripcion: "Lead creado manualmente",
+        payload: { origen: "alta_manual" },
+        actor,
+      });
+    });
+  } catch {
+    return { ok: false, error: "No se pudo crear el lead." };
+  }
+
+  revalidatePath("/je-admin/leads");
+  return { ok: true };
+}
+
+/** Actualiza los datos editables de un lead existente. */
+export async function actualizarLead(
+  id: string,
+  data: z.input<typeof leadFormSchema>,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("leads", "edit"));
+
+  const parsed = leadFormSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(schema.leads)
+        .set({ ...leadValues(d), updatedAt: new Date().toISOString() })
+        .where(eq(schema.leads.id, id));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "lead",
+        entidadId: id,
+        tipo: "actualizado",
+        descripcion: "Datos del lead actualizados",
+        payload: {},
+        actor,
+      });
+    });
+  } catch {
+    return { ok: false, error: "No se pudo actualizar el lead." };
+  }
+
+  revalidatePath("/je-admin/leads");
+  revalidatePath(`/je-admin/leads/${id}`);
+  return { ok: true };
+}
+
 const actualizarOportunidadSchema = z.object({
   etapa: z.enum(schema.oportunidadEtapa.enumValues).optional(),
   montoEstimado: z

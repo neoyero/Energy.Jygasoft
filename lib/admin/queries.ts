@@ -7,7 +7,6 @@ import {
   or,
   ilike,
   gte,
-  lte,
   lt,
   isNull,
   count,
@@ -43,6 +42,36 @@ export async function getDashboard() {
 }
 
 export type LeadRecord = typeof schema.leads.$inferSelect;
+
+/** Uso del inmueble (enum uso_inmueble). */
+export type UsoInmueble = (typeof schema.usoInmueble.enumValues)[number];
+
+/**
+ * Datos editables de un lead (alta manual / edición). Solo campos capturables
+ * por una persona; los derivados (score, sizing, inversión, utm…) se calculan
+ * o llegan por integración y no se editan desde este formulario. Los numéricos
+ * viajan como string (formato numeric de Postgres) o null.
+ */
+export interface LeadFormData {
+  nombre: string | null;
+  email: string | null;
+  telefono: string | null;
+  segmento: "residencial" | "negocio" | null;
+  uso: UsoInmueble | null;
+  cp: string | null;
+  colonia: string | null;
+  municipio: string | null;
+  estadoMx: string | null;
+  consumoKwhMes: string | null;
+  reciboMxn: string | null;
+  esTitular: boolean | null;
+  esPropietario: boolean | null;
+  canal: LeadCanal;
+  consentimientoDatos: boolean;
+  consentimientoMarketing: boolean;
+  notas: string | null;
+  vendedorId: string | null;
+}
 
 export async function getLeads(limit = 200): Promise<LeadRecord[]> {
   return db

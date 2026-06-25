@@ -120,10 +120,10 @@ export function ClienteTabs({ detalle, puedeEditar }: ClienteTabsProps) {
                   key={o.id}
                   href={`/je-admin/oportunidades/${o.id}`}
                   cells={[
-                    <span className="font-medium text-foreground">
+                    <span key="nombre" className="font-medium text-foreground">
                       {o.nombre}
                     </span>,
-                    <StatusBadge value={o.etapa} withDot={false} />,
+                    <StatusBadge key="etapa" value={o.etapa} withDot={false} />,
                     money(o.montoEstimado),
                     `${o.probabilidad}%`,
                     fmtFechaRel(o.createdAt),
@@ -150,11 +150,11 @@ export function ClienteTabs({ detalle, puedeEditar }: ClienteTabsProps) {
                   key={c.id}
                   href={`/je-admin/cotizaciones/${c.id}`}
                   cells={[
-                    <span className="font-medium text-foreground">
+                    <span key="folio" className="font-medium text-foreground">
                       {c.folio ?? DASH}
                     </span>,
                     `v${c.version}`,
-                    <StatusBadge value={c.estado} withDot={false} />,
+                    <StatusBadge key="estado" value={c.estado} withDot={false} />,
                     money(c.total),
                     fmtFechaRel(c.validaHasta),
                   ]}
@@ -178,10 +178,10 @@ export function ClienteTabs({ detalle, puedeEditar }: ClienteTabsProps) {
                   key={p.id}
                   href={`/je-admin/proyectos/${p.id}`}
                   cells={[
-                    <span className="font-medium text-foreground">
+                    <span key="folio" className="font-medium text-foreground">
                       {p.folio ?? DASH}
                     </span>,
-                    <StatusBadge value={p.fase} withDot={false} />,
+                    <StatusBadge key="fase" value={p.fase} withDot={false} />,
                     money(p.totalConIva),
                   ]}
                 />
@@ -205,8 +205,8 @@ export function ClienteTabs({ detalle, puedeEditar }: ClienteTabsProps) {
                   href={d.url}
                   external
                   cells={[
-                    <StatusBadge value={d.tipo} withDot={false} />,
-                    <span className="font-medium text-foreground">
+                    <StatusBadge key="tipo" value={d.tipo} withDot={false} />,
+                    <span key="nombre" className="font-medium text-foreground">
                       {d.nombre}
                     </span>,
                     fmtFechaRel(d.createdAt),

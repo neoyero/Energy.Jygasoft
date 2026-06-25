@@ -11,6 +11,7 @@ import {
 } from "@/lib/admin/actions"
 import type { ContactoRow } from "@/lib/admin/queries"
 import { Button } from "@/components/ui/button"
+import { ConfirmButton } from "@/components/admin/ui/confirm-button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { EmptyState } from "@/components/admin/ui/empty-state"
@@ -284,16 +285,25 @@ export function ContactosPanel({
                     >
                       <Pencil className="size-3.5" aria-hidden />
                     </Button>
-                    <Button
-                      type="button"
+                    <ConfirmButton
                       size="icon-sm"
                       variant="ghost"
                       aria-label="Eliminar contacto"
                       disabled={pending}
-                      onClick={() => borrar(contacto.id)}
+                      destructive
+                      title="Eliminar contacto"
+                      description={
+                        <>
+                          Se eliminará el contacto{" "}
+                          <strong>{contacto.nombre}</strong>. Esta acción no se
+                          puede deshacer. ¿Continuar?
+                        </>
+                      }
+                      confirmLabel="Eliminar"
+                      onConfirm={() => borrar(contacto.id)}
                     >
                       <Trash2 className="size-3.5 text-destructive" aria-hidden />
-                    </Button>
+                    </ConfirmButton>
                   </div>
                 ) : null}
               </div>

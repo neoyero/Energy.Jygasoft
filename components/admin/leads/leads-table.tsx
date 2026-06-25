@@ -2,7 +2,7 @@
 
 import { useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { Eye, UserPlus } from "lucide-react"
+import { Eye, UserPlus, UserMinus } from "lucide-react"
 
 import type { LeadRow, VendedorOption } from "@/lib/admin/queries"
 import { asignarLead } from "@/lib/admin/actions"
@@ -131,7 +131,7 @@ export function LeadsTable({ rows, puedeEditar, vendedores }: LeadsTableProps) {
       try {
         await asignarLead(leadId, vendedorId)
         router.refresh()
-      } catch (error) {
+      } catch {
         // El detalle del error se registra del lado servidor; aqui no rompemos UI.
       }
     })
@@ -147,15 +147,38 @@ export function LeadsTable({ rows, puedeEditar, vendedores }: LeadsTableProps) {
             onSelect: irADetalle,
           },
           {
-            label: "Asignar a mi (Sin asignar)",
-            icon: <UserPlus className="size-4" />,
+            label: "Quitar asignación",
+            icon: <UserMinus className="size-4" />,
+            destructive: true,
             onSelect: (row) => reasignar(row.id, null),
+            hidden: (row) => row.vendedorId === null,
+            confirm: {
+              title: "Quitar asignación",
+              description: (row) => (
+                <>
+                  El lead{" "}
+                  <strong>{row.nombre ?? "sin nombre"}</strong> quedará{" "}
+                  <strong>sin vendedor asignado</strong>. ¿Continuar?
+                </>
+              ),
+              confirmLabel: "Quitar asignación",
+            },
           },
           ...vendedores.map<DataTableRowAction<LeadRow>>((vendedor) => ({
             label: `Asignar: ${vendedor.nombre}`,
             icon: <UserPlus className="size-4" />,
             onSelect: (row) => reasignar(row.id, vendedor.id),
             hidden: (row) => row.vendedorId === vendedor.id,
+            confirm: {
+              title: "Asignar lead",
+              description: (row: LeadRow) => (
+                <>
+                  El lead <strong>{row.nombre ?? "sin nombre"}</strong> se
+                  asignará a <strong>{vendedor.nombre}</strong>. ¿Continuar?
+                </>
+              ),
+              confirmLabel: "Asignar",
+            },
           })),
         ]
       : undefined
@@ -168,6 +191,7 @@ export function LeadsTable({ rows, puedeEditar, vendedores }: LeadsTableProps) {
         rowKey={(row) => row.id}
         onRowClick={irADetalle}
         rowActions={rowActions}
+        pageSize={12}
         defaultSort={{ columnId: "createdAt", direction: "desc" }}
         empty={{
           title: "Sin leads",

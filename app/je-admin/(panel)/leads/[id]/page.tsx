@@ -6,6 +6,7 @@ import { requirePerm } from "@/lib/admin/guard";
 import { can } from "@/lib/admin/rbac";
 import { formatMXN, fmtFechaRel } from "@/lib/admin/format";
 import { LeadActions } from "@/components/admin/lead-actions";
+import { LeadEditPanel } from "@/components/admin/leads/lead-edit-panel";
 import { PageHeader } from "@/components/admin/ui/page-header";
 import {
   Card,
@@ -15,6 +16,7 @@ import {
 } from "@/components/admin/ui/card";
 import { StatusBadge } from "@/components/admin/ui/status-badge";
 import { EmptyState } from "@/components/admin/ui/empty-state";
+import { ScoreBar } from "@/components/admin/leads/score-bar";
 
 export const dynamic = "force-dynamic";
 
@@ -67,9 +69,6 @@ export default async function LeadDetail({ params }: Params) {
   const vendedorNombre =
     vendedores.find((v) => v.id === lead.vendedorId)?.nombre ?? null;
 
-  // score 0..100 acotado para la barra simple.
-  const scorePct = Math.max(0, Math.min(100, lead.score));
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -83,19 +82,23 @@ export default async function LeadDetail({ params }: Params) {
       />
 
       {puedeEditar ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Gestión</CardTitle>
-          </CardHeader>
-          <CardContent className="mt-4">
-            <LeadActions
-              leadId={lead.id}
-              estado={lead.estado}
-              vendedorId={lead.vendedorId}
-              vendedores={vendedores}
-            />
-          </CardContent>
-        </Card>
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Gestión</CardTitle>
+            </CardHeader>
+            <CardContent className="mt-4">
+              <LeadActions
+                leadId={lead.id}
+                estado={lead.estado}
+                vendedorId={lead.vendedorId}
+                vendedores={vendedores}
+              />
+            </CardContent>
+          </Card>
+
+          <LeadEditPanel lead={lead} vendedores={vendedores} />
+        </>
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -163,21 +166,8 @@ export default async function LeadDetail({ params }: Params) {
               value={<StatusBadge value={lead.estado} />}
             />
             <Field
-              label={`Score (${lead.score})`}
-              value={
-                <div
-                  className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted"
-                  role="progressbar"
-                  aria-valuenow={lead.score}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                >
-                  <div
-                    className="h-full rounded-full bg-brand dark:bg-primary"
-                    style={{ width: `${scorePct}%` }}
-                  />
-                </div>
-              }
+              label="Score"
+              value={<ScoreBar score={lead.score} className="mt-1.5" />}
             />
             <Field label="Asignado" value={fmtFechaRel(lead.asignadoAt)} />
             <Field label="Calificado" value={fmtFechaRel(lead.calificadoAt)} />

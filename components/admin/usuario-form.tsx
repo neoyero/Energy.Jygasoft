@@ -8,6 +8,8 @@ import {
 } from "@/lib/admin/actions";
 import { ROLES } from "@/lib/admin/rbac";
 import { Button } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/admin/ui/confirm-button";
+import { ConfirmDialog } from "@/components/admin/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -119,6 +121,9 @@ export function UsuarioRowActions({
 }: UsuarioRowActionsProps) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // Rol mostrado (controlado) y rol propuesto a confirmar.
+  const [rolActual, setRolActual] = useState(rol);
+  const [rolPendiente, setRolPendiente] = useState<string | null>(null);
 
   function handle(action: () => Promise<{ ok: boolean; error?: string }>) {
     setError(null);
@@ -128,16 +133,30 @@ export function UsuarioRowActions({
     });
   }
 
+  // El select es controlado: al elegir un rol distinto se propone el cambio sin
+  // aplicarlo (el value sigue siendo rolActual hasta confirmar).
+  function pedirCambioRol(e: React.ChangeEvent<HTMLSelectElement>): void {
+    const value = e.target.value;
+    if (value === rolActual) return;
+    setRolPendiente(value);
+  }
+
+  function confirmarRol(): void {
+    const nuevo = rolPendiente;
+    setRolPendiente(null);
+    if (!nuevo) return;
+    setRolActual(nuevo);
+    handle(() =>
+      updateUsuario(id, { nombre, rol: nuevo, telefono: telefono ?? undefined }),
+    );
+  }
+
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
       <select
-        defaultValue={rol}
+        value={rolActual}
         disabled={pending}
-        onChange={(e) =>
-          handle(() =>
-            updateUsuario(id, { nombre, rol: e.target.value, telefono: telefono ?? undefined }),
-          )
-        }
+        onChange={pedirCambioRol}
         className={selectClass}
         aria-label="Rol"
       >
@@ -148,16 +167,48 @@ export function UsuarioRowActions({
         ))}
       </select>
 
-      <Button
+      <ConfirmButton
         size="sm"
         variant={activo ? "destructive" : "outline"}
         disabled={pending}
-        onClick={() => handle(() => toggleUsuarioActivo(id, !activo))}
+        title={activo ? "Desactivar acceso" : "Activar acceso"}
+        description={
+          activo ? (
+            <>
+              Se revocará el acceso de <strong>{nombre}</strong> al panel.
+              ¿Continuar?
+            </>
+          ) : (
+            <>
+              Se restablecerá el acceso de <strong>{nombre}</strong> al panel.
+              ¿Continuar?
+            </>
+          )
+        }
+        confirmLabel={activo ? "Desactivar" : "Activar"}
+        onConfirm={() => handle(() => toggleUsuarioActivo(id, !activo))}
       >
         {activo ? "Desactivar" : "Activar"}
-      </Button>
+      </ConfirmButton>
 
       {error && <span className="text-xs text-destructive">{error}</span>}
+
+      <ConfirmDialog
+        open={rolPendiente !== null}
+        onOpenChange={(open) => {
+          if (!open) setRolPendiente(null);
+        }}
+        title="Cambiar rol"
+        description={
+          <>
+            El rol de <strong>{nombre}</strong> cambiará a{" "}
+            <strong>{rolPendiente?.replace(/_/g, " ")}</strong>. Esto modifica
+            sus permisos en el sistema. ¿Continuar?
+          </>
+        }
+        confirmLabel="Cambiar rol"
+        onConfirm={confirmarRol}
+      />
     </div>
   );
 }
