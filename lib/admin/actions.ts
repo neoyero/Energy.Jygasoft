@@ -5,7 +5,15 @@ import { eq, and, ne, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { assertPerm, actorOf } from "@/lib/admin/guard";
-import { isScoped } from "@/lib/admin/queries";
+import {
+  isScoped,
+  getLeadsPage,
+  type DashboardScope,
+  type LeadsFiltros,
+  type LeadsPage,
+  type FetchLeadsInput,
+} from "@/lib/admin/queries";
+import type { Rol } from "@/lib/admin/rbac";
 import { calcularTotales, IVA_RATE } from "@/lib/admin/cotizacion-calc";
 
 type LeadEstado = (typeof schema.leadEstado.enumValues)[number];
@@ -566,6 +574,34 @@ export async function actualizarLead(
   revalidatePath("/je-admin/leads");
   revalidatePath(`/je-admin/leads/${id}`);
   return { ok: true };
+}
+
+/**
+ * Página de leads del lado del servidor (paginación de la tabla y scroll
+ * infinito por columna del kanban). Aplica permiso y scope por rol; devuelve la
+ * ventana solicitada + el total que cumple el filtro.
+ */
+export async function fetchLeads(input: FetchLeadsInput): Promise<LeadsPage> {
+  const user = await assertPerm("leads", "view");
+  const scope: DashboardScope = {
+    rol: (user.rol ?? "lectura") as Rol,
+    userId: (user.id ?? "") as string,
+  };
+
+  const f = input.filtros ?? {};
+  const filtros: LeadsFiltros = {
+    estado: (f.estado ?? undefined) as LeadsFiltros["estado"],
+    canal: (f.canal ?? undefined) as LeadsFiltros["canal"],
+    vendedorId: f.vendedorId,
+    scoreMin: typeof f.scoreMin === "number" ? f.scoreMin : undefined,
+    busqueda: f.busqueda,
+    desde: f.desde,
+    hasta: f.hasta,
+  };
+
+  const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
+  const offset = Math.max(0, Math.trunc(input.offset));
+  return getLeadsPage(scope, filtros, { limit, offset });
 }
 
 /* ──────────────────────────── Asesores ──────────────────────────── */

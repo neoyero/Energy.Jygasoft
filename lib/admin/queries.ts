@@ -750,10 +750,8 @@ const OPORTUNIDAD_QUERY_LIMIT = 500;
  * busqueda (ilike nombre/email/telefono), desde (gte) y hasta (lt) sobre
  * created_at. Incluye nombre del vendedor vía leftJoin a usuarios.
  */
-export async function getLeadsFiltrados(
-  scope: DashboardScope,
-  filtros: LeadsFiltros = {},
-): Promise<LeadRow[]> {
+/** Construye las condiciones WHERE de un listado de leads (scope + filtros). */
+function leadsWhereConds(scope: DashboardScope, filtros: LeadsFiltros): SQL[] {
   const conds: SQL[] = [];
 
   if (isScoped(scope.rol)) {
@@ -789,49 +787,125 @@ export async function getLeadsFiltrados(
     if (busquedaCond) conds.push(busquedaCond);
   }
 
+  return conds;
+}
+
+/** Proyección estándar de fila de lead para listados (tabla/kanban). */
+const leadListSelect = {
+  id: schema.leads.id,
+  nombre: schema.leads.nombre,
+  email: schema.leads.email,
+  telefono: schema.leads.telefono,
+  segmento: schema.leads.segmento,
+  canal: schema.leads.canal,
+  score: schema.leads.score,
+  estado: schema.leads.estado,
+  vendedorId: schema.leads.vendedorId,
+  vendedorNombre: schema.usuarios.nombre,
+  municipio: schema.leads.municipio,
+  estadoMx: schema.leads.estadoMx,
+  consumoKwhMes: schema.leads.consumoKwhMes,
+  reciboMxn: schema.leads.reciboMxn,
+  sizingKwp: schema.leads.sizingKwp,
+  createdAt: schema.leads.createdAt,
+};
+
+/** Normaliza una fila cruda (numeric -> number) a LeadRow. */
+function mapLeadRow(row: {
+  id: string;
+  nombre: string | null;
+  email: string | null;
+  telefono: string | null;
+  segmento: string | null;
+  canal: string | null;
+  score: number;
+  estado: string;
+  vendedorId: string | null;
+  vendedorNombre: string | null;
+  municipio: string | null;
+  estadoMx: string | null;
+  consumoKwhMes: string | null;
+  reciboMxn: string | null;
+  sizingKwp: string | null;
+  createdAt: string;
+}): LeadRow {
+  return {
+    ...row,
+    consumoKwhMes: numOrNull(row.consumoKwhMes),
+    reciboMxn: numOrNull(row.reciboMxn),
+    sizingKwp: numOrNull(row.sizingKwp),
+  };
+}
+
+export async function getLeadsFiltrados(
+  scope: DashboardScope,
+  filtros: LeadsFiltros = {},
+): Promise<LeadRow[]> {
+  const conds = leadsWhereConds(scope, filtros);
+
   const rows = await db
-    .select({
-      id: schema.leads.id,
-      nombre: schema.leads.nombre,
-      email: schema.leads.email,
-      telefono: schema.leads.telefono,
-      segmento: schema.leads.segmento,
-      canal: schema.leads.canal,
-      score: schema.leads.score,
-      estado: schema.leads.estado,
-      vendedorId: schema.leads.vendedorId,
-      vendedorNombre: schema.usuarios.nombre,
-      municipio: schema.leads.municipio,
-      estadoMx: schema.leads.estadoMx,
-      consumoKwhMes: schema.leads.consumoKwhMes,
-      reciboMxn: schema.leads.reciboMxn,
-      sizingKwp: schema.leads.sizingKwp,
-      createdAt: schema.leads.createdAt,
-    })
+    .select(leadListSelect)
     .from(schema.leads)
     .leftJoin(schema.usuarios, eq(schema.leads.vendedorId, schema.usuarios.id))
     .where(conds.length ? and(...conds) : undefined)
     .orderBy(desc(schema.leads.createdAt))
     .limit(LEAD_QUERY_LIMIT);
 
-  return rows.map((row) => ({
-    id: row.id,
-    nombre: row.nombre,
-    email: row.email,
-    telefono: row.telefono,
-    segmento: row.segmento,
-    canal: row.canal,
-    score: row.score,
-    estado: row.estado,
-    vendedorId: row.vendedorId,
-    vendedorNombre: row.vendedorNombre,
-    municipio: row.municipio,
-    estadoMx: row.estadoMx,
-    consumoKwhMes: numOrNull(row.consumoKwhMes),
-    reciboMxn: numOrNull(row.reciboMxn),
-    sizingKwp: numOrNull(row.sizingKwp),
-    createdAt: row.createdAt,
-  }));
+  return rows.map(mapLeadRow);
+}
+
+export interface LeadsPage {
+  rows: LeadRow[];
+  /** Total de filas que cumplen el filtro (para la paginación). */
+  total: number;
+}
+
+/** Filtros serializables que el cliente envía al server action fetchLeads. */
+export interface FetchLeadsFiltros {
+  estado?: string | null;
+  canal?: string | null;
+  /** null = sin asignar; undefined = sin filtro de responsable. */
+  vendedorId?: string | null;
+  scoreMin?: number | null;
+  busqueda?: string;
+  desde?: string;
+  hasta?: string;
+}
+
+export interface FetchLeadsInput {
+  filtros?: FetchLeadsFiltros;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * Página de leads del lado del servidor: cuenta el total que cumple el filtro y
+ * devuelve solo la ventana [offset, offset+limit). Usada por la tabla
+ * (paginación) y por el kanban (scroll infinito por columna, vía `estado`).
+ */
+export async function getLeadsPage(
+  scope: DashboardScope,
+  filtros: LeadsFiltros,
+  opts: { limit: number; offset: number },
+): Promise<LeadsPage> {
+  const conds = leadsWhereConds(scope, filtros);
+  const where = conds.length ? and(...conds) : undefined;
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(schema.leads)
+    .where(where);
+
+  const rows = await db
+    .select(leadListSelect)
+    .from(schema.leads)
+    .leftJoin(schema.usuarios, eq(schema.leads.vendedorId, schema.usuarios.id))
+    .where(where)
+    .orderBy(desc(schema.leads.createdAt))
+    .limit(opts.limit)
+    .offset(opts.offset);
+
+  return { rows: rows.map(mapLeadRow), total: Number(total) };
 }
 
 /**

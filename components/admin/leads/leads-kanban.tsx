@@ -1,11 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { Search } from "lucide-react"
 
 import { leadEstado } from "@/db/schema"
-import type { LeadRow } from "@/lib/admin/queries"
+import type { FetchLeadsFiltros, LeadRow } from "@/lib/admin/queries"
+import { fetchLeads } from "@/lib/admin/actions"
 import { labelFor } from "@/components/admin/ui/status-badge"
 import { StatusBadge } from "@/components/admin/ui/status-badge"
 import { Card } from "@/components/admin/ui/card"
@@ -15,39 +16,21 @@ import { cn } from "@/lib/utils"
 
 const ESTADOS = leadEstado.enumValues
 
-/** Tarjetas que se cargan por tanda al hacer scroll dentro de una columna. */
+/** Tarjetas que se traen del servidor por tanda al hacer scroll. */
 const PAGE_SIZE = 8
 
 export interface LeadsKanbanProps {
-  rows: ReadonlyArray<LeadRow>
-}
-
-/** Normaliza texto para búsqueda: minúsculas y sin acentos. */
-function normalizar(texto: string): string {
-  return texto
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
+  /** Filtros activos (server-side); cada columna añade su propio estado. */
+  filtros: FetchLeadsFiltros
 }
 
 /**
- * Vista kanban del listado de leads: una columna por estado (leadEstado). Cada
- * columna tiene su propio buscador (nombre/teléfono/email) y carga incremental
- * por scroll (scroll infinito dentro de la columna). Datos ya filtrados en el
- * contenedor (LeadsView); aquí solo se agrupan por estado.
+ * Vista kanban del listado de leads: una columna por estado. Cada columna trae
+ * SUS leads del servidor (fetchLeads con el estado), con buscador propio y
+ * scroll infinito (carga incremental por offset).
  */
-export function LeadsKanban({ rows }: LeadsKanbanProps) {
-  // Agrupa filas por estado, preservando el orden recibido dentro de cada grupo.
-  const porEstado = useMemo(() => {
-    const map = new Map<string, LeadRow[]>()
-    for (const estado of ESTADOS) map.set(estado, [])
-    for (const row of rows) {
-      const grupo = map.get(row.estado)
-      if (grupo) grupo.push(row)
-    }
-    return map
-  }, [rows])
-
+export function LeadsKanban({ filtros }: LeadsKanbanProps) {
+  const filtrosKey = JSON.stringify(filtros)
   return (
     <Card padding="none" className="overflow-hidden">
       <div className="flex items-start gap-3 overflow-x-auto p-3">
@@ -55,7 +38,8 @@ export function LeadsKanban({ rows }: LeadsKanbanProps) {
           <KanbanColumn
             key={estado}
             estado={estado}
-            items={porEstado.get(estado) ?? []}
+            filtros={filtros}
+            filtrosKey={filtrosKey}
           />
         ))}
       </div>
@@ -63,57 +47,90 @@ export function LeadsKanban({ rows }: LeadsKanbanProps) {
   )
 }
 
-/** Columna de un estado: buscador propio + lista con scroll infinito. */
+/** Columna de un estado: buscador propio + lista con scroll infinito server-side. */
 function KanbanColumn({
   estado,
-  items,
+  filtros,
+  filtrosKey,
 }: {
   estado: string
-  items: LeadRow[]
+  filtros: FetchLeadsFiltros
+  filtrosKey: string
 }) {
   const [q, setQ] = useState("")
-  const [visible, setVisible] = useState(PAGE_SIZE)
+  const [qEff, setQEff] = useState("")
+  const [items, setItems] = useState<LeadRow[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  // Token de petición: descarta respuestas obsoletas tras cambiar filtro/búsqueda.
+  const reqRef = useRef(0)
 
-  // Filtra dentro de la columna por nombre, teléfono o email.
-  const filtrados = useMemo(() => {
-    const termino = normalizar(q.trim())
-    if (termino === "") return items
-    return items.filter((lead) =>
-      normalizar(
-        [lead.nombre, lead.telefono, lead.email].filter(Boolean).join(" "),
-      ).includes(termino),
-    )
-  }, [items, q])
-
-  // Reinicia la carga incremental al cambiar el filtro o los datos.
+  // Debounce de la búsqueda de la columna.
   useEffect(() => {
-    setVisible(PAGE_SIZE)
-  }, [q, items])
+    const t = setTimeout(() => setQEff(q), 250)
+    return () => clearTimeout(t)
+  }, [q])
 
-  const mostrados = filtrados.slice(0, visible)
-  const hayMas = visible < filtrados.length
+  // Filtros efectivos de la columna (incluye su estado y su búsqueda).
+  const colFiltros = useMemo<FetchLeadsFiltros>(
+    () => ({ ...filtros, estado, busqueda: qEff.trim() || filtros.busqueda }),
+    // filtros se captura por closure; filtrosKey es la dependencia estable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filtrosKey, estado, qEff],
+  )
 
-  // Scroll infinito: al entrar el centinela en el área visible de la columna,
-  // se carga la siguiente tanda.
+  // Primera página (reinicia al cambiar filtros o búsqueda de la columna).
   useEffect(() => {
-    if (!hayMas) return
+    const token = ++reqRef.current
+    setLoading(true)
+    fetchLeads({ filtros: colFiltros, limit: PAGE_SIZE, offset: 0 })
+      .then((res) => {
+        if (token === reqRef.current) {
+          setItems(res.rows)
+          setTotal(res.total)
+          setLoading(false)
+        }
+      })
+      .catch(() => {
+        if (token === reqRef.current) setLoading(false)
+      })
+  }, [colFiltros])
+
+  const hayMas = items.length < total
+
+  const cargarMas = useCallback(() => {
+    if (loadingMore) return
+    setLoadingMore(true)
+    const token = reqRef.current
+    fetchLeads({ filtros: colFiltros, limit: PAGE_SIZE, offset: items.length })
+      .then((res) => {
+        if (token === reqRef.current) {
+          setItems((prev) => [...prev, ...res.rows])
+          setTotal(res.total)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingMore(false))
+  }, [colFiltros, items.length, loadingMore])
+
+  // Scroll infinito: al ver el centinela dentro de la columna, carga otra tanda.
+  useEffect(() => {
+    if (!hayMas || loading) return
     const root = scrollRef.current
     const target = sentinelRef.current
     if (!root || !target) return
-
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setVisible((v) => v + PAGE_SIZE)
-        }
+        if (entries.some((e) => e.isIntersecting)) cargarMas()
       },
       { root, rootMargin: "0px 0px 160px 0px" },
     )
     io.observe(target)
     return () => io.disconnect()
-  }, [hayMas, filtrados.length])
+  }, [hayMas, loading, cargarMas])
 
   return (
     <section
@@ -127,7 +144,7 @@ function KanbanColumn({
           {labelFor(estado)}
         </h2>
         <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
-          {items.length}
+          {total}
         </span>
       </header>
 
@@ -158,9 +175,13 @@ function KanbanColumn({
         ref={scrollRef}
         className="flex max-h-[32rem] flex-col gap-2 overflow-y-auto px-2.5 pb-2.5"
       >
-        {mostrados.length > 0 ? (
+        {loading ? (
+          <p className="py-6 text-center text-xs text-stone-400 dark:text-muted-foreground">
+            Cargando…
+          </p>
+        ) : items.length > 0 ? (
           <>
-            {mostrados.map((lead) => (
+            {items.map((lead) => (
               <LeadKanbanCard key={lead.id} lead={lead} />
             ))}
             {hayMas ? (
@@ -168,13 +189,13 @@ function KanbanColumn({
                 ref={sentinelRef}
                 className="py-2 text-center text-xs text-stone-400 dark:text-muted-foreground"
               >
-                Cargando…
+                {loadingMore ? "Cargando…" : ""}
               </div>
             ) : null}
           </>
         ) : (
           <p className="flex min-h-24 items-center justify-center rounded-xl border border-dashed border-stone-300 px-3 py-6 text-center text-xs text-stone-400 dark:border-border dark:text-muted-foreground">
-            {q.trim() ? "Sin coincidencias" : "Vacío"}
+            {qEff.trim() ? "Sin coincidencias" : "Vacío"}
           </p>
         )}
       </div>

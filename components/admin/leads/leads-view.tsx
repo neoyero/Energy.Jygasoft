@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { LayoutGrid, Plus, Table2, X } from "lucide-react"
 
 import type {
-  LeadRow,
+  FetchLeadsFiltros,
   LeadsResumen,
   VendedorOption,
 } from "@/lib/admin/queries"
@@ -24,40 +24,46 @@ import { cn } from "@/lib/utils"
 type Vista = "tabla" | "kanban"
 
 export interface LeadsViewProps {
-  leadsIniciales: ReadonlyArray<LeadRow>
   resumen: LeadsResumen
   vendedores: ReadonlyArray<VendedorOption>
-  /** RBAC leads:edit -> habilita acciones de reasignacion. */
+  /** RBAC leads:edit -> habilita acciones de reasignacion y alta. */
   puedeEditar: boolean
   /** vendedor/preventa: oculta el filtro de vendedor. */
   rolScoped: boolean
 }
 
-/** Normaliza texto para busqueda: minusculas y sin acentos (marcas diacriticas). */
-function normalizar(texto: string): string {
-  return texto
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
+/** yyyy-mm-dd -> día siguiente (para un rango "hasta" inclusivo con `<`). */
+function diaSiguiente(yyyymmdd: string): string {
+  const d = new Date(`${yyyymmdd}T00:00:00`)
+  d.setDate(d.getDate() + 1)
+  return d.toISOString().slice(0, 10)
 }
 
-/**
- * Devuelve la fecha (epoch ms) de createdAt o null si es invalida.
- */
-function fechaMs(iso: string | null): number | null {
-  if (!iso) return null
-  const ms = new Date(iso).getTime()
-  return Number.isNaN(ms) ? null : ms
+/** Mapea los filtros de la UI a los filtros serializables del servidor. */
+function aFiltrosServidor(filtros: LeadsFiltrosUI): FetchLeadsFiltros {
+  return {
+    estado: filtros.estado ?? undefined,
+    canal: filtros.canal ?? undefined,
+    vendedorId:
+      filtros.vendedor === null
+        ? undefined
+        : filtros.vendedor === SIN_ASIGNAR
+          ? null
+          : filtros.vendedor,
+    scoreMin: typeof filtros.scoreMin === "number" ? filtros.scoreMin : undefined,
+    busqueda: filtros.busqueda.trim() || undefined,
+    desde: filtros.desde || undefined,
+    hasta: filtros.hasta ? diaSiguiente(filtros.hasta) : undefined,
+  }
 }
 
 /**
  * Contenedor cliente del listado de leads. Mantiene el estado de filtros y la
- * vista activa (tabla/kanban), aplica una busqueda con debounce simple y filtra
- * los leads ya cargados con useMemo. Renderiza chips de resumen por estado
- * (clic = filtra), la barra de filtros y la vista seleccionada.
+ * vista activa (tabla/kanban). Los filtros se serializan y se pasan a la vista,
+ * que trae los datos del servidor (paginación / scroll infinito). Renderiza los
+ * chips de resumen por estado, la barra de filtros, el alta y la vista activa.
  */
 export function LeadsView({
-  leadsIniciales,
   resumen,
   vendedores,
   puedeEditar,
@@ -67,8 +73,8 @@ export function LeadsView({
   const [vista, setVista] = useState<Vista>("tabla")
   const [creando, setCreando] = useState(false)
 
-  // Debounce simple de la busqueda: el input actualiza filtros.busqueda de
-  // inmediato, pero el termino efectivo se aplica 250 ms despues.
+  // Debounce simple de la búsqueda: el input actualiza filtros.busqueda de
+  // inmediato, pero el término efectivo (que dispara fetch) se aplica 250 ms después.
   const [busquedaEfectiva, setBusquedaEfectiva] = useState("")
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -77,51 +83,13 @@ export function LeadsView({
     return () => clearTimeout(timer)
   }, [filtros.busqueda])
 
-  // Filtrado en cliente sobre los datos ya cargados (inmutable: nuevo array).
-  const leadsFiltrados = useMemo(() => {
-    const termino = normalizar(busquedaEfectiva.trim())
-    const desdeMs = fechaMs(filtros.desde)
-    // "hasta" incluye todo el dia: sumamos ~24h en epoch.
-    const hastaMs = (() => {
-      const base = fechaMs(filtros.hasta)
-      return base === null ? null : base + 24 * 60 * 60 * 1000
-    })()
+  // Filtros server-side derivados (usa la búsqueda con debounce).
+  const fetchFiltros = useMemo(
+    () => aFiltrosServidor({ ...filtros, busqueda: busquedaEfectiva }),
+    [filtros, busquedaEfectiva],
+  )
 
-    return leadsIniciales.filter((lead) => {
-      if (filtros.estado !== null && lead.estado !== filtros.estado) return false
-      if (filtros.canal !== null && lead.canal !== filtros.canal) return false
-
-      if (filtros.vendedor !== null) {
-        if (filtros.vendedor === SIN_ASIGNAR) {
-          if (lead.vendedorId !== null) return false
-        } else if (lead.vendedorId !== filtros.vendedor) {
-          return false
-        }
-      }
-
-      if (filtros.scoreMin !== null && lead.score < filtros.scoreMin) return false
-
-      if (desdeMs !== null || hastaMs !== null) {
-        const creado = fechaMs(lead.createdAt)
-        if (creado === null) return false
-        if (desdeMs !== null && creado < desdeMs) return false
-        if (hastaMs !== null && creado >= hastaMs) return false
-      }
-
-      if (termino !== "") {
-        const campos = normalizar(
-          [lead.nombre, lead.email, lead.telefono, lead.municipio, lead.estadoMx]
-            .filter(Boolean)
-            .join(" ")
-        )
-        if (!campos.includes(termino)) return false
-      }
-
-      return true
-    })
-  }, [leadsIniciales, busquedaEfectiva, filtros])
-
-  // Alterna el chip de estado: si ya esta activo, lo limpia; si no, lo aplica.
+  // Alterna el chip de estado: si ya está activo, lo limpia; si no, lo aplica.
   function toggleEstado(estado: string): void {
     setFiltros((prev) => ({
       ...prev,
@@ -150,7 +118,7 @@ export function LeadsView({
         ))}
       </div>
 
-      {/* Filtros + toggle de vista */}
+      {/* Filtros + acciones */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <LeadsFilters
           filtros={filtros}
@@ -216,12 +184,12 @@ export function LeadsView({
       {/* Vista activa */}
       {vista === "tabla" ? (
         <LeadsTable
-          rows={leadsFiltrados}
+          filtros={fetchFiltros}
           puedeEditar={puedeEditar}
           vendedores={vendedores}
         />
       ) : (
-        <LeadsKanban rows={leadsFiltrados} />
+        <LeadsKanban filtros={fetchFiltros} />
       )}
     </div>
   )

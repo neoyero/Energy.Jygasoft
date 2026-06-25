@@ -80,6 +80,18 @@ export interface DataTableSort {
   direction: SortDirection
 }
 
+/**
+ * Paginación controlada (server-side): los datos recibidos YA son la página
+ * actual; el componente solo renderiza el footer y delega el cambio de página.
+ */
+export interface DataTablePageControl {
+  page: number
+  pageCount: number
+  total: number
+  pageSize: number
+  onPageChange: (page: number) => void
+}
+
 export interface DataTableProps<T> {
   /** Datos ya resueltos (RSC -> client). */
   data: ReadonlyArray<T>
@@ -108,6 +120,8 @@ export interface DataTableProps<T> {
   bordered?: boolean
   /** Si se define, pagina en cliente con N filas por página (footer con nav). */
   pageSize?: number
+  /** Paginación server-side (excluye pageSize): los datos son la página actual. */
+  pageControl?: DataTablePageControl
   className?: string
 }
 
@@ -181,6 +195,7 @@ export function DataTable<T>({
   density = "comfortable",
   bordered = true,
   pageSize,
+  pageControl,
   className,
 }: DataTableProps<T>) {
   // Estado de orden no controlado (si no se pasa `sort` desde fuera).
@@ -224,13 +239,22 @@ export function DataTable<T>({
     setPage(1)
   }, [data, pageSize])
 
-  const pageCount = pageSize
+  // Modo server (pageControl) vs cliente (pageSize) vs sin paginar.
+  const serverPaged = pageControl !== undefined
+  const effPageSize = serverPaged ? pageControl.pageSize : (pageSize ?? 0)
+  const clientPageCount = pageSize
     ? Math.max(1, Math.ceil(sortedData.length / pageSize))
     : 1
-  const currentPage = Math.min(page, pageCount)
-  const pagedData = pageSize
-    ? sortedData.slice((currentPage - 1) * pageSize, currentPage * pageSize)
-    : sortedData
+  const effPage = serverPaged ? pageControl.page : Math.min(page, clientPageCount)
+  const effPageCount = serverPaged ? pageControl.pageCount : clientPageCount
+  const effTotal = serverPaged ? pageControl.total : sortedData.length
+  // En server-mode los datos recibidos YA son la página: no se recorta.
+  const pagedData =
+    !serverPaged && pageSize
+      ? sortedData.slice((effPage - 1) * pageSize, effPage * pageSize)
+      : sortedData
+  const goToPage = (p: number) =>
+    serverPaged ? pageControl.onPageChange(p) : setPage(p)
 
   // Ciclo de orden por columna: none -> asc -> desc -> none.
   function handleSort(column: DataTableColumn<T>): void {
@@ -427,39 +451,40 @@ export function DataTable<T>({
     "disabled:pointer-events-none disabled:opacity-40"
   )
 
-  const footer =
-    pageSize && !loading && sortedData.length > 0 ? (
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 px-4 py-3 dark:border-border">
+  const showFooter =
+    !loading && (serverPaged ? effTotal > 0 : Boolean(pageSize) && effTotal > 0)
+
+  const footer = showFooter ? (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 px-4 py-3 dark:border-border">
+      <span className="text-sm text-stone-500 tabular-nums dark:text-muted-foreground">
+        Mostrando {effTotal === 0 ? 0 : (effPage - 1) * effPageSize + 1}–
+        {Math.min(effPage * effPageSize, effTotal)} de {effTotal}
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => goToPage(Math.max(1, effPage - 1))}
+          disabled={effPage <= 1}
+          className={pageBtn}
+        >
+          <ChevronLeft className="size-4" aria-hidden />
+          Anterior
+        </button>
         <span className="text-sm text-stone-500 tabular-nums dark:text-muted-foreground">
-          Mostrando {(currentPage - 1) * pageSize + 1}–
-          {Math.min(currentPage * pageSize, sortedData.length)} de{" "}
-          {sortedData.length}
+          Página {effPage} de {effPageCount}
         </span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={currentPage <= 1}
-            className={pageBtn}
-          >
-            <ChevronLeft className="size-4" aria-hidden />
-            Anterior
-          </button>
-          <span className="text-sm text-stone-500 tabular-nums dark:text-muted-foreground">
-            Página {currentPage} de {pageCount}
-          </span>
-          <button
-            type="button"
-            onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-            disabled={currentPage >= pageCount}
-            className={pageBtn}
-          >
-            Siguiente
-            <ChevronRight className="size-4" aria-hidden />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => goToPage(Math.min(effPageCount, effPage + 1))}
+          disabled={effPage >= effPageCount}
+          className={pageBtn}
+        >
+          Siguiente
+          <ChevronRight className="size-4" aria-hidden />
+        </button>
       </div>
-    ) : null
+    </div>
+  ) : null
 
   const content = (
     <>

@@ -3,7 +3,6 @@ import { Users } from "lucide-react"
 import { requirePerm } from "@/lib/admin/guard"
 import { can, type Rol } from "@/lib/admin/rbac"
 import {
-  getLeadsFiltrados,
   getLeadsResumen,
   getAsesoresAsignables,
   isScoped,
@@ -27,9 +26,9 @@ export default async function LeadsPage() {
     userId: user.id,
   }
 
-  // Asignables a un lead = asesores activos vinculados a un usuario.
-  const [leads, resumen, vendedores] = await Promise.all([
-    getLeadsFiltrados(scope, {}),
+  // Resumen por estado (chips) + asesores asignables. Los leads se traen del
+  // lado del cliente con paginación/scroll infinito (server actions).
+  const [resumen, vendedores] = await Promise.all([
     getLeadsResumen(scope),
     getAsesoresAsignables(),
   ])
@@ -46,7 +45,6 @@ export default async function LeadsPage() {
       />
 
       <LeadsView
-        leadsIniciales={leads}
         resumen={resumen}
         vendedores={vendedores}
         puedeEditar={puedeEditar}

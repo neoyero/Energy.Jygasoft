@@ -1,11 +1,16 @@
 "use client"
 
-import { useTransition } from "react"
+import { useCallback, useEffect, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { Eye, UserPlus, UserMinus } from "lucide-react"
 
-import type { LeadRow, VendedorOption } from "@/lib/admin/queries"
-import { asignarLead } from "@/lib/admin/actions"
+import type {
+  FetchLeadsFiltros,
+  LeadRow,
+  LeadsPage,
+  VendedorOption,
+} from "@/lib/admin/queries"
+import { asignarLead, fetchLeads } from "@/lib/admin/actions"
 import { fmtFechaRel } from "@/lib/admin/format"
 import {
   DataTable,
@@ -16,23 +21,82 @@ import { StatusBadge } from "@/components/admin/ui/status-badge"
 import { CanalIcon } from "@/components/admin/leads/canal-icon"
 import { ScoreBar } from "@/components/admin/leads/score-bar"
 
+const PAGE_SIZE = 12
+
 export interface LeadsTableProps {
-  rows: ReadonlyArray<LeadRow>
+  /** Filtros activos (server-side); cambia => recarga desde la página 1. */
+  filtros: FetchLeadsFiltros
   /** Habilita el menu de acciones por fila (RBAC leads:edit). */
   puedeEditar: boolean
-  /** Vendedores para el submenu "Asignar". */
+  /** Asesores para el submenu "Asignar". */
   vendedores: ReadonlyArray<VendedorOption>
 }
 
 /**
- * Tabla del listado de leads sobre DataTable<LeadRow>. Datos ya filtrados en el
- * contenedor (LeadsView). Click en fila abre el detalle; el menu por fila
- * permite ver detalle y reasignar (server action asignarLead) cuando el rol
- * tiene permiso de edicion.
+ * Tabla del listado de leads con paginación SERVER-SIDE: cada página se trae con
+ * fetchLeads (limit/offset). Al cambiar los filtros vuelve a la página 1. El
+ * menu por fila permite ver detalle y reasignar (a un asesor).
  */
-export function LeadsTable({ rows, puedeEditar, vendedores }: LeadsTableProps) {
+export function LeadsTable({ filtros, puedeEditar, vendedores }: LeadsTableProps) {
   const router = useRouter()
-  const [isPending, startTransition] = useTransition()
+  const [, startTransition] = useTransition()
+  const [page, setPage] = useState(1)
+  const [data, setData] = useState<LeadsPage>({ rows: [], total: 0 })
+  const [loading, setLoading] = useState(true)
+
+  // Clave estable de los filtros para los efectos (el objeto cambia de identidad
+  // en cada render del contenedor).
+  const filtrosKey = JSON.stringify(filtros)
+
+  const fetchPage = useCallback(
+    (p: number): Promise<LeadsPage> =>
+      fetchLeads({ filtros, limit: PAGE_SIZE, offset: (p - 1) * PAGE_SIZE }),
+    // filtros se captura por closure; filtrosKey es la dependencia estable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filtrosKey],
+  )
+
+  // Al cambiar los filtros, vuelve a la página 1.
+  useEffect(() => {
+    setPage(1)
+  }, [filtrosKey])
+
+  // Carga la página actual (con guard anti-carrera).
+  useEffect(() => {
+    let stale = false
+    setLoading(true)
+    fetchPage(page)
+      .then((res) => {
+        if (!stale) {
+          setData(res)
+          setLoading(false)
+        }
+      })
+      .catch(() => {
+        if (!stale) setLoading(false)
+      })
+    return () => {
+      stale = true
+    }
+  }, [fetchPage, page])
+
+  function irADetalle(row: LeadRow): void {
+    router.push(`/je-admin/leads/${row.id}`)
+  }
+
+  // Reasigna y recarga la página actual.
+  function reasignar(leadId: string, vendedorId: string | null): void {
+    startTransition(async () => {
+      try {
+        await asignarLead(leadId, vendedorId)
+        const res = await fetchPage(page)
+        setData(res)
+        router.refresh()
+      } catch {
+        // El detalle del error se registra del lado servidor; aqui no rompemos UI.
+      }
+    })
+  }
 
   const columns: ReadonlyArray<DataTableColumn<LeadRow>> = [
     {
@@ -85,7 +149,6 @@ export function LeadsTable({ rows, puedeEditar, vendedores }: LeadsTableProps) {
       id: "score",
       header: "Score",
       accessor: (row) => row.score,
-      sortable: true,
       className: "w-36",
       render: (row) => <ScoreBar score={row.score} />,
     },
@@ -93,7 +156,6 @@ export function LeadsTable({ rows, puedeEditar, vendedores }: LeadsTableProps) {
       id: "estado",
       header: "Estado",
       accessor: (row) => row.estado,
-      sortable: true,
       render: (row) => <StatusBadge value={row.estado} />,
     },
     {
@@ -111,7 +173,6 @@ export function LeadsTable({ rows, puedeEditar, vendedores }: LeadsTableProps) {
       id: "createdAt",
       header: "Creado",
       accessor: (row) => row.createdAt,
-      sortable: true,
       hideOnMobile: true,
       render: (row) => (
         <span className="text-stone-600 dark:text-muted-foreground">
@@ -120,22 +181,6 @@ export function LeadsTable({ rows, puedeEditar, vendedores }: LeadsTableProps) {
       ),
     },
   ]
-
-  function irADetalle(row: LeadRow): void {
-    router.push(`/je-admin/leads/${row.id}`)
-  }
-
-  // Reasigna un lead (o lo deja sin asignar) via server action en transicion.
-  function reasignar(leadId: string, vendedorId: string | null): void {
-    startTransition(async () => {
-      try {
-        await asignarLead(leadId, vendedorId)
-        router.refresh()
-      } catch {
-        // El detalle del error se registra del lado servidor; aqui no rompemos UI.
-      }
-    })
-  }
 
   // Construye el menu de acciones por fila solo si el rol puede editar.
   const rowActions: ReadonlyArray<DataTableRowAction<LeadRow>> | undefined =
@@ -156,9 +201,8 @@ export function LeadsTable({ rows, puedeEditar, vendedores }: LeadsTableProps) {
               title: "Quitar asignación",
               description: (row) => (
                 <>
-                  El lead{" "}
-                  <strong>{row.nombre ?? "sin nombre"}</strong> quedará{" "}
-                  <strong>sin vendedor asignado</strong>. ¿Continuar?
+                  El lead <strong>{row.nombre ?? "sin nombre"}</strong> quedará{" "}
+                  <strong>sin asesor asignado</strong>. ¿Continuar?
                 </>
               ),
               confirmLabel: "Quitar asignación",
@@ -183,21 +227,27 @@ export function LeadsTable({ rows, puedeEditar, vendedores }: LeadsTableProps) {
         ]
       : undefined
 
+  const pageCount = Math.max(1, Math.ceil(data.total / PAGE_SIZE))
+
   return (
-    <div aria-busy={isPending}>
-      <DataTable<LeadRow>
-        data={rows}
-        columns={columns}
-        rowKey={(row) => row.id}
-        onRowClick={irADetalle}
-        rowActions={rowActions}
-        pageSize={12}
-        defaultSort={{ columnId: "createdAt", direction: "desc" }}
-        empty={{
-          title: "Sin leads",
-          description: "No hay leads que coincidan con los filtros actuales.",
-        }}
-      />
-    </div>
+    <DataTable<LeadRow>
+      data={data.rows}
+      columns={columns}
+      rowKey={(row) => row.id}
+      onRowClick={irADetalle}
+      rowActions={rowActions}
+      loading={loading}
+      pageControl={{
+        page,
+        pageCount,
+        total: data.total,
+        pageSize: PAGE_SIZE,
+        onPageChange: setPage,
+      }}
+      empty={{
+        title: "Sin leads",
+        description: "No hay leads que coincidan con los filtros actuales.",
+      }}
+    />
   )
 }
