@@ -1,43 +1,53 @@
-import { getClientes } from "@/lib/admin/queries";
+import { Users } from "lucide-react"
 
-export const dynamic = "force-dynamic";
+import { requirePerm } from "@/lib/admin/guard"
+import { can, type Rol } from "@/lib/admin/rbac"
+import {
+  getClientesFiltrados,
+  getVendedores,
+  isScoped,
+  type DashboardScope,
+} from "@/lib/admin/queries"
+import { PageHeader } from "@/components/admin/ui/page-header"
+import { ClientesView } from "@/components/admin/clientes/clientes-view"
 
+export const dynamic = "force-dynamic"
+
+/**
+ * Listado de Clientes (D4). Server component: valida permiso (clientes:view),
+ * arma el scope por rol y resuelve en paralelo los clientes (sin filtros) y los
+ * vendedores. Delega el filtrado en cliente y las vistas a ClientesView.
+ */
 export default async function ClientesPage() {
-  const clientes = await getClientes();
+  const user = await requirePerm("clientes", "view")
+
+  const scope: DashboardScope = {
+    rol: (user.rol ?? "lectura") as Rol,
+    userId: user.id,
+  }
+
+  const [clientes, vendedores] = await Promise.all([
+    getClientesFiltrados(scope, {}),
+    getVendedores(),
+  ])
+
+  const puedeEditar = can(user.rol, "clientes", "edit")
+  const rolScoped = isScoped(scope.rol)
+
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Clientes</h1>
-      <div className="overflow-x-auto rounded-xl border border-border">
-        <table className="w-full text-sm">
-          <thead className="border-b border-border bg-muted/40 text-left">
-            <tr>
-              <th className="px-4 py-2 font-medium">Nombre</th>
-              <th className="px-4 py-2 font-medium">Tipo</th>
-              <th className="px-4 py-2 font-medium">Contacto</th>
-              <th className="px-4 py-2 font-medium">Municipio</th>
-            </tr>
-          </thead>
-          <tbody>
-            {clientes.map((c) => (
-              <tr key={c.id} className="border-b border-border last:border-0">
-                <td className="px-4 py-2 font-medium">{c.nombre}</td>
-                <td className="px-4 py-2 text-muted-foreground">{c.tipoPersona}</td>
-                <td className="px-4 py-2 text-muted-foreground">
-                  {c.telefono ?? c.email ?? "—"}
-                </td>
-                <td className="px-4 py-2 text-muted-foreground">{c.municipio ?? "—"}</td>
-              </tr>
-            ))}
-            {clientes.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">
-                  Aún no hay clientes. Convierte un lead para crear el primero.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Clientes"
+        description="Cartera de clientes. Filtra por tipo, vendedor o búsqueda."
+        icon={<Users className="size-6" aria-hidden />}
+      />
+
+      <ClientesView
+        clientesIniciales={clientes}
+        vendedores={vendedores}
+        puedeEditar={puedeEditar}
+        rolScoped={rolScoped}
+      />
     </div>
-  );
+  )
 }

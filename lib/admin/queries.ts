@@ -964,3 +964,688 @@ export async function getOportunidadesPipeline(
 
   return { oportunidades, forecast, forecastTotal, montoTotalAbierto };
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * CLIENTES / COTIZACIONES (D4) — capa de datos
+ *
+ * Estilo: query builder de Drizzle (eq/ilike/and/or/isNull) + leftJoin. Los
+ * numeric (mode:'string') se convierten con numOrNull/numOrZero. Los id bigint
+ * (cotizacion_items) se serializan a string. Scoping por rol vía isScoped():
+ * vendedor/preventa ven SOLO sus clientes/cotizaciones (vendedor_id = userId).
+ * ──────────────────────────────────────────────────────────────────────── */
+
+export type TipoPersona = (typeof schema.tipoPersona.enumValues)[number];
+export type CotizacionEstado =
+  (typeof schema.cotizacionEstado.enumValues)[number];
+export type EsquemaCfe = (typeof schema.esquemaCfe.enumValues)[number];
+export type NivelTension = (typeof schema.nivelTension.enumValues)[number];
+export type EquipoTipo = (typeof schema.equipoTipo.enumValues)[number];
+
+export interface ClientesFiltros {
+  tipoPersona?: TipoPersona;
+  vendedorId?: string | null;
+  busqueda?: string;
+}
+
+export interface ClienteRow {
+  id: string;
+  tipoPersona: TipoPersona;
+  nombre: string;
+  rfc: string | null;
+  email: string | null;
+  telefono: string | null;
+  municipio: string | null;
+  estadoMx: string | null;
+  vendedorId: string | null;
+  vendedorNombre: string | null;
+  createdAt: string;
+}
+
+export interface ContactoRow {
+  id: string;
+  nombre: string;
+  cargo: string | null;
+  email: string | null;
+  telefono: string | null;
+  esPrincipal: boolean;
+}
+
+export interface ClienteOportunidadRow {
+  id: string;
+  nombre: string;
+  etapa: string;
+  montoEstimado: number;
+  probabilidad: number;
+  createdAt: string;
+}
+
+export interface ClienteCotizacionRow {
+  id: string;
+  folio: string | null;
+  version: number;
+  estado: CotizacionEstado;
+  total: number;
+  validaHasta: string | null;
+  createdAt: string;
+}
+
+export interface ClienteProyectoRow {
+  id: string;
+  folio: string | null;
+  fase: string;
+  totalConIva: number | null;
+}
+
+export interface ClienteDocumentoRow {
+  id: string;
+  tipo: string;
+  nombre: string;
+  url: string;
+  createdAt: string;
+}
+
+export interface ClienteDetalle {
+  cliente: typeof schema.clientes.$inferSelect;
+  vendedorNombre: string | null;
+  contactos: ContactoRow[];
+  oportunidades: ClienteOportunidadRow[];
+  cotizaciones: ClienteCotizacionRow[];
+  proyectos: ClienteProyectoRow[];
+  documentos: ClienteDocumentoRow[];
+  timeline: EventoRow[];
+}
+
+export interface CotizacionesFiltros {
+  estado?: CotizacionEstado;
+  clienteId?: string;
+  vendedorId?: string | null;
+  busqueda?: string;
+}
+
+export interface CotizacionRow {
+  id: string;
+  folio: string | null;
+  version: number;
+  clienteId: string | null;
+  clienteNombre: string | null;
+  vendedorId: string | null;
+  vendedorNombre: string | null;
+  total: number;
+  estado: CotizacionEstado;
+  validaHasta: string | null;
+  createdAt: string;
+}
+
+export interface CotizacionItemRow {
+  id: string;
+  equipoId: string | null;
+  descripcion: string;
+  cantidad: number;
+  precioUnitario: number;
+  importe: number;
+  equipoMarca: string | null;
+  equipoModelo: string | null;
+}
+
+export interface CotizacionDetalleCabecera {
+  id: string;
+  oportunidadId: string | null;
+  clienteId: string | null;
+  vendedorId: string | null;
+  folio: string | null;
+  version: number;
+  capacidadKwp: number | null;
+  paneles: number | null;
+  inversor: string | null;
+  subtotal: number;
+  iva: number;
+  total: number;
+  moneda: string;
+  produccionAnualKwh: number | null;
+  ahorroAnualMxn: number | null;
+  paybackAnios: number | null;
+  esquema: EsquemaCfe | null;
+  estado: CotizacionEstado;
+  validaHasta: string | null;
+  pdfUrl: string | null;
+  createdAt: string;
+}
+
+export interface CotizacionDetalle {
+  cotizacion: CotizacionDetalleCabecera;
+  items: CotizacionItemRow[];
+  cliente: { id: string; nombre: string; tipoPersona: TipoPersona } | null;
+  oportunidad: { id: string; nombre: string; etapa: string } | null;
+}
+
+export interface CatalogoOption {
+  id: string;
+  tipo: EquipoTipo;
+  marca: string | null;
+  modelo: string | null;
+  potenciaWp: number | null;
+  precio: number | null;
+}
+
+const CLIENTE_QUERY_LIMIT = 500;
+const COTIZACION_QUERY_LIMIT = 500;
+
+/**
+ * Lista de clientes filtrada. Scoping por vendedor para roles acotados.
+ * Filtros: tipoPersona (eq), vendedorId (null = sin asignar / isNull),
+ * busqueda (ilike nombre/rfc/email). Incluye nombre del vendedor vía leftJoin.
+ */
+export async function getClientesFiltrados(
+  scope: DashboardScope,
+  filtros: ClientesFiltros = {},
+): Promise<ClienteRow[]> {
+  const conds: SQL[] = [];
+
+  if (isScoped(scope.rol)) {
+    conds.push(eq(schema.clientes.vendedorId, scope.userId));
+  }
+
+  if (filtros.tipoPersona) {
+    conds.push(eq(schema.clientes.tipoPersona, filtros.tipoPersona));
+  }
+
+  if (filtros.vendedorId !== undefined) {
+    conds.push(
+      filtros.vendedorId === null
+        ? isNull(schema.clientes.vendedorId)
+        : eq(schema.clientes.vendedorId, filtros.vendedorId),
+    );
+  }
+
+  const q = filtros.busqueda?.trim();
+  if (q) {
+    const like = `%${q.toLowerCase()}%`;
+    const busquedaCond = or(
+      ilike(schema.clientes.nombre, like),
+      ilike(schema.clientes.rfc, like),
+      ilike(schema.clientes.email, like),
+    );
+    if (busquedaCond) conds.push(busquedaCond);
+  }
+
+  const rows = await db
+    .select({
+      id: schema.clientes.id,
+      tipoPersona: schema.clientes.tipoPersona,
+      nombre: schema.clientes.nombre,
+      rfc: schema.clientes.rfc,
+      email: schema.clientes.email,
+      telefono: schema.clientes.telefono,
+      municipio: schema.clientes.municipio,
+      estadoMx: schema.clientes.estadoMx,
+      vendedorId: schema.clientes.vendedorId,
+      vendedorNombre: schema.usuarios.nombre,
+      createdAt: schema.clientes.createdAt,
+    })
+    .from(schema.clientes)
+    .leftJoin(
+      schema.usuarios,
+      eq(schema.clientes.vendedorId, schema.usuarios.id),
+    )
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(schema.clientes.createdAt))
+    .limit(CLIENTE_QUERY_LIMIT);
+
+  return rows.map((row) => ({
+    id: row.id,
+    tipoPersona: row.tipoPersona,
+    nombre: row.nombre,
+    rfc: row.rfc,
+    email: row.email,
+    telefono: row.telefono,
+    municipio: row.municipio,
+    estadoMx: row.estadoMx,
+    vendedorId: row.vendedorId,
+    vendedorNombre: row.vendedorNombre,
+    createdAt: row.createdAt,
+  }));
+}
+
+/**
+ * Detalle 360° de un cliente: cabecera + contactos, oportunidades,
+ * cotizaciones, proyectos, documentos (entidad cliente) y timeline. Aplica
+ * scoping: un rol acotado solo ve clientes propios; si no le pertenece (o no
+ * existe) devuelve null.
+ */
+export async function getClienteDetalle(
+  scope: DashboardScope,
+  id: string,
+): Promise<ClienteDetalle | null> {
+  const [cliente] = await db
+    .select()
+    .from(schema.clientes)
+    .where(eq(schema.clientes.id, id))
+    .limit(1);
+
+  if (!cliente) return null;
+  if (isScoped(scope.rol) && cliente.vendedorId !== scope.userId) return null;
+
+  const [
+    vendedorNombre,
+    contactos,
+    oportunidades,
+    cotizaciones,
+    proyectos,
+    documentos,
+    timeline,
+  ] = await Promise.all([
+    getVendedorNombre(cliente.vendedorId),
+    getContactosDeCliente(id),
+    getOportunidadesDeCliente(id),
+    getCotizacionesDeCliente(id),
+    getProyectosDeCliente(id),
+    getDocumentosDeEntidad("cliente", id),
+    getTimelineDeEntidad("cliente", id),
+  ]);
+
+  return {
+    cliente,
+    vendedorNombre,
+    contactos,
+    oportunidades,
+    cotizaciones,
+    proyectos,
+    documentos,
+    timeline,
+  };
+}
+
+/** Nombre del vendedor (o null). */
+async function getVendedorNombre(
+  vendedorId: string | null,
+): Promise<string | null> {
+  if (!vendedorId) return null;
+  const [row] = await db
+    .select({ nombre: schema.usuarios.nombre })
+    .from(schema.usuarios)
+    .where(eq(schema.usuarios.id, vendedorId))
+    .limit(1);
+  return row?.nombre ?? null;
+}
+
+async function getContactosDeCliente(
+  clienteId: string,
+): Promise<ContactoRow[]> {
+  const rows = await db
+    .select({
+      id: schema.contactos.id,
+      nombre: schema.contactos.nombre,
+      cargo: schema.contactos.cargo,
+      email: schema.contactos.email,
+      telefono: schema.contactos.telefono,
+      esPrincipal: schema.contactos.esPrincipal,
+    })
+    .from(schema.contactos)
+    .where(eq(schema.contactos.clienteId, clienteId))
+    .orderBy(desc(schema.contactos.esPrincipal), asc(schema.contactos.nombre));
+
+  return rows.map((row) => ({
+    id: row.id,
+    nombre: row.nombre,
+    cargo: row.cargo,
+    email: row.email,
+    telefono: row.telefono,
+    esPrincipal: row.esPrincipal,
+  }));
+}
+
+async function getOportunidadesDeCliente(
+  clienteId: string,
+): Promise<ClienteOportunidadRow[]> {
+  const rows = await db
+    .select({
+      id: schema.oportunidades.id,
+      nombre: schema.oportunidades.nombre,
+      etapa: schema.oportunidades.etapa,
+      montoEstimado: schema.oportunidades.montoEstimado,
+      probabilidad: schema.oportunidades.probabilidad,
+      createdAt: schema.oportunidades.createdAt,
+    })
+    .from(schema.oportunidades)
+    .where(eq(schema.oportunidades.clienteId, clienteId))
+    .orderBy(desc(schema.oportunidades.createdAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    nombre: row.nombre,
+    etapa: row.etapa,
+    montoEstimado: numOrZero(row.montoEstimado),
+    probabilidad: row.probabilidad ?? 30,
+    createdAt: row.createdAt,
+  }));
+}
+
+async function getCotizacionesDeCliente(
+  clienteId: string,
+): Promise<ClienteCotizacionRow[]> {
+  const rows = await db
+    .select({
+      id: schema.cotizaciones.id,
+      folio: schema.cotizaciones.folio,
+      version: schema.cotizaciones.version,
+      estado: schema.cotizaciones.estado,
+      total: schema.cotizaciones.total,
+      validaHasta: schema.cotizaciones.validaHasta,
+      createdAt: schema.cotizaciones.createdAt,
+    })
+    .from(schema.cotizaciones)
+    .where(eq(schema.cotizaciones.clienteId, clienteId))
+    .orderBy(desc(schema.cotizaciones.createdAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    folio: row.folio,
+    version: row.version,
+    estado: row.estado,
+    total: numOrZero(row.total),
+    validaHasta: row.validaHasta,
+    createdAt: row.createdAt,
+  }));
+}
+
+async function getProyectosDeCliente(
+  clienteId: string,
+): Promise<ClienteProyectoRow[]> {
+  const rows = await db
+    .select({
+      id: schema.proyectos.id,
+      folio: schema.proyectos.folio,
+      fase: schema.proyectos.fase,
+      totalConIva: schema.proyectos.totalConIva,
+    })
+    .from(schema.proyectos)
+    .where(eq(schema.proyectos.clienteId, clienteId))
+    .orderBy(desc(schema.proyectos.createdAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    folio: row.folio,
+    fase: row.fase,
+    totalConIva: numOrNull(row.totalConIva),
+  }));
+}
+
+async function getDocumentosDeEntidad(
+  entidadTipo: (typeof schema.entidadTipo.enumValues)[number],
+  entidadId: string,
+): Promise<ClienteDocumentoRow[]> {
+  const rows = await db
+    .select({
+      id: schema.documentos.id,
+      tipo: schema.documentos.tipo,
+      nombre: schema.documentos.nombre,
+      url: schema.documentos.url,
+      createdAt: schema.documentos.createdAt,
+    })
+    .from(schema.documentos)
+    .where(
+      and(
+        eq(schema.documentos.entidadTipo, entidadTipo),
+        eq(schema.documentos.entidadId, entidadId),
+      ),
+    )
+    .orderBy(desc(schema.documentos.createdAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    tipo: row.tipo,
+    nombre: row.nombre,
+    url: row.url,
+    createdAt: row.createdAt,
+  }));
+}
+
+async function getTimelineDeEntidad(
+  entidadTipo: (typeof schema.entidadTipo.enumValues)[number],
+  entidadId: string,
+): Promise<EventoRow[]> {
+  const rows = await db
+    .select({
+      id: schema.eventos.id,
+      entidadTipo: schema.eventos.entidadTipo,
+      entidadId: schema.eventos.entidadId,
+      tipo: schema.eventos.tipo,
+      descripcion: schema.eventos.descripcion,
+      actor: schema.eventos.actor,
+      createdAt: schema.eventos.createdAt,
+    })
+    .from(schema.eventos)
+    .where(
+      and(
+        eq(schema.eventos.entidadTipo, entidadTipo),
+        eq(schema.eventos.entidadId, entidadId),
+      ),
+    )
+    .orderBy(desc(schema.eventos.createdAt))
+    .limit(100);
+
+  return rows.map((row) => ({
+    id: String(row.id),
+    entidadTipo: row.entidadTipo,
+    entidadId: row.entidadId,
+    tipo: row.tipo,
+    descripcion: row.descripcion,
+    actor: row.actor,
+    createdAt: row.createdAt,
+  }));
+}
+
+/**
+ * Lista de cotizaciones filtrada (con nombres de cliente/vendedor vía
+ * leftJoin). Scoping por vendedor para roles acotados. Filtros: estado (eq),
+ * clienteId (eq), vendedorId (null = sin asignar / isNull), busqueda (ilike
+ * folio).
+ */
+export async function getCotizacionesFiltradas(
+  scope: DashboardScope,
+  filtros: CotizacionesFiltros = {},
+): Promise<CotizacionRow[]> {
+  const conds: SQL[] = [];
+
+  if (isScoped(scope.rol)) {
+    conds.push(eq(schema.cotizaciones.vendedorId, scope.userId));
+  }
+
+  if (filtros.estado) conds.push(eq(schema.cotizaciones.estado, filtros.estado));
+  if (filtros.clienteId) {
+    conds.push(eq(schema.cotizaciones.clienteId, filtros.clienteId));
+  }
+
+  if (filtros.vendedorId !== undefined) {
+    conds.push(
+      filtros.vendedorId === null
+        ? isNull(schema.cotizaciones.vendedorId)
+        : eq(schema.cotizaciones.vendedorId, filtros.vendedorId),
+    );
+  }
+
+  const q = filtros.busqueda?.trim();
+  if (q) {
+    const like = `%${q.toLowerCase()}%`;
+    conds.push(ilike(schema.cotizaciones.folio, like));
+  }
+
+  const rows = await db
+    .select({
+      id: schema.cotizaciones.id,
+      folio: schema.cotizaciones.folio,
+      version: schema.cotizaciones.version,
+      clienteId: schema.cotizaciones.clienteId,
+      clienteNombre: schema.clientes.nombre,
+      vendedorId: schema.cotizaciones.vendedorId,
+      vendedorNombre: schema.usuarios.nombre,
+      total: schema.cotizaciones.total,
+      estado: schema.cotizaciones.estado,
+      validaHasta: schema.cotizaciones.validaHasta,
+      createdAt: schema.cotizaciones.createdAt,
+    })
+    .from(schema.cotizaciones)
+    .leftJoin(
+      schema.clientes,
+      eq(schema.cotizaciones.clienteId, schema.clientes.id),
+    )
+    .leftJoin(
+      schema.usuarios,
+      eq(schema.cotizaciones.vendedorId, schema.usuarios.id),
+    )
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(schema.cotizaciones.createdAt))
+    .limit(COTIZACION_QUERY_LIMIT);
+
+  return rows.map((row) => ({
+    id: row.id,
+    folio: row.folio,
+    version: row.version,
+    clienteId: row.clienteId,
+    clienteNombre: row.clienteNombre,
+    vendedorId: row.vendedorId,
+    vendedorNombre: row.vendedorNombre,
+    total: numOrZero(row.total),
+    estado: row.estado,
+    validaHasta: row.validaHasta,
+    createdAt: row.createdAt,
+  }));
+}
+
+/**
+ * Detalle de una cotización: cabecera + items (con marca/modelo del equipo vía
+ * leftJoin a catálogo) + cliente y oportunidad asociados. Aplica scoping sobre
+ * vendedor_id; si no pertenece al rol acotado (o no existe) devuelve null.
+ */
+export async function getCotizacion(
+  scope: DashboardScope,
+  id: string,
+): Promise<CotizacionDetalle | null> {
+  const [cot] = await db
+    .select()
+    .from(schema.cotizaciones)
+    .where(eq(schema.cotizaciones.id, id))
+    .limit(1);
+
+  if (!cot) return null;
+  if (isScoped(scope.rol) && cot.vendedorId !== scope.userId) return null;
+
+  const itemRows = await db
+    .select({
+      id: schema.cotizacionItems.id,
+      equipoId: schema.cotizacionItems.equipoId,
+      descripcion: schema.cotizacionItems.descripcion,
+      cantidad: schema.cotizacionItems.cantidad,
+      precioUnitario: schema.cotizacionItems.precioUnitario,
+      importe: schema.cotizacionItems.importe,
+      equipoMarca: schema.catalogoEquipos.marca,
+      equipoModelo: schema.catalogoEquipos.modelo,
+    })
+    .from(schema.cotizacionItems)
+    .leftJoin(
+      schema.catalogoEquipos,
+      eq(schema.cotizacionItems.equipoId, schema.catalogoEquipos.id),
+    )
+    .where(eq(schema.cotizacionItems.cotizacionId, id))
+    .orderBy(asc(schema.cotizacionItems.id));
+
+  const items: CotizacionItemRow[] = itemRows.map((row) => ({
+    id: String(row.id),
+    equipoId: row.equipoId,
+    descripcion: row.descripcion,
+    cantidad: numOrZero(row.cantidad),
+    precioUnitario: numOrZero(row.precioUnitario),
+    importe: numOrZero(row.importe),
+    equipoMarca: row.equipoMarca,
+    equipoModelo: row.equipoModelo,
+  }));
+
+  const cliente = await getClienteResumen(cot.clienteId);
+  const oportunidad = await getOportunidadResumen(cot.oportunidadId);
+
+  return {
+    cotizacion: {
+      id: cot.id,
+      oportunidadId: cot.oportunidadId,
+      clienteId: cot.clienteId,
+      vendedorId: cot.vendedorId,
+      folio: cot.folio,
+      version: cot.version,
+      capacidadKwp: numOrNull(cot.capacidadKwp),
+      paneles: cot.paneles,
+      inversor: cot.inversor,
+      subtotal: numOrZero(cot.subtotal),
+      iva: numOrZero(cot.iva),
+      total: numOrZero(cot.total),
+      moneda: cot.moneda ?? "MXN",
+      produccionAnualKwh: numOrNull(cot.produccionAnualKwh),
+      ahorroAnualMxn: numOrNull(cot.ahorroAnualMxn),
+      paybackAnios: numOrNull(cot.paybackAnios),
+      esquema: cot.esquema,
+      estado: cot.estado,
+      validaHasta: cot.validaHasta,
+      pdfUrl: cot.pdfUrl,
+      createdAt: cot.createdAt,
+    },
+    items,
+    cliente,
+    oportunidad,
+  };
+}
+
+async function getClienteResumen(
+  clienteId: string | null,
+): Promise<{ id: string; nombre: string; tipoPersona: TipoPersona } | null> {
+  if (!clienteId) return null;
+  const [row] = await db
+    .select({
+      id: schema.clientes.id,
+      nombre: schema.clientes.nombre,
+      tipoPersona: schema.clientes.tipoPersona,
+    })
+    .from(schema.clientes)
+    .where(eq(schema.clientes.id, clienteId))
+    .limit(1);
+  return row ?? null;
+}
+
+async function getOportunidadResumen(
+  oportunidadId: string | null,
+): Promise<{ id: string; nombre: string; etapa: string } | null> {
+  if (!oportunidadId) return null;
+  const [row] = await db
+    .select({
+      id: schema.oportunidades.id,
+      nombre: schema.oportunidades.nombre,
+      etapa: schema.oportunidades.etapa,
+    })
+    .from(schema.oportunidades)
+    .where(eq(schema.oportunidades.id, oportunidadId))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Equipos disponibles del catálogo, ordenados por tipo y marca. */
+export async function getCatalogoDisponible(): Promise<CatalogoOption[]> {
+  const rows = await db
+    .select({
+      id: schema.catalogoEquipos.id,
+      tipo: schema.catalogoEquipos.tipo,
+      marca: schema.catalogoEquipos.marca,
+      modelo: schema.catalogoEquipos.modelo,
+      potenciaWp: schema.catalogoEquipos.potenciaWp,
+      precio: schema.catalogoEquipos.precio,
+    })
+    .from(schema.catalogoEquipos)
+    .where(eq(schema.catalogoEquipos.disponible, true))
+    .orderBy(asc(schema.catalogoEquipos.tipo), asc(schema.catalogoEquipos.marca));
+
+  return rows.map((row) => ({
+    id: row.id,
+    tipo: row.tipo,
+    marca: row.marca,
+    modelo: row.modelo,
+    potenciaWp: numOrNull(row.potenciaWp),
+    precio: numOrNull(row.precio),
+  }));
+}
