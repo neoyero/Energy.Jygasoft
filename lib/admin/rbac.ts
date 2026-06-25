@@ -95,26 +95,38 @@ export function can(
   return list.includes(rol as Rol);
 }
 
+/** Orden de los grupos en el sidebar. */
+export const NAV_GROUPS = [
+  "General",
+  "Comercial",
+  "Operaciones",
+  "Finanzas",
+  "Marketing",
+  "Sistema",
+] as const;
+export type NavGrupo = (typeof NAV_GROUPS)[number];
+
 export interface NavItem {
   href: string;
   label: string;
   modulo: Modulo;
+  grupo: NavGrupo;
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { href: "/je-admin", label: "Dashboard", modulo: "dashboard" },
-  { href: "/je-admin/leads", label: "Leads", modulo: "leads" },
-  { href: "/je-admin/oportunidades", label: "Pipeline", modulo: "oportunidades" },
-  { href: "/je-admin/clientes", label: "Clientes", modulo: "clientes" },
-  { href: "/je-admin/cotizaciones", label: "Cotizaciones", modulo: "cotizaciones" },
-  { href: "/je-admin/proyectos", label: "Proyectos", modulo: "proyectos" },
-  { href: "/je-admin/pagos", label: "Pagos", modulo: "pagos" },
-  { href: "/je-admin/catalogo", label: "Catálogo", modulo: "catalogo" },
-  { href: "/je-admin/campanas", label: "Campañas", modulo: "campanas" },
-  { href: "/je-admin/actividades", label: "Actividades", modulo: "actividades" },
-  { href: "/je-admin/documentos", label: "Documentos", modulo: "documentos" },
-  { href: "/je-admin/metricas", label: "Métricas", modulo: "metricas" },
-  { href: "/je-admin/usuarios", label: "Usuarios", modulo: "usuarios" },
+  { href: "/je-admin", label: "Dashboard", modulo: "dashboard", grupo: "General" },
+  { href: "/je-admin/leads", label: "Leads", modulo: "leads", grupo: "Comercial" },
+  { href: "/je-admin/oportunidades", label: "Pipeline", modulo: "oportunidades", grupo: "Comercial" },
+  { href: "/je-admin/clientes", label: "Clientes", modulo: "clientes", grupo: "Comercial" },
+  { href: "/je-admin/cotizaciones", label: "Cotizaciones", modulo: "cotizaciones", grupo: "Comercial" },
+  { href: "/je-admin/actividades", label: "Actividades", modulo: "actividades", grupo: "Comercial" },
+  { href: "/je-admin/proyectos", label: "Proyectos", modulo: "proyectos", grupo: "Operaciones" },
+  { href: "/je-admin/documentos", label: "Documentos", modulo: "documentos", grupo: "Operaciones" },
+  { href: "/je-admin/catalogo", label: "Catálogo", modulo: "catalogo", grupo: "Operaciones" },
+  { href: "/je-admin/pagos", label: "Pagos", modulo: "pagos", grupo: "Finanzas" },
+  { href: "/je-admin/metricas", label: "Métricas", modulo: "metricas", grupo: "Finanzas" },
+  { href: "/je-admin/campanas", label: "Campañas", modulo: "campanas", grupo: "Marketing" },
+  { href: "/je-admin/usuarios", label: "Usuarios", modulo: "usuarios", grupo: "Sistema" },
 ];
 
 /** Items de navegación visibles para un rol. */
