@@ -57,7 +57,7 @@ const serverSchema = z.object({
   M365_SENDER: z.string().email().optional(),
 
   // je-admin — Login passwordless por código (OTP)
-  OTP_TTL_MINUTES: z.coerce.number().int().positive().default(10),
+  OTP_TTL_MINUTES: z.coerce.number().int().positive().default(5),
   OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
   OTP_REQUESTS_PER_EMAIL: z.coerce.number().int().positive().default(3),
 

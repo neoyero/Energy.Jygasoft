@@ -9,11 +9,22 @@ import { serverEnv } from "@/lib/env";
  *   - prod: no envía y devuelve { ok:false } (el flujo decide cómo degradar).
  */
 
+export interface MailAttachment {
+  name: string;
+  contentType: string;
+  /** Contenido en base64. */
+  contentBytes: string;
+  /** Si se define + isInline, se referencia en el HTML como cid:<contentId>. */
+  contentId?: string;
+  isInline?: boolean;
+}
+
 interface MailInput {
   to: string;
   subject: string;
   html: string;
   text?: string;
+  attachments?: MailAttachment[];
 }
 
 export interface MailResult {
@@ -50,6 +61,8 @@ async function getGraphToken(): Promise<string> {
     body,
   });
   if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    console.error(`[email] token Graph ${res.status}: ${detail.slice(0, 300)}`);
     throw new Error(`graph_token_failed_${res.status}`);
   }
   const data = (await res.json()) as { access_token: string; expires_in: number };
@@ -89,6 +102,18 @@ export async function sendMail(input: MailInput): Promise<MailResult> {
             subject: input.subject,
             body: { contentType: "HTML", content: input.html },
             toRecipients: [{ emailAddress: { address: input.to } }],
+            ...(input.attachments && input.attachments.length > 0
+              ? {
+                  attachments: input.attachments.map((a) => ({
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    name: a.name,
+                    contentType: a.contentType,
+                    contentBytes: a.contentBytes,
+                    contentId: a.contentId,
+                    isInline: a.isInline ?? false,
+                  })),
+                }
+              : {}),
           },
           saveToSentItems: false,
         }),

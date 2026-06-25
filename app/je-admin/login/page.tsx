@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useState } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { Turnstile } from "@marsidev/react-turnstile";
@@ -95,9 +96,19 @@ function LoginForm() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-brand-surface px-6">
       <div className="w-full max-w-sm space-y-6 rounded-2xl border border-stone-200 bg-white p-8 shadow-sm">
-        <div className="space-y-1">
-          <h1 className="text-xl font-bold text-brand">Jygasoft Energy</h1>
-          <p className="text-sm text-stone-500">Panel de administración · acceso restringido</p>
+        <div className="flex flex-col items-center gap-3 text-center">
+          <Image
+            src="/logo.png"
+            alt="Jygasoft Energy"
+            width={160}
+            height={64}
+            priority
+            className="h-14 w-auto object-contain"
+          />
+          <div className="space-y-0.5">
+            <h1 className="text-lg font-bold text-brand">Panel de administración</h1>
+            <p className="text-sm text-stone-500">Acceso restringido</p>
+          </div>
         </div>
 
         {/* ---- Modo contraseña (respaldo) ---- */}
