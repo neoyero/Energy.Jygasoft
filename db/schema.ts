@@ -117,6 +117,7 @@ export const hspZonas = pgTable("hsp_zonas", {
 	hsp: numeric({ precision: 5, scale:  2 }).notNull(),
 	tarifaDefault: text("tarifa_default"),
 	vigente: boolean().default(true).notNull(),
+	municipioId: bigint("municipio_id", { mode: "number" }),
 }, (table) => [
 	unique("hsp_zonas_estado_mx_municipio_key").on(table.municipio, table.estadoMx),
 ]);
@@ -152,6 +153,7 @@ export const leads = pgTable("leads", {
 	colonia: text(),
 	municipio: text(),
 	estadoMx: text("estado_mx").default('Aguascalientes'),
+	municipioId: bigint("municipio_id", { mode: "number" }),
 	consumoKwhMes: numeric("consumo_kwh_mes", { precision: 10, scale:  2 }),
 	reciboMxn: numeric("recibo_mxn", { precision: 12, scale:  2 }),
 	reciboUrl: text("recibo_url"),
@@ -216,6 +218,7 @@ export const clientes = pgTable("clientes", {
 	domicilio: text(),
 	municipio: text(),
 	estadoMx: text("estado_mx").default('Aguascalientes'),
+	municipioId: bigint("municipio_id", { mode: "number" }),
 	cp: text(),
 	numeroServicioCfe: text("numero_servicio_cfe"),
 	tarifa: text(),
@@ -684,6 +687,7 @@ export const hspEstados = pgTable("hsp_estados", {
 	estadoMx: text("estado_mx").primaryKey().notNull(),
 	hsp: numeric({ precision: 5, scale: 2 }).notNull(),
 	fuente: text(),
+	estadoClave: text("estado_clave"),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 });
 
@@ -730,4 +734,29 @@ export const asesores = pgTable("asesores", {
 			foreignColumns: [usuarios.id],
 			name: "asesores_usuario_id_fkey"
 		}).onDelete("set null"),
+]);
+
+// Catálogos geográficos normalizados (clave INEGI): estado → municipio → CP.
+// Las FKs reales (codigos_postales/hsp/leads/clientes → estos maestros) viven en
+// la migración 0004; aquí se definen los maestros y, en cada tabla, la columna
+// de enlace (municipio_id / estado_clave) para la inferencia de tipos.
+export const estados = pgTable("estados", {
+	clave: text().primaryKey().notNull(),
+	nombre: text().notNull(),
+}, (table) => [
+	unique("estados_nombre_key").on(table.nombre),
+]);
+
+export const municipios = pgTable("municipios", {
+	id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity({ name: "municipios_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	claveEstado: text("clave_estado").notNull(),
+	claveMnpio: text("clave_mnpio").notNull(),
+	nombre: text().notNull(),
+}, (table) => [
+	unique("municipios_clave_estado_clave_mnpio_key").on(table.claveEstado, table.claveMnpio),
+	foreignKey({
+			columns: [table.claveEstado],
+			foreignColumns: [estados.clave],
+			name: "municipios_clave_estado_fkey"
+		}),
 ]);

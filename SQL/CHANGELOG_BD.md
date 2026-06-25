@@ -12,6 +12,26 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0004 — Catálogos geográficos (estado → municipio → CP) · 2026-06-25
+
+**Migración:** `db/migrations/0004_geo_estados_municipios.sql`
+
+- **Nuevas tablas maestras** pobladas desde las claves INEGI de `codigos_postales`
+  (100% pobladas, sin huérfanos):
+  - `estados` (32): `clave` INEGI (PK), `nombre` (UNIQUE).
+  - `municipios` (2,478): `id` + `(clave_estado → estados, clave_mnpio)` UNIQUE + `nombre`.
+- **Relaciones (FK):**
+  - `codigos_postales (c_estado, c_mnpio)` → `municipios` (FK compuesta) + índice.
+  - `hsp_estados.estado_clave` → `estados` (backfill por nombre; los 32 coinciden).
+  - `hsp_zonas.municipio_id` → `municipios` (override de HSP por municipio).
+  - `leads.municipio_id` y `clientes.municipio_id` → `municipios` (**NULL-able**,
+    `ON DELETE SET NULL`; backfill best-effort por nombre+estado) + índices.
+- **Jerarquía resultante:** un estado tiene municipios; un municipio tiene
+  códigos postales. La calculadora conserva su resolución HSP (zona › estado ›
+  fallback), ahora con integridad referencial.
+
+---
+
 ## 0003 — Asesores · 2026-06-25
 
 **Migración:** `db/migrations/0003_asesores.sql`

@@ -480,3 +480,32 @@ CREATE TABLE asesores (
 );
 CREATE INDEX ix_asesores_activo ON asesores (activo);
 CREATE TRIGGER trg_asesores_upd BEFORE UPDATE ON asesores FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- =====================================================================
+-- Catálogos geográficos normalizados (clave INEGI): estado → municipio → CP.
+-- (Migración 0004; los INSERT/UPDATE de poblado/backfill viven en la migración.)
+-- =====================================================================
+CREATE TABLE estados (
+  clave  text PRIMARY KEY,            -- INEGI c_estado, p.ej. '01'
+  nombre text NOT NULL UNIQUE
+);
+CREATE TABLE municipios (
+  id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  clave_estado text NOT NULL REFERENCES estados (clave),
+  clave_mnpio  text NOT NULL,         -- INEGI c_mnpio (dentro del estado)
+  nombre       text NOT NULL,
+  UNIQUE (clave_estado, clave_mnpio)
+);
+
+-- Enlaces (FK) hacia los maestros geográficos:
+ALTER TABLE codigos_postales ADD CONSTRAINT codigos_postales_municipio_fkey
+  FOREIGN KEY (c_estado, c_mnpio) REFERENCES municipios (clave_estado, clave_mnpio);
+CREATE INDEX ix_cp_municipio ON codigos_postales (c_estado, c_mnpio);
+
+ALTER TABLE hsp_estados ADD COLUMN estado_clave text REFERENCES estados (clave);
+ALTER TABLE hsp_zonas   ADD COLUMN municipio_id bigint REFERENCES municipios (id) ON DELETE SET NULL;
+
+ALTER TABLE leads    ADD COLUMN municipio_id bigint REFERENCES municipios (id) ON DELETE SET NULL;
+ALTER TABLE clientes ADD COLUMN municipio_id bigint REFERENCES municipios (id) ON DELETE SET NULL;
+CREATE INDEX ix_leads_municipio    ON leads (municipio_id);
+CREATE INDEX ix_clientes_municipio ON clientes (municipio_id);
