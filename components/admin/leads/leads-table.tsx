@@ -237,6 +237,29 @@ export function LeadsTable({ filtros, puedeEditar, vendedores }: LeadsTableProps
       onRowClick={irADetalle}
       rowActions={rowActions}
       loading={loading}
+      mobileCard={(row) => (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-start justify-between gap-2">
+            <span className="font-medium text-stone-800 dark:text-foreground">
+              {row.nombre ?? "Sin nombre"}
+            </span>
+            <StatusBadge value={row.estado} withDot={false} />
+          </div>
+          <p className="text-xs text-stone-600 dark:text-muted-foreground">
+            {row.telefono ?? row.email ?? "—"}
+          </p>
+          {row.canal ? (
+            <span className="inline-flex items-center gap-1.5">
+              <CanalIcon canal={row.canal} />
+              <StatusBadge value={row.canal} size="sm" withDot={false} />
+            </span>
+          ) : null}
+          <ScoreBar score={row.score} />
+          <p className="text-xs text-stone-500 dark:text-muted-foreground">
+            {row.vendedorNombre ?? "Sin asignar"} · {fmtFechaRel(row.createdAt)}
+          </p>
+        </div>
+      )}
       pageControl={{
         page,
         pageCount,

@@ -105,6 +105,26 @@ export function ClientesTable({ rows }: ClientesTableProps) {
       columns={columns}
       rowKey={(row) => row.id}
       onRowClick={irADetalle}
+      mobileCard={(row) => (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-start justify-between gap-2">
+            <span className="font-medium text-stone-800 dark:text-foreground">
+              {row.nombre ?? "Sin nombre"}
+            </span>
+            <StatusBadge value={row.tipoPersona} withDot={false} />
+          </div>
+          <p className="text-xs text-stone-600 tabular-nums dark:text-muted-foreground">
+            {row.rfc ?? "Sin RFC"}
+          </p>
+          <p className="text-xs text-stone-600 dark:text-muted-foreground">
+            {row.telefono ?? row.email ?? "—"}
+            {row.municipio ? ` · ${row.municipio}` : ""}
+          </p>
+          <p className="text-xs text-stone-500 dark:text-muted-foreground">
+            {row.vendedorNombre ?? "Sin asignar"} · {fmtFechaRel(row.createdAt)}
+          </p>
+        </div>
+      )}
       defaultSort={{ columnId: "createdAt", direction: "desc" }}
       empty={{
         title: "Sin clientes",

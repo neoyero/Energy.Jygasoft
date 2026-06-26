@@ -62,7 +62,7 @@ export function AdminMobileNav({ rol, name, initial }: AdminMobileNavProps) {
           onClick={() => setOpen(true)}
           aria-label="Abrir menú"
           aria-expanded={open}
-          className="inline-flex size-9 items-center justify-center rounded-lg text-stone-600 transition-colors hover:bg-stone-100"
+          className="inline-flex size-10 items-center justify-center rounded-lg text-stone-600 transition-colors hover:bg-stone-100"
         >
           <Menu className="size-5" aria-hidden />
         </button>
@@ -90,7 +90,7 @@ export function AdminMobileNav({ rol, name, initial }: AdminMobileNavProps) {
                 type="button"
                 onClick={() => setOpen(false)}
                 aria-label="Cerrar menú"
-                className="inline-flex size-9 items-center justify-center rounded-lg text-stone-600 transition-colors hover:bg-stone-100"
+                className="inline-flex size-10 items-center justify-center rounded-lg text-stone-600 transition-colors hover:bg-stone-100"
               >
                 <X className="size-5" aria-hidden />
               </button>

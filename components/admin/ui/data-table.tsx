@@ -122,6 +122,13 @@ export interface DataTableProps<T> {
   pageSize?: number
   /** Paginación server-side (excluye pageSize): los datos son la página actual. */
   pageControl?: DataTablePageControl
+  /**
+   * Render de fila como TARJETA en pantallas chicas (<sm). Si se define, la
+   * tabla se oculta en móvil y se muestra esta lista de tarjetas (con el mismo
+   * onRowClick, rowActions y paginación). Si se omite, en móvil se usa scroll
+   * horizontal de la tabla.
+   */
+  mobileCard?: (row: T) => ReactNode
   className?: string
 }
 
@@ -196,6 +203,7 @@ export function DataTable<T>({
   bordered = true,
   pageSize,
   pageControl,
+  mobileCard,
   className,
 }: DataTableProps<T>) {
   // Estado de orden no controlado (si no se pasa `sort` desde fuera).
@@ -279,7 +287,7 @@ export function DataTable<T>({
   const showEmpty = !loading && sortedData.length === 0
 
   const table = (
-    <div className="overflow-x-auto">
+    <div className={cn("overflow-x-auto", mobileCard && "hidden sm:block")}>
       <table className="w-full border-collapse text-sm">
         <thead className="border-b border-stone-200 bg-stone-50/60 text-left dark:border-border dark:bg-muted/40">
           <tr>
@@ -486,9 +494,57 @@ export function DataTable<T>({
     </div>
   ) : null
 
+  // Lista de tarjetas para móvil (solo si se proporcionó `mobileCard`).
+  const mobileList = mobileCard ? (
+    <div className="space-y-2 p-3 sm:hidden">
+      {loading
+        ? Array.from({ length: skeletonRows }).map((_, i) => (
+            <div
+              key={`m-skeleton-${i}`}
+              className="h-20 animate-pulse rounded-xl border border-stone-200 bg-stone-100/70 dark:border-border dark:bg-muted"
+            />
+          ))
+        : showEmpty
+          ? <EmptyState size="sm" title="Sin resultados" {...empty} />
+          : pagedData.map((row) => (
+              <div
+                key={rowKey(row)}
+                className={cn(
+                  "relative rounded-xl border border-stone-200 bg-white p-3 dark:border-border dark:bg-card",
+                  isClickable &&
+                    "cursor-pointer transition-colors hover:bg-stone-50 dark:hover:bg-muted/40",
+                )}
+                onClick={isClickable ? () => onRowClick?.(row) : undefined}
+                onKeyDown={
+                  isClickable
+                    ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault()
+                          onRowClick?.(row)
+                        }
+                      }
+                    : undefined
+                }
+                tabIndex={isClickable ? 0 : undefined}
+                role={isClickable ? "button" : undefined}
+              >
+                {hasActions ? (
+                  <div className="absolute right-1.5 top-1.5">
+                    <RowActionsMenu row={row} actions={rowActions ?? []} />
+                  </div>
+                ) : null}
+                <div className={hasActions ? "pr-8" : undefined}>
+                  {mobileCard(row)}
+                </div>
+              </div>
+            ))}
+    </div>
+  ) : null
+
   const content = (
     <>
       {table}
+      {mobileList}
       {footer}
     </>
   )
@@ -547,7 +603,8 @@ function RowActionsMenu<T>({
           "inline-flex size-7 items-center justify-center rounded-md text-stone-500 transition-colors",
           "hover:bg-stone-100 hover:text-stone-700 dark:text-muted-foreground dark:hover:bg-muted dark:hover:text-foreground",
           "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-          "aria-expanded:bg-stone-100 dark:aria-expanded:bg-muted"
+          "aria-expanded:bg-stone-100 dark:aria-expanded:bg-muted",
+          "pointer-coarse:size-10"
         )}
         aria-label="Abrir acciones de fila"
       >
@@ -579,6 +636,7 @@ function RowActionsMenu<T>({
                 }}
                 className={cn(
                   "flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none select-none",
+                  "pointer-coarse:py-2.5",
                   "data-[highlighted]:bg-stone-100 dark:data-[highlighted]:bg-muted",
                   action.destructive
                     ? "text-destructive data-[highlighted]:bg-destructive/10 dark:data-[highlighted]:bg-destructive/20"

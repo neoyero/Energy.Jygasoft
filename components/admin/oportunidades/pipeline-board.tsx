@@ -212,6 +212,19 @@ export function PipelineBoard({ data, puedeEditar }: PipelineBoardProps) {
                     oportunidad={o}
                     draggable={puedeEditar}
                     onDragStart={handleDragStart}
+                    etapas={
+                      puedeEditar
+                        ? COLUMNAS.filter((e) => e !== o.etapa).map((e) => ({
+                            value: e,
+                            label: labelFor(e),
+                          }))
+                        : undefined
+                    }
+                    onMover={
+                      puedeEditar
+                        ? (etapa) => moverOptimista(o.id, etapa as Etapa)
+                        : undefined
+                    }
                   />
                 ))
               ) : (
