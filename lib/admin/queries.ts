@@ -1305,6 +1305,23 @@ export interface CotizacionDetalle {
   oportunidad: { id: string; nombre: string; etapa: string } | null;
   documentos: ClienteDocumentoRow[];
   timeline: EventoRow[];
+  /** Contexto técnico para alimentar el wizard de dimensionamiento. */
+  calcContext: CotizacionCalcContext | null;
+}
+
+/**
+ * Insumos técnicos que el wizard de cotización usa para dimensionar el sistema.
+ * Se reúnen del cliente (ubicación/tarifa/tipoPersona) y, si existe, del lead
+ * origen (segmento/consumo/recibo). Los numeric llegan como number|null.
+ */
+export interface CotizacionCalcContext {
+  segmento: string;
+  consumoKwhMes: number | null;
+  reciboMxn: number | null;
+  tarifa: string | null;
+  municipio: string | null;
+  estado: string | null;
+  cp: string | null;
 }
 
 export interface CotizacionesKpis {
@@ -1933,12 +1950,14 @@ export async function getCotizacion(
     equipoModelo: row.equipoModelo,
   }));
 
-  const [cliente, oportunidad, documentos, timeline] = await Promise.all([
-    getClienteResumen(cot.clienteId),
-    getOportunidadResumen(cot.oportunidadId),
-    getDocumentosDeEntidad("cotizacion", id),
-    getTimelineDeEntidad("cotizacion", id),
-  ]);
+  const [cliente, oportunidad, documentos, timeline, calcContext] =
+    await Promise.all([
+      getClienteResumen(cot.clienteId),
+      getOportunidadResumen(cot.oportunidadId),
+      getDocumentosDeEntidad("cotizacion", id),
+      getTimelineDeEntidad("cotizacion", id),
+      getCotizacionCalcContext(id),
+    ]);
 
   return {
     cotizacion: {
@@ -1969,6 +1988,7 @@ export async function getCotizacion(
     oportunidad,
     documentos,
     timeline,
+    calcContext,
   };
 }
 
@@ -2002,6 +2022,76 @@ async function getOportunidadResumen(
     .where(eq(schema.oportunidades.id, oportunidadId))
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * Reúne el contexto técnico para dimensionar una cotización. Parte de la
+ * cotización → cliente (ubicación, tarifa, tipoPersona, lead origen). El consumo
+ * y el recibo viven en `leads`: si el cliente tiene `leadOrigenId` se leen de
+ * ahí. El `segmento` usa el del lead origen si existe; en su defecto se deriva
+ * del tipoPersona (pf_* → "residencial", pm_* → "negocio"). Devuelve null si la
+ * cotización no existe o no tiene cliente.
+ */
+export async function getCotizacionCalcContext(
+  cotizacionId: string,
+): Promise<CotizacionCalcContext | null> {
+  const [cot] = await db
+    .select({ clienteId: schema.cotizaciones.clienteId })
+    .from(schema.cotizaciones)
+    .where(eq(schema.cotizaciones.id, cotizacionId))
+    .limit(1);
+
+  if (!cot || !cot.clienteId) return null;
+
+  const [cliente] = await db
+    .select({
+      tipoPersona: schema.clientes.tipoPersona,
+      tarifa: schema.clientes.tarifa,
+      municipio: schema.clientes.municipio,
+      estadoMx: schema.clientes.estadoMx,
+      cp: schema.clientes.cp,
+      leadOrigenId: schema.clientes.leadOrigenId,
+    })
+    .from(schema.clientes)
+    .where(eq(schema.clientes.id, cot.clienteId))
+    .limit(1);
+
+  if (!cliente) return null;
+
+  let leadSegmento: string | null = null;
+  let consumoKwhMes: number | null = null;
+  let reciboMxn: number | null = null;
+
+  if (cliente.leadOrigenId) {
+    const [lead] = await db
+      .select({
+        segmento: schema.leads.segmento,
+        consumoKwhMes: schema.leads.consumoKwhMes,
+        reciboMxn: schema.leads.reciboMxn,
+      })
+      .from(schema.leads)
+      .where(eq(schema.leads.id, cliente.leadOrigenId))
+      .limit(1);
+    if (lead) {
+      leadSegmento = lead.segmento ?? null;
+      consumoKwhMes = numOrNull(lead.consumoKwhMes);
+      reciboMxn = numOrNull(lead.reciboMxn);
+    }
+  }
+
+  const segmento =
+    leadSegmento ??
+    (cliente.tipoPersona.startsWith("pm_") ? "negocio" : "residencial");
+
+  return {
+    segmento,
+    consumoKwhMes,
+    reciboMxn,
+    tarifa: cliente.tarifa,
+    municipio: cliente.municipio,
+    estado: cliente.estadoMx,
+    cp: cliente.cp,
+  };
 }
 
 /** Equipos disponibles del catálogo, ordenados por tipo y marca. */

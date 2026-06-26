@@ -90,6 +90,26 @@ function resolvePrecioKwh(
   return { precioKwh: ref, tarifa: "1" };
 }
 
+/**
+ * Constantes de costeo para itemizar partidas del wizard de cotización.
+ * Lee config_parametros con fallbacks (mismos valores que la migración 0005).
+ */
+export async function resolveCosteoConstants(): Promise<
+  import("@/lib/admin/cotizacion-dimensionado").CosteoConstants
+> {
+  const cfg = await loadConfigMap();
+  return {
+    precioPanelFallback: cfg.get("PRECIO_PANEL_FALLBACK") ?? 3500,
+    precioEstructuraPorPanel: cfg.get("PRECIO_ESTRUCTURA_POR_PANEL") ?? 650,
+    costoMaterialElecPorKwp: cfg.get("COSTO_MATERIAL_ELEC_POR_KWP") ?? 1800,
+    costoProteccionesPorKwp: cfg.get("COSTO_PROTECCIONES_POR_KWP") ?? 900,
+    costoManoObraPorKwp: cfg.get("COSTO_MANO_OBRA_POR_KWP") ?? 2500,
+    inversorPrecioPorKwp: cfg.get("INVERSOR_PRECIO_POR_KWP") ?? 2500,
+    inversorSizingRatio: cfg.get("INVERSOR_SIZING_RATIO") ?? 0.9,
+    inversorKwMax: cfg.get("INVERSOR_KW_MAX") ?? 12,
+  };
+}
+
 export async function resolveCalcConfig(args: {
   segmento: string;
   municipio?: string | null;

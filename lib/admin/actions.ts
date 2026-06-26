@@ -9,6 +9,8 @@ import {
   isScoped,
   getLeadsPage,
   getCotizacion,
+  getCotizacionCalcContext,
+  getCatalogoDisponible,
   type DashboardScope,
   type LeadsFiltros,
   type LeadsPage,
@@ -17,6 +19,15 @@ import {
 import type { Rol } from "@/lib/admin/rbac";
 import { ETAPAS_CERRADAS, PROBABILIDAD_POR_ETAPA } from "@/lib/admin/pipeline";
 import { calcularTotales, IVA_RATE } from "@/lib/admin/cotizacion-calc";
+import { calcular, type CalcResult } from "@/lib/calc";
+import {
+  resolveCalcConfig,
+  resolveCosteoConstants,
+} from "@/lib/calc-config";
+import {
+  dimensionarCotizacion,
+  type DimensionarResult,
+} from "@/lib/admin/cotizacion-dimensionado";
 import { sendMail } from "@/lib/email";
 import {
   renderCotizacionPdf,
@@ -1734,6 +1745,301 @@ export async function actualizarCotizacionDatos(
     return resultado;
   } catch {
     return { ok: false, error: "No se pudo actualizar la cotización." };
+  }
+}
+
+/* ──────────────────────── Wizard de dimensionamiento (D4) ────────────────────
+ *
+ * Dos pasos: `calcularDimensionamiento` produce un PREVIEW (no persiste) y
+ * `aplicarDimensionamiento` PERSISTE la propuesta (sistema + partidas + totales).
+ * El cálculo reutiliza lib/calc (dimensionamiento), lib/calc-config (constantes/
+ * HSP/precio) y lib/admin/cotizacion-dimensionado (itemización/costeo). El
+ * contexto técnico se toma de la cotización (cliente + lead origen) y los
+ * overrides del input ganan sobre él.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+const dimensionarInputSchema = z.object({
+  cotizacionId: z.string().uuid(),
+  consumoKwhMes: z.number().positive().nullable().optional(),
+  reciboMxn: z.number().positive().nullable().optional(),
+  capacidadKwpObjetivo: z.number().positive().nullable().optional(),
+  tarifa: z.string().trim().max(16).nullable().optional(),
+  modelo: z.enum(["A", "B"]).default("A"),
+});
+
+type DimensionarInput = z.input<typeof dimensionarInputSchema>;
+
+/**
+ * PREVIEW del dimensionamiento (NO persiste). Resuelve el contexto técnico de la
+ * cotización y aplica los overrides del input (consumo/recibo/tarifa/capacidad).
+ * Si se indica `capacidadKwpObjetivo` arma un CalcResult directamente desde las
+ * constantes (sin invertir el modelo de consumo); si no, usa `calcular` con
+ * consumo o recibo. Devuelve `preview` con las partidas sugeridas y el sistema.
+ */
+export async function calcularDimensionamiento(
+  input: DimensionarInput,
+): Promise<ActionResult & { preview?: DimensionarResult }> {
+  await assertPerm("cotizaciones", "edit");
+
+  const parsed = dimensionarInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+
+  const ctx = await getCotizacionCalcContext(d.cotizacionId);
+  if (!ctx) {
+    return { ok: false, error: "Cotización o cliente no encontrado." };
+  }
+
+  // Overrides del input ganan sobre el contexto de la cotización.
+  const consumoKwhMes = d.consumoKwhMes ?? ctx.consumoKwhMes;
+  const reciboMxn = d.reciboMxn ?? ctx.reciboMxn;
+  const tarifa = d.tarifa ?? ctx.tarifa;
+  const kwpObjetivo = d.capacidadKwpObjetivo ?? null;
+
+  if (
+    kwpObjetivo === null &&
+    !(consumoKwhMes && consumoKwhMes > 0) &&
+    !(reciboMxn && reciboMxn > 0)
+  ) {
+    return {
+      ok: false,
+      error: "Falta consumo, recibo o capacidad objetivo para calcular.",
+    };
+  }
+
+  try {
+    const config = await resolveCalcConfig({
+      segmento: ctx.segmento,
+      municipio: ctx.municipio,
+      estado: ctx.estado,
+      cp: ctx.cp,
+      tarifa,
+    });
+
+    let calc: CalcResult;
+    if (kwpObjetivo !== null) {
+      // Capacidad fijada: derivamos el sistema desde las constantes sin invertir
+      // el modelo de consumo. El ahorro solo aplica si hay consumo conocido.
+      const { constants, precioKwh, hsp } = config;
+      const produccionAnualKwh =
+        kwpObjetivo * hsp * 365 * constants.pr;
+      const inversionMin = kwpObjetivo * constants.costoKwpMin;
+      const inversionMax = kwpObjetivo * constants.costoKwpMax;
+      const inversionProm = (inversionMin + inversionMax) / 2;
+      const consumoBase =
+        consumoKwhMes && consumoKwhMes > 0
+          ? consumoKwhMes
+          : reciboMxn && reciboMxn > 0
+            ? reciboMxn / precioKwh
+            : 0;
+      const ahorroAnualMxn =
+        consumoBase > 0
+          ? Math.min(produccionAnualKwh, consumoBase * 12) * precioKwh
+          : 0;
+      const paybackAnios =
+        ahorroAnualMxn > 0 ? inversionProm / ahorroAnualMxn : Infinity;
+
+      calc = {
+        consumoKwhMes: consumoBase,
+        hsp,
+        precioKwh,
+        kwp: kwpObjetivo,
+        paneles: Math.ceil((kwpObjetivo * 1000) / constants.wpPanel),
+        produccionAnualKwh,
+        inversionMin,
+        inversionMax,
+        inversionProm,
+        ahorroAnualMxn,
+        paybackAnios,
+      };
+    } else {
+      calc = calcular(
+        {
+          consumoKwhMes: consumoKwhMes ?? undefined,
+          reciboMxn: reciboMxn ?? undefined,
+          hsp: config.hsp,
+          precioKwh: config.precioKwh,
+        },
+        config.constants,
+      );
+    }
+
+    const [catalogo, costeo] = await Promise.all([
+      getCatalogoDisponible(),
+      resolveCosteoConstants(),
+    ]);
+
+    const preview = dimensionarCotizacion({
+      calc,
+      catalogo,
+      costeo,
+      inversionMinMax: { min: calc.inversionMin, max: calc.inversionMax },
+      modelo: d.modelo,
+    });
+
+    return { ok: true, preview };
+  } catch {
+    return { ok: false, error: "No se pudo calcular el dimensionamiento." };
+  }
+}
+
+const aplicarDimensionamientoSchema = z.object({
+  cotizacionId: z.string().uuid(),
+  sistema: z.object({
+    capacidadKwp: z.number().nonnegative(),
+    paneles: z.number().int().nonnegative(),
+    inversor: z.string().trim().max(160).nullable(),
+    produccionAnualKwh: z.number().nonnegative(),
+    ahorroAnualMxn: z.number().nonnegative(),
+    paybackAnios: z.number().nonnegative(),
+    esquema: z.enum(schema.esquemaCfe.enumValues).nullable(),
+    moneda: z.string().trim().min(1).max(8).default("MXN"),
+  }),
+  partidas: z
+    .array(
+      z.object({
+        equipoId: z.string().uuid().nullable(),
+        descripcion: z.string().trim().min(1),
+        cantidad: z.number().nonnegative(),
+        precioUnitario: z.number().nonnegative(),
+      }),
+    )
+    .max(200),
+  modo: z.enum(["reemplazar", "solo_vacio"]).default("reemplazar"),
+});
+
+type AplicarDimensionamientoInput = z.input<typeof aplicarDimensionamientoSchema>;
+
+/**
+ * PERSISTE el dimensionamiento en una transacción: actualiza la cabecera
+ * (sistema/esquema/moneda), reemplaza (o respeta, en modo `solo_vacio`) las
+ * partidas, recalcula subtotal/iva/total con `calcularTotales` y deja traza en
+ * la bitácora. Se rechaza en estados terminales. Devuelve los totales.
+ */
+export async function aplicarDimensionamiento(
+  input: AplicarDimensionamientoInput,
+): Promise<ActionResult & { subtotal?: number; iva?: number; total?: number }> {
+  const actor = actorOf(await assertPerm("cotizaciones", "edit"));
+
+  const parsed = aplicarDimensionamientoSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const { cotizacionId, sistema, partidas, modo } = parsed.data;
+
+  try {
+    const resultado = await db.transaction(async (tx) => {
+      const [cot] = await tx
+        .select({ estado: schema.cotizaciones.estado })
+        .from(schema.cotizaciones)
+        .where(eq(schema.cotizaciones.id, cotizacionId))
+        .limit(1);
+      if (!cot) throw new Error("Cotización no encontrada");
+
+      if (COTIZACION_ESTADOS_NO_EDITABLES.has(cot.estado)) {
+        return {
+          ok: false as const,
+          error: `No se puede editar una cotización en estado ${cot.estado}.`,
+        };
+      }
+
+      // Modo solo_vacio: si ya hay partidas, no se tocan.
+      const [{ n }] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(schema.cotizacionItems)
+        .where(eq(schema.cotizacionItems.cotizacionId, cotizacionId));
+      const yaTieneItems = Number(n) > 0;
+      const tocarPartidas = !(modo === "solo_vacio" && yaTieneItems);
+
+      let lineasParaTotales: { cantidad: number; precioUnitario: number }[];
+
+      if (tocarPartidas) {
+        await tx
+          .delete(schema.cotizacionItems)
+          .where(eq(schema.cotizacionItems.cotizacionId, cotizacionId));
+
+        if (partidas.length > 0) {
+          await tx.insert(schema.cotizacionItems).values(
+            partidas.map((item) => ({
+              cotizacionId,
+              equipoId: item.equipoId ?? null,
+              descripcion: item.descripcion,
+              cantidad: String(item.cantidad),
+              precioUnitario: String(item.precioUnitario),
+            })),
+          );
+        }
+        lineasParaTotales = partidas.map((item) => ({
+          cantidad: item.cantidad,
+          precioUnitario: item.precioUnitario,
+        }));
+      } else {
+        // Conserva las partidas existentes: recalcula totales desde la BD.
+        const existentes = await tx
+          .select({
+            cantidad: schema.cotizacionItems.cantidad,
+            precioUnitario: schema.cotizacionItems.precioUnitario,
+          })
+          .from(schema.cotizacionItems)
+          .where(eq(schema.cotizacionItems.cotizacionId, cotizacionId));
+        lineasParaTotales = existentes.map((item) => ({
+          cantidad: Number(item.cantidad),
+          precioUnitario: Number(item.precioUnitario),
+        }));
+      }
+
+      const t = calcularTotales(lineasParaTotales);
+
+      await tx
+        .update(schema.cotizaciones)
+        .set({
+          capacidadKwp: numStrOrNull(sistema.capacidadKwp),
+          paneles: sistema.paneles,
+          inversor: sistema.inversor,
+          produccionAnualKwh: numStrOrNull(sistema.produccionAnualKwh),
+          ahorroAnualMxn: numStrOrNull(sistema.ahorroAnualMxn),
+          paybackAnios: numStrOrNull(sistema.paybackAnios),
+          esquema: sistema.esquema,
+          moneda: sistema.moneda,
+          subtotal: String(t.subtotal),
+          iva: String(t.iva),
+          total: String(t.total),
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.cotizaciones.id, cotizacionId));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "cotizacion",
+        entidadId: cotizacionId,
+        tipo: "dimensionamiento_aplicado",
+        descripcion: `Dimensionamiento aplicado (${sistema.capacidadKwp} kWp, ${tocarPartidas ? partidas.length : lineasParaTotales.length} partidas)`,
+        payload: {
+          capacidadKwp: sistema.capacidadKwp,
+          paneles: sistema.paneles,
+          partidas: tocarPartidas ? partidas.length : lineasParaTotales.length,
+          total: t.total,
+          modo,
+        },
+        actor,
+      });
+
+      return { ok: true as const, ...t };
+    });
+
+    if (resultado.ok) {
+      revalidatePath(`/je-admin/cotizaciones/${cotizacionId}`);
+    }
+    return resultado;
+  } catch {
+    return { ok: false, error: "No se pudo aplicar el dimensionamiento." };
   }
 }
 

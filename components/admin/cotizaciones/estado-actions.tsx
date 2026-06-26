@@ -20,6 +20,13 @@ export interface EstadoActionsProps {
   estado: CotizacionEstado;
   /** Si es false, no se renderiza ninguna accion (solo lectura). */
   puedeEditar?: boolean;
+  /**
+   * Si es false, bloquea el envio (Enviar / Enviar por correo) hasta que la
+   * cotizacion este completa. Default true para no romper otros usos.
+   */
+  lista?: boolean;
+  /** Motivos por los que aun no esta lista para enviarse (se muestran como aviso). */
+  faltantes?: string[];
 }
 
 /** Mensaje de error seguro a partir de un error desconocido. */
@@ -43,6 +50,8 @@ export function EstadoActions({
   cotizacionId,
   estado,
   puedeEditar = true,
+  lista = true,
+  faltantes = [],
 }: EstadoActionsProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -82,13 +91,17 @@ export function EstadoActions({
   const esEnviada = estado === "enviada";
   const esAceptada = estado === "aceptada";
 
+  // El envio (Enviar / Enviar por correo) se bloquea hasta que la cotizacion
+  // este lista. El resto de acciones no dependen de `lista`.
+  const envioBloqueado = !lista;
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         {esBorrador ? (
           <ConfirmButton
             size="sm"
-            disabled={pending}
+            disabled={pending || envioBloqueado}
             title="Enviar cotización"
             description="La cotización pasará a estado «enviada» y quedará lista para la respuesta del cliente. ¿Continuar?"
             confirmLabel="Enviar"
@@ -108,7 +121,7 @@ export function EstadoActions({
             title="Enviar por correo"
             description="Se generará el PDF y se enviará la cotización al correo del cliente. ¿Continuar?"
             confirmLabel="Enviar"
-            disabled={pending}
+            disabled={pending || envioBloqueado}
             onConfirm={() =>
               run(() => enviarCotizacionPorCorreo(cotizacionId))
             }
@@ -213,6 +226,12 @@ export function EstadoActions({
           Nueva version
         </ConfirmButton>
       </div>
+
+      {envioBloqueado && faltantes.length > 0 ? (
+        <p role="status" className="text-xs font-medium text-muted-foreground">
+          Para enviar: {faltantes.join(" · ")}
+        </p>
+      ) : null}
 
       {error ? (
         <p role="alert" className="text-xs font-medium text-destructive">

@@ -21,11 +21,18 @@ import {
 import { TotalesPanel } from "@/components/admin/cotizaciones/totales-panel";
 import { SistemaFields } from "@/components/admin/cotizaciones/sistema-fields";
 import { SistemaForm } from "@/components/admin/cotizaciones/sistema-form";
+import { SistemaWizardStep } from "@/components/admin/cotizaciones/sistema-wizard-step";
 import { RelacionesCard } from "@/components/admin/cotizaciones/relaciones-card";
 import { CotizacionDocumentosPanel } from "@/components/admin/cotizaciones/cotizacion-documentos-panel";
 import { CotizacionHistorial } from "@/components/admin/cotizaciones/cotizacion-historial";
 import { EstadoActions } from "@/components/admin/cotizaciones/estado-actions";
 import { calcularTotales, type Totales } from "@/lib/admin/cotizacion-calc";
+import {
+  WIZARD_TABS,
+  TABS_BLOQUEABLES,
+  isSistemaCompleto,
+  evaluarCotizacionLista,
+} from "@/lib/admin/cotizacion-wizard";
 import { actualizarCotizacionItems } from "@/lib/admin/actions";
 import { cn } from "@/lib/utils";
 import type {
@@ -42,7 +49,7 @@ export interface CotizacionBuilderProps {
   puedeEditarDocs: boolean;
 }
 
-type TabId = "partidas" | "sistema" | "documentos" | "historial";
+type TabId = "sistema" | "partidas" | "documentos" | "historial";
 
 interface TabDef {
   id: TabId;
@@ -109,7 +116,12 @@ export function CotizacionBuilder({
   const router = useRouter();
   const { cotizacion } = detalle;
 
-  const [tab, setTab] = useState<TabId>("partidas");
+  // Gate del wizard: el paso Sistema habilita las demas pestañas.
+  const sistemaCompleto = isSistemaCompleto(cotizacion);
+
+  // Por defecto arrancamos en Sistema (paso 1 del wizard); si !sistemaCompleto
+  // es ademas el unico paso accesible.
+  const [tab, setTab] = useState<TabId>("sistema");
   const [items, setItems] = useState<ItemUI[]>(() => toItemsUI(detalle));
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -131,16 +143,28 @@ export function CotizacionBuilder({
 
   const totales = totalesServidor ?? totalesLocales;
 
-  const tabs: ReadonlyArray<TabDef> = [
-    { id: "partidas", label: "Partidas", count: items.length },
-    { id: "sistema", label: "Sistema", count: 0 },
-    {
-      id: "documentos",
-      label: "Documentos",
-      count: detalle.documentos.length,
-    },
-    { id: "historial", label: "Historial", count: detalle.timeline.length },
-  ];
+  const itemsCount = items.length;
+
+  const { lista, faltantes } = evaluarCotizacionLista({
+    sistemaCompleto,
+    itemsCount,
+    total: totales.total,
+  });
+
+  // Conteos por pestaña, indexados por id.
+  const counts: Record<TabId, number> = {
+    sistema: 0,
+    partidas: itemsCount,
+    documentos: detalle.documentos.length,
+    historial: detalle.timeline.length,
+  };
+
+  // Orden del wizard (Sistema primero) tomado del modulo de logica pura.
+  const tabs: ReadonlyArray<TabDef> = WIZARD_TABS.map((t) => ({
+    id: t.id,
+    label: t.label,
+    count: counts[t.id],
+  }));
 
   function handleAdd(nuevo: Omit<ItemUI, "key">) {
     setOkMsg(null);
@@ -193,29 +217,43 @@ export function CotizacionBuilder({
           aria-label="Secciones de la cotización"
           className="flex flex-wrap gap-1 border-b border-border"
         >
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.id}
-              onClick={() => setTab(t.id)}
-              className={cn(
-                "-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-                "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                tab === t.id
-                  ? "border-brand text-brand dark:border-primary dark:text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t.label}
-              {t.count > 0 ? (
-                <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
-                  {t.count}
-                </span>
-              ) : null}
-            </button>
-          ))}
+          {tabs.map((t) => {
+            const bloqueada = !sistemaCompleto && TABS_BLOQUEABLES.has(t.id);
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === t.id}
+                disabled={bloqueada}
+                aria-disabled={bloqueada}
+                title={
+                  bloqueada
+                    ? "Completa el paso Sistema para continuar"
+                    : undefined
+                }
+                onClick={() => {
+                  if (bloqueada) return;
+                  setTab(t.id);
+                }}
+                className={cn(
+                  "-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                  "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                  tab === t.id
+                    ? "border-brand text-brand dark:border-primary dark:text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                  bloqueada && "cursor-not-allowed opacity-50 hover:text-muted-foreground",
+                )}
+              >
+                {t.label}
+                {t.count > 0 ? (
+                  <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
+                    {t.count}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
         </div>
 
         {/* Panel activo */}
@@ -305,6 +343,13 @@ export function CotizacionBuilder({
                 </CardDescription>
               </CardHeader>
               <CardContent className="mt-4 space-y-4">
+                <SistemaWizardStep
+                  cotizacionId={cotizacion.id}
+                  cabecera={cotizacion}
+                  calcContext={detalle.calcContext}
+                  itemsCount={itemsCount}
+                  puedeEditar={puedeEditar}
+                />
                 <SistemaFields
                   capacidadKwp={cotizacion.capacidadKwp}
                   paneles={cotizacion.paneles}
@@ -393,6 +438,8 @@ export function CotizacionBuilder({
                 cotizacionId={cotizacion.id}
                 estado={cotizacion.estado}
                 puedeEditar={puedeEditar}
+                lista={lista}
+                faltantes={faltantes}
               />
             </CardContent>
           </Card>
