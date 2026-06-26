@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
 import { can } from "@/lib/admin/rbac";
-import { documentoTipo } from "@/db/schema";
+import { documentoTipo, entidadTipo as entidadTipoEnum } from "@/db/schema";
 import { uploadDocumentoSharePoint } from "@/lib/m365/sharepoint";
 import { registrarDocumento } from "@/lib/admin/actions";
 
@@ -12,6 +12,7 @@ export const runtime = "nodejs";
 const MAX_BYTES = 25 * 1024 * 1024;
 
 type DocumentoTipo = (typeof documentoTipo.enumValues)[number];
+type EntidadTipo = (typeof entidadTipoEnum.enumValues)[number];
 
 /**
  * Sube un documento a SharePoint (Graph) y lo registra en `documentos` (entidad
@@ -37,6 +38,7 @@ export async function POST(req: Request): Promise<Response> {
 
   const file = form.get("file");
   const entidadId = String(form.get("entidadId") ?? "").trim();
+  const entidadTipoRaw = String(form.get("entidadTipo") ?? "cliente");
   const tipoRaw = String(form.get("tipo") ?? "otro");
   const nombreInput = String(form.get("nombre") ?? "").trim();
 
@@ -58,12 +60,17 @@ export async function POST(req: Request): Promise<Response> {
   )
     ? (tipoRaw as DocumentoTipo)
     : "otro";
+  const entidadTipo: EntidadTipo = (
+    entidadTipoEnum.enumValues as readonly string[]
+  ).includes(entidadTipoRaw)
+    ? (entidadTipoRaw as EntidadTipo)
+    : "cliente";
   const nombre = (nombreInput || file.name || "documento").slice(0, 200);
 
   const bytes = Buffer.from(await file.arrayBuffer());
 
   const subida = await uploadDocumentoSharePoint({
-    carpeta: `clientes/${entidadId}`,
+    carpeta: `${entidadTipo}s/${entidadId}`,
     fileName: file.name || nombre,
     contentType: file.type || "application/octet-stream",
     bytes,
@@ -78,9 +85,9 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error }, { status });
   }
 
-  // Registra el documento (entidad cliente) apuntando al webUrl de SharePoint.
+  // Registra el documento apuntando al webUrl de SharePoint.
   const res = await registrarDocumento({
-    entidadTipo: "cliente",
+    entidadTipo,
     entidadId,
     tipo,
     nombre,

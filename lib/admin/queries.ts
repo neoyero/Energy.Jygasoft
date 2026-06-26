@@ -1303,6 +1303,15 @@ export interface CotizacionDetalle {
   items: CotizacionItemRow[];
   cliente: { id: string; nombre: string; tipoPersona: TipoPersona } | null;
   oportunidad: { id: string; nombre: string; etapa: string } | null;
+  documentos: ClienteDocumentoRow[];
+  timeline: EventoRow[];
+}
+
+export interface CotizacionesKpis {
+  total: number;
+  montoAceptado: number;
+  montoEnviadas: number;
+  porEstado: Record<CotizacionEstado, number>;
 }
 
 export interface CatalogoOption {
@@ -1828,9 +1837,58 @@ export async function getCotizacionesFiltradas(
 }
 
 /**
+ * KPIs del listado de cotizaciones (con scoping por rol vía isScoped:
+ * vendedor/preventa solo cuentan/suman las suyas). `total` = nº de cotizaciones;
+ * `montoAceptado`/`montoEnviadas` = Σ total por estado; `porEstado` arranca con
+ * TODAS las claves del enum en 0 y luego suma los conteos. Montos ::float8.
+ */
+export async function getCotizacionesKpis(
+  scope: DashboardScope,
+): Promise<CotizacionesKpis> {
+  const f = isScoped(scope.rol)
+    ? sql`WHERE vendedor_id = ${scope.userId}`
+    : sql``;
+
+  const result = await db.execute(sql`
+    SELECT
+      estado::text AS estado,
+      count(*)::int AS conteo,
+      coalesce(sum(coalesce(total,0)),0)::float8 AS monto
+    FROM cotizaciones
+    ${f}
+    GROUP BY estado
+  `);
+
+  const porEstado = schema.cotizacionEstado.enumValues.reduce(
+    (acc, estado) => {
+      acc[estado] = 0;
+      return acc;
+    },
+    {} as Record<CotizacionEstado, number>,
+  );
+
+  let total = 0;
+  let montoAceptado = 0;
+  let montoEnviadas = 0;
+
+  for (const row of asRows(result)) {
+    const estado = str(row.estado) as CotizacionEstado;
+    const conteo = num(row.conteo);
+    const monto = num(row.monto);
+    if (estado in porEstado) porEstado[estado] = conteo;
+    total += conteo;
+    if (estado === "aceptada") montoAceptado = monto;
+    if (estado === "enviada") montoEnviadas = monto;
+  }
+
+  return { total, montoAceptado, montoEnviadas, porEstado };
+}
+
+/**
  * Detalle de una cotización: cabecera + items (con marca/modelo del equipo vía
- * leftJoin a catálogo) + cliente y oportunidad asociados. Aplica scoping sobre
- * vendedor_id; si no pertenece al rol acotado (o no existe) devuelve null.
+ * leftJoin a catálogo) + cliente y oportunidad asociados, además de documentos
+ * y timeline de la entidad. Aplica scoping sobre vendedor_id; si no pertenece al
+ * rol acotado (o no existe) devuelve null.
  */
 export async function getCotizacion(
   scope: DashboardScope,
@@ -1875,8 +1933,12 @@ export async function getCotizacion(
     equipoModelo: row.equipoModelo,
   }));
 
-  const cliente = await getClienteResumen(cot.clienteId);
-  const oportunidad = await getOportunidadResumen(cot.oportunidadId);
+  const [cliente, oportunidad, documentos, timeline] = await Promise.all([
+    getClienteResumen(cot.clienteId),
+    getOportunidadResumen(cot.oportunidadId),
+    getDocumentosDeEntidad("cotizacion", id),
+    getTimelineDeEntidad("cotizacion", id),
+  ]);
 
   return {
     cotizacion: {
@@ -1905,6 +1967,8 @@ export async function getCotizacion(
     items,
     cliente,
     oportunidad,
+    documentos,
+    timeline,
   };
 }
 

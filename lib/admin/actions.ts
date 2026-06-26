@@ -8,6 +8,7 @@ import { assertPerm, actorOf } from "@/lib/admin/guard";
 import {
   isScoped,
   getLeadsPage,
+  getCotizacion,
   type DashboardScope,
   type LeadsFiltros,
   type LeadsPage,
@@ -16,6 +17,11 @@ import {
 import type { Rol } from "@/lib/admin/rbac";
 import { ETAPAS_CERRADAS, PROBABILIDAD_POR_ETAPA } from "@/lib/admin/pipeline";
 import { calcularTotales, IVA_RATE } from "@/lib/admin/cotizacion-calc";
+import { sendMail } from "@/lib/email";
+import {
+  renderCotizacionPdf,
+  type CotizacionPdfData,
+} from "@/lib/pdf/cotizacion-pdf";
 
 type LeadEstado = (typeof schema.leadEstado.enumValues)[number];
 type OportEtapa = (typeof schema.oportunidadEtapa.enumValues)[number];
@@ -1610,6 +1616,391 @@ export async function nuevaVersionCotizacion(
   }
 }
 
+/** Fecha (YYYY-MM-DD) opcional: vacío / ausente -> null. */
+const fechaOpcional = z
+  .string()
+  .date("Fecha no válida.")
+  .nullable()
+  .optional()
+  .transform((v) => v ?? null);
+
+const cotizacionDatosSchema = z.object({
+  capacidadKwp: z.number().nonnegative().nullable().optional(),
+  paneles: z.number().int().nonnegative().nullable().optional(),
+  inversor: z.string().trim().max(160).nullable().optional(),
+  produccionAnualKwh: z.number().nonnegative().nullable().optional(),
+  ahorroAnualMxn: z.number().nonnegative().nullable().optional(),
+  paybackAnios: z.number().nonnegative().nullable().optional(),
+  esquema: z.enum(schema.esquemaCfe.enumValues).nullable().optional(),
+  moneda: z.string().trim().min(1).max(8).optional(),
+  validaHasta: fechaOpcional,
+});
+
+type CotizacionDatosInput = z.input<typeof cotizacionDatosSchema>;
+
+/** Estados de cotización que no admiten edición de datos. */
+const COTIZACION_ESTADOS_NO_EDITABLES: ReadonlySet<CotizacionEstadoEnum> =
+  new Set<CotizacionEstadoEnum>(["aceptada", "rechazada", "expirada"]);
+
+/**
+ * Actualiza los datos técnicos/comerciales de la cabecera de una cotización
+ * (sistema, esquema, moneda, vigencia). NO toca subtotal/iva/total (eso va por
+ * `actualizarCotizacionItems`). Se rechaza en estados terminales. numeric ->
+ * String|null. Deja traza en la bitácora.
+ */
+export async function actualizarCotizacionDatos(
+  id: string,
+  data: CotizacionDatosInput,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("cotizaciones", "edit"));
+
+  const parsed = cotizacionDatosSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+
+  try {
+    const resultado = await db.transaction(async (tx) => {
+      const [cot] = await tx
+        .select({ estado: schema.cotizaciones.estado })
+        .from(schema.cotizaciones)
+        .where(eq(schema.cotizaciones.id, id))
+        .limit(1);
+      if (!cot) throw new Error("Cotización no encontrada");
+
+      if (COTIZACION_ESTADOS_NO_EDITABLES.has(cot.estado)) {
+        return {
+          ok: false as const,
+          error: `No se puede editar una cotización en estado ${cot.estado}.`,
+        };
+      }
+
+      const update: {
+        capacidadKwp?: string | null;
+        paneles?: number | null;
+        inversor?: string | null;
+        produccionAnualKwh?: string | null;
+        ahorroAnualMxn?: string | null;
+        paybackAnios?: string | null;
+        esquema?: EsquemaCfe | null;
+        moneda?: string;
+        validaHasta?: string | null;
+        updatedAt: string;
+      } = { updatedAt: new Date().toISOString() };
+
+      if (d.capacidadKwp !== undefined) {
+        update.capacidadKwp = numStrOrNull(d.capacidadKwp);
+      }
+      if (d.paneles !== undefined) update.paneles = d.paneles ?? null;
+      if (d.inversor !== undefined) update.inversor = d.inversor ?? null;
+      if (d.produccionAnualKwh !== undefined) {
+        update.produccionAnualKwh = numStrOrNull(d.produccionAnualKwh);
+      }
+      if (d.ahorroAnualMxn !== undefined) {
+        update.ahorroAnualMxn = numStrOrNull(d.ahorroAnualMxn);
+      }
+      if (d.paybackAnios !== undefined) {
+        update.paybackAnios = numStrOrNull(d.paybackAnios);
+      }
+      if (d.esquema !== undefined) update.esquema = d.esquema ?? null;
+      if (d.moneda !== undefined) update.moneda = d.moneda;
+      if (d.validaHasta !== undefined) update.validaHasta = d.validaHasta;
+
+      await tx
+        .update(schema.cotizaciones)
+        .set(update)
+        .where(eq(schema.cotizaciones.id, id));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "cotizacion",
+        entidadId: id,
+        tipo: "datos_actualizados",
+        descripcion: "Datos de la cotización actualizados",
+        payload: { ...d },
+        actor,
+      });
+
+      return { ok: true as const };
+    });
+
+    if (resultado.ok) {
+      revalidatePath("/je-admin/cotizaciones");
+      revalidatePath(`/je-admin/cotizaciones/${id}`);
+    }
+    return resultado;
+  } catch {
+    return { ok: false, error: "No se pudo actualizar la cotización." };
+  }
+}
+
+/** Scope admin-like para leer una cotización sin acotar por vendedor. */
+const SCOPE_ADMIN: DashboardScope = { rol: "admin", userId: "" };
+
+/**
+ * Genera el PDF de la cotización y lo envía por correo al cliente (vía
+ * sendMail/Microsoft Graph; en dev queda { skipped:true }). Si el cliente no
+ * tiene correo se rechaza. Tras un envío exitoso (o skipped en dev), una
+ * cotización en 'borrador' transiciona a 'enviada'. Deja traza en la bitácora.
+ */
+export async function enviarCotizacionPorCorreo(
+  id: string,
+): Promise<ActionResult & { skipped?: boolean }> {
+  const actor = actorOf(await assertPerm("cotizaciones", "edit"));
+
+  const detalle = await getCotizacion(SCOPE_ADMIN, id);
+  if (!detalle) {
+    return { ok: false, error: "Cotización no encontrada." };
+  }
+
+  const { cotizacion: cab, items, cliente } = detalle;
+  if (!cliente) {
+    return { ok: false, error: "El cliente no tiene correo." };
+  }
+
+  // El correo del cliente no viene en el resumen; se consulta directo.
+  const [clienteRow] = await db
+    .select({
+      email: schema.clientes.email,
+      nombre: schema.clientes.nombre,
+      rfc: schema.clientes.rfc,
+    })
+    .from(schema.clientes)
+    .where(eq(schema.clientes.id, cliente.id))
+    .limit(1);
+
+  const email = clienteRow?.email?.trim();
+  if (!email) {
+    return { ok: false, error: "El cliente no tiene correo." };
+  }
+
+  const folio = cab.folio ?? id;
+  const moneda = cab.moneda || "MXN";
+
+  const pdfData: CotizacionPdfData = {
+    folio,
+    version: cab.version,
+    fecha: cab.createdAt,
+    validaHasta: cab.validaHasta,
+    estado: cab.estado,
+    moneda,
+    cliente: { nombre: clienteRow?.nombre ?? cliente.nombre, rfc: clienteRow?.rfc ?? null },
+    sistema: {
+      capacidadKwp: cab.capacidadKwp,
+      paneles: cab.paneles,
+      inversor: cab.inversor,
+      produccionAnualKwh: cab.produccionAnualKwh,
+      ahorroAnualMxn: cab.ahorroAnualMxn,
+      paybackAnios: cab.paybackAnios,
+      esquema: cab.esquema,
+    },
+    items: items.map((it) => ({
+      descripcion: it.descripcion,
+      cantidad: it.cantidad,
+      precioUnitario: it.precioUnitario,
+      importe: it.cantidad * it.precioUnitario,
+    })),
+    subtotal: cab.subtotal,
+    iva: cab.iva,
+    total: cab.total,
+  };
+
+  let contentBytes: string;
+  try {
+    const pdf = await renderCotizacionPdf(pdfData);
+    contentBytes = pdf.toString("base64");
+  } catch {
+    return { ok: false, error: "No se pudo generar el PDF de la cotización." };
+  }
+
+  const totalFmt = formatMoneda(cab.total, moneda);
+  const html = `
+    <p>Estimado(a) ${escapeHtml(clienteRow?.nombre ?? cliente.nombre)}:</p>
+    <p>Adjuntamos la cotización <strong>${escapeHtml(folio)}</strong> de JYGASOFT Energy.</p>
+    <p>Total: <strong>${escapeHtml(totalFmt)}</strong>${
+      cab.validaHasta ? ` · Vigencia hasta ${escapeHtml(cab.validaHasta)}` : ""
+    }.</p>
+    <p>Quedamos a sus órdenes para cualquier aclaración.</p>
+  `.trim();
+
+  const result = await sendMail({
+    to: email,
+    subject: `Cotización ${folio}`,
+    html,
+    attachments: [
+      {
+        name: `Cotizacion-${folio}.pdf`,
+        contentType: "application/pdf",
+        contentBytes,
+      },
+    ],
+  });
+
+  if (!result.ok) {
+    return { ok: false, error: "No se pudo enviar el correo al cliente." };
+  }
+
+  try {
+    await db.transaction(async (tx) => {
+      if (cab.estado === "borrador") {
+        await tx
+          .update(schema.cotizaciones)
+          .set({ estado: "enviada", updatedAt: new Date().toISOString() })
+          .where(eq(schema.cotizaciones.id, id));
+      }
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "cotizacion",
+        entidadId: id,
+        tipo: "enviada_correo",
+        descripcion: `Cotización enviada por correo a ${email}`,
+        payload: { to: email, skipped: result.skipped ?? false },
+        actor,
+      });
+    });
+  } catch {
+    return { ok: false, error: "No se pudo registrar el envío." };
+  }
+
+  revalidatePath("/je-admin/cotizaciones");
+  revalidatePath(`/je-admin/cotizaciones/${id}`);
+  return { ok: true, skipped: result.skipped };
+}
+
+/** Formatea un monto con la moneda dada (es-MX); cae a $n.nn si falla. */
+function formatMoneda(n: number, moneda: string): string {
+  try {
+    return new Intl.NumberFormat("es-MX", {
+      style: "currency",
+      currency: moneda || "MXN",
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch {
+    return `$${n.toFixed(2)}`;
+  }
+}
+
+/** Escapa caracteres con significado en HTML para interpolar texto seguro. */
+function escapeHtml(v: string): string {
+  return v
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function isUniqueProyectoFolioViolation(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.includes("proyectos_folio_key");
+}
+
+/** Genera el folio PRY-YYYY-NNNN para el año en curso (NNNN = count+1+offset). */
+async function siguienteFolioProyecto(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  anio: number,
+  offset: number,
+): Promise<string> {
+  const [{ n }] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.proyectos)
+    .where(eq(schema.proyectos.anio, anio));
+  const consecutivo = Number(n) + 1 + offset;
+  return `PRY-${anio}-${String(consecutivo).padStart(4, "0")}`;
+}
+
+/**
+ * Genera un proyecto a partir de una cotización ACEPTADA (si no, se rechaza).
+ * Hereda cliente/oportunidad/vendedor de la cotización; fase inicial
+ * 'input_comercial'; precioSinIva = subtotal y totalConIva = total de la
+ * cotización. Reintenta el folio ante colisión de unique. Deja traza tanto en
+ * el proyecto creado como en la cotización origen.
+ */
+export async function crearProyectoDeCotizacion(
+  cotizacionId: string,
+): Promise<ActionResult & { id?: string }> {
+  const actor = actorOf(await assertPerm("proyectos", "edit"));
+
+  const anio = new Date().getFullYear();
+  const MAX_RETRIES = 5;
+
+  for (let intento = 0; intento < MAX_RETRIES; intento++) {
+    try {
+      const resultado = await db.transaction(async (tx) => {
+        const [cot] = await tx
+          .select()
+          .from(schema.cotizaciones)
+          .where(eq(schema.cotizaciones.id, cotizacionId))
+          .limit(1);
+        if (!cot) throw new Error("Cotización no encontrada");
+
+        if (cot.estado !== "aceptada") {
+          return {
+            ok: false as const,
+            error: "Solo se genera proyecto de una cotización aceptada.",
+          };
+        }
+
+        const folio = await siguienteFolioProyecto(tx, anio, intento);
+
+        const [proy] = await tx
+          .insert(schema.proyectos)
+          .values({
+            clienteId: cot.clienteId,
+            oportunidadId: cot.oportunidadId,
+            vendedorId: cot.vendedorId,
+            folio,
+            anio,
+            fase: "input_comercial",
+            capacidadKwp: cot.capacidadKwp,
+            esquema: cot.esquema,
+            precioSinIva: cot.subtotal,
+            totalConIva: cot.total,
+          })
+          .returning({ id: schema.proyectos.id });
+
+        await tx.insert(schema.eventos).values([
+          {
+            entidadTipo: "proyecto",
+            entidadId: proy.id,
+            tipo: "creado",
+            descripcion: `Proyecto ${folio} generado desde cotización ${cot.folio ?? cotizacionId}`,
+            payload: { folio, cotizacionId },
+            actor,
+          },
+          {
+            entidadTipo: "cotizacion",
+            entidadId: cotizacionId,
+            tipo: "proyecto_generado",
+            descripcion: `Proyecto ${folio} generado`,
+            payload: { proyectoId: proy.id },
+            actor,
+          },
+        ]);
+
+        return { ok: true as const, id: proy.id };
+      });
+
+      if (resultado.ok) {
+        revalidatePath("/je-admin/proyectos");
+        revalidatePath(`/je-admin/cotizaciones/${cotizacionId}`);
+        return { ok: true, id: resultado.id };
+      }
+      return resultado;
+    } catch (error: unknown) {
+      if (isUniqueProyectoFolioViolation(error) && intento < MAX_RETRIES - 1) {
+        continue;
+      }
+      return { ok: false, error: "No se pudo generar el proyecto." };
+    }
+  }
+
+  return { ok: false, error: "No se pudo asignar un folio único." };
+}
+
 /* ──────────────── Proyectos / Trámites / Instalación / Materiales / Pagos (D5)
  *
  * Estilo calcado de D4: assertPerm + actorOf, ActionResult, validación Zod con
@@ -1625,14 +2016,6 @@ type TramiteCfeEstado = (typeof schema.tramiteCfeEstado.enumValues)[number];
 type InstalacionEstado = (typeof schema.instalacionEstado.enumValues)[number];
 type PagoEstado = (typeof schema.pagoEstado.enumValues)[number];
 type EsquemaCfe = (typeof schema.esquemaCfe.enumValues)[number];
-
-/** Fecha (YYYY-MM-DD) opcional: vacío / ausente -> null. */
-const fechaOpcional = z
-  .string()
-  .date("Fecha no válida.")
-  .nullable()
-  .optional()
-  .transform((v) => v ?? null);
 
 /** Orden canónico de fases (igual a queries.FASE_ORDER) para validar avances. */
 const FASE_ORDER_ACTIONS = schema.proyectoFase.enumValues;
@@ -2615,7 +2998,7 @@ export async function registrarDocumento(
       return doc.id;
     });
 
-    revalidatePath(`/je-admin/clientes/${d.entidadId}`);
+    revalidatePath(`/je-admin/${d.entidadTipo}s/${d.entidadId}`);
     revalidatePath("/je-admin/documentos");
     return { ok: true, id };
   } catch {
