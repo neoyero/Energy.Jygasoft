@@ -4,6 +4,7 @@ import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
 import { tipoPersona, nivelTension } from "@/db/schema"
+import { regimenesPara } from "@/lib/sat/regimen-fiscal"
 import { crearCliente, actualizarCliente } from "@/lib/admin/actions"
 import type {
   ClienteDetalle,
@@ -119,12 +120,18 @@ export function ClienteForm({
 
   const esPF = form.tipoPersona.startsWith("pf_")
 
-  // Cambio de tipo de persona: si pasa a PM, limpia el CURP en el estado.
+  // Régimenes fiscales SAT aplicables al tipo de persona actual.
+  const regimenesDisponibles = regimenesPara(form.tipoPersona)
+
+  // Cambio de tipo de persona: limpia CURP si pasa a PM y el régimen fiscal si
+  // deja de aplicar al nuevo tipo (física/moral).
   function onTipoPersonaChange(value: TipoPersona): void {
+    const validos = new Set(regimenesPara(value).map((r) => r.clave))
     setForm((prev) => ({
       ...prev,
       tipoPersona: value,
       curp: value.startsWith("pf_") ? prev.curp : "",
+      regimenFiscal: validos.has(prev.regimenFiscal) ? prev.regimenFiscal : "",
     }))
   }
 
@@ -285,12 +292,20 @@ export function ClienteForm({
 
         <div className="space-y-1.5">
           <Label htmlFor="cliente-regimen">Régimen fiscal</Label>
-          <Input
+          <select
             id="cliente-regimen"
             value={form.regimenFiscal}
             onChange={(e) => set("regimenFiscal", e.target.value)}
             disabled={pending}
-          />
+            className={SELECT_CLASS}
+          >
+            <option value="">Sin especificar</option>
+            {regimenesDisponibles.map((r) => (
+              <option key={r.clave} value={r.clave}>
+                {r.clave} — {r.descripcion}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="space-y-1.5">

@@ -9,6 +9,7 @@ import {
   type DashboardScope,
 } from "@/lib/admin/queries"
 import { fmtFechaRel } from "@/lib/admin/format"
+import { regimenFiscalLabel } from "@/lib/sat/regimen-fiscal"
 import { labelFor } from "@/components/admin/ui/status-badge"
 import { PageHeader } from "@/components/admin/ui/page-header"
 import {
@@ -113,7 +114,14 @@ export default async function ClienteDetail({ params }: Params) {
             />
             <Field label="RFC" value={txt(cliente.rfc)} />
             <Field label="CURP" value={txt(cliente.curp)} />
-            <Field label="Régimen fiscal" value={txt(cliente.regimenFiscal)} />
+            <Field
+              label="Régimen fiscal"
+              value={
+                cliente.regimenFiscal
+                  ? regimenFiscalLabel(cliente.regimenFiscal)
+                  : DASH
+              }
+            />
             <Field
               label="CSF actualizada"
               value={fmtFechaRel(cliente.csfActualizadaAt)}
