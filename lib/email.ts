@@ -44,7 +44,8 @@ function isConfigured(): boolean {
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
-async function getGraphToken(): Promise<string> {
+/** Token de aplicación de Microsoft Graph (client-credentials, scope .default). */
+export async function getGraphToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
     return cachedToken.value;
   }

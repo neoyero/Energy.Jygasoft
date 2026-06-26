@@ -1215,14 +1215,30 @@ export interface ClienteDocumentoRow {
   createdAt: string;
 }
 
+export interface ClienteActividadRow {
+  id: string;
+  tipo: string;
+  titulo: string;
+  descripcion: string | null;
+  estado: string;
+  venceAt: string | null;
+  completadoAt: string | null;
+  asignadoA: string | null;
+  asignadoNombre: string | null;
+  createdAt: string;
+  vencida: boolean;
+}
+
 export interface ClienteDetalle {
   cliente: typeof schema.clientes.$inferSelect;
   vendedorNombre: string | null;
+  municipioNombre: string | null;
   contactos: ContactoRow[];
   oportunidades: ClienteOportunidadRow[];
   cotizaciones: ClienteCotizacionRow[];
   proyectos: ClienteProyectoRow[];
   documentos: ClienteDocumentoRow[];
+  actividades: ClienteActividadRow[];
   timeline: EventoRow[];
 }
 
@@ -1398,30 +1414,36 @@ export async function getClienteDetalle(
 
   const [
     vendedorNombre,
+    municipioNombre,
     contactos,
     oportunidades,
     cotizaciones,
     proyectos,
     documentos,
+    actividades,
     timeline,
   ] = await Promise.all([
     getVendedorNombre(cliente.vendedorId),
+    getMunicipioNombre(cliente.municipioId),
     getContactosDeCliente(id),
     getOportunidadesDeCliente(id),
     getCotizacionesDeCliente(id),
     getProyectosDeCliente(id),
     getDocumentosDeEntidad("cliente", id),
+    getActividadesDeEntidad("cliente", id),
     getTimelineDeEntidad("cliente", id),
   ]);
 
   return {
     cliente,
     vendedorNombre,
+    municipioNombre,
     contactos,
     oportunidades,
     cotizaciones,
     proyectos,
     documentos,
+    actividades,
     timeline,
   };
 }
@@ -1435,6 +1457,19 @@ async function getVendedorNombre(
     .select({ nombre: schema.usuarios.nombre })
     .from(schema.usuarios)
     .where(eq(schema.usuarios.id, vendedorId))
+    .limit(1);
+  return row?.nombre ?? null;
+}
+
+/** Nombre del municipio por su id (catálogo INEGI), o null. */
+export async function getMunicipioNombre(
+  municipioId: number | null,
+): Promise<string | null> {
+  if (municipioId == null) return null;
+  const [row] = await db
+    .select({ nombre: schema.municipios.nombre })
+    .from(schema.municipios)
+    .where(eq(schema.municipios.id, municipioId))
     .limit(1);
   return row?.nombre ?? null;
 }
@@ -1604,6 +1639,115 @@ async function getTimelineDeEntidad(
     actor: row.actor,
     createdAt: row.createdAt,
   }));
+}
+
+/**
+ * Actividades de una entidad (con nombre del asignado vía leftJoin a usuarios),
+ * ordenadas por estado y vencimiento (nulls al final). `id` (bigint) -> string.
+ * `vencida` se calcula en JS: vence_at pasado y aún pendiente.
+ */
+async function getActividadesDeEntidad(
+  entidadTipo: (typeof schema.entidadTipo.enumValues)[number],
+  entidadId: string,
+): Promise<ClienteActividadRow[]> {
+  const rows = await db
+    .select({
+      id: schema.actividades.id,
+      tipo: schema.actividades.tipo,
+      titulo: schema.actividades.titulo,
+      descripcion: schema.actividades.descripcion,
+      estado: schema.actividades.estado,
+      venceAt: schema.actividades.venceAt,
+      completadoAt: schema.actividades.completadoAt,
+      asignadoA: schema.actividades.asignadoA,
+      asignadoNombre: schema.usuarios.nombre,
+      createdAt: schema.actividades.createdAt,
+    })
+    .from(schema.actividades)
+    .leftJoin(
+      schema.usuarios,
+      eq(schema.actividades.asignadoA, schema.usuarios.id),
+    )
+    .where(
+      and(
+        eq(schema.actividades.entidadTipo, entidadTipo),
+        eq(schema.actividades.entidadId, entidadId),
+      ),
+    )
+    .orderBy(
+      asc(schema.actividades.estado),
+      sql`${schema.actividades.venceAt} ASC NULLS LAST`,
+    );
+
+  const ahora = new Date();
+
+  return rows.map((row) => ({
+    id: String(row.id),
+    tipo: row.tipo,
+    titulo: row.titulo,
+    descripcion: row.descripcion,
+    estado: row.estado,
+    venceAt: row.venceAt,
+    completadoAt: row.completadoAt,
+    asignadoA: row.asignadoA,
+    asignadoNombre: row.asignadoNombre,
+    createdAt: row.createdAt,
+    vencida:
+      row.venceAt != null &&
+      new Date(row.venceAt) < ahora &&
+      row.estado === "pendiente",
+  }));
+}
+
+/**
+ * Resolución de un código postal mexicano al municipio normalizado (catálogo
+ * INEGI). Toma la primera fila de `codigos_postales` con ese CP (dMnpio/dEstado
+ * + claves c_estado/c_mnpio) y resuelve el `municipios.id` por
+ * (clave_estado, clave_mnpio). Si no hay CP devuelve null; si hay CP pero no se
+ * encuentra el municipio en el maestro, `municipioId` queda en null.
+ */
+export interface MunicipioMatch {
+  municipioId: number | null;
+  municipio: string | null;
+  estadoMx: string | null;
+}
+
+export async function getMunicipioPorCp(
+  cp: string,
+): Promise<MunicipioMatch | null> {
+  const [codigo] = await db
+    .select({
+      dMnpio: schema.codigosPostales.dMnpio,
+      dEstado: schema.codigosPostales.dEstado,
+      cEstado: schema.codigosPostales.cEstado,
+      cMnpio: schema.codigosPostales.cMnpio,
+    })
+    .from(schema.codigosPostales)
+    .where(eq(schema.codigosPostales.dCodigo, cp))
+    .limit(1);
+
+  if (!codigo) return null;
+
+  let municipioId: number | null = null;
+  if (codigo.cEstado && codigo.cMnpio) {
+    const [muni] = await db
+      .select({ id: schema.municipios.id })
+      .from(schema.municipios)
+      .where(
+        and(
+          eq(schema.municipios.claveEstado, codigo.cEstado),
+          eq(schema.municipios.claveMnpio, codigo.cMnpio),
+        ),
+      )
+      .limit(1);
+    municipioId = muni?.id ?? null;
+  }
+
+  return {
+    municipioId,
+    municipio: codigo.dMnpio,
+    estadoMx: codigo.dEstado,
+  };
 }
 
 /**

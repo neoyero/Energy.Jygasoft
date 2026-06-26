@@ -870,6 +870,26 @@ const clienteSchema = z.object({
     .optional()
     .transform((v) => v ?? null),
   titularCfe: optionalText(160),
+  titularCoincide: z
+    .boolean()
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  municipioId: z
+    .union([z.number(), z.string()])
+    .nullish()
+    .transform((v, ctx) => {
+      if (v === null || v === undefined || v === "") return null;
+      const n = Math.trunc(Number(v));
+      if (!Number.isInteger(n) || n <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Municipio no válido.",
+        });
+        return z.NEVER;
+      }
+      return n;
+    }),
   vendedorId: z
     .string()
     .uuid("Vendedor no válido.")
@@ -899,6 +919,8 @@ function clienteValuesOf(d: z.output<typeof clienteSchema>): {
   tarifa: string | null;
   nivelTension: NivelTension | null;
   titularCfe: string | null;
+  titularCoincide: boolean | null;
+  municipioId: number | null;
   vendedorId: string | null;
   notas: string | null;
 } {
@@ -919,6 +941,8 @@ function clienteValuesOf(d: z.output<typeof clienteSchema>): {
     tarifa: d.tarifa,
     nivelTension: d.nivelTension,
     titularCfe: d.titularCfe,
+    titularCoincide: d.titularCoincide,
+    municipioId: d.municipioId,
     vendedorId: d.vendedorId,
     notas: d.notas,
   };
@@ -2422,5 +2446,423 @@ export async function cancelarPago(id: string): Promise<ActionResult> {
     return resultado.ok ? { ok: true } : resultado;
   } catch {
     return { ok: false, error: "No se pudo cancelar el pago." };
+  }
+}
+
+/* ──────────────── Cliente 360°: oportunidades / documentos / actividades ─────
+ *
+ * Acciones que completan el detalle del cliente (D4). Estilo calcado: assertPerm
+ * + actorOf, ActionResult, validación Zod con safeParse, transacciones con traza
+ * en `eventos`. La tabla `actividades.id` es bigint -> Number(id) en where,
+ * String(id) al exponer; `documentos.id` es uuid. La subida real de archivos va
+ * por una ruta aparte; aquí solo se registra el documento por URL.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+type EntidadTipo = (typeof schema.entidadTipo.enumValues)[number];
+type DocumentoTipo = (typeof schema.documentoTipo.enumValues)[number];
+type ActividadTipo = (typeof schema.actividadTipo.enumValues)[number];
+
+const crearOportunidadDeClienteSchema = z.object({
+  nombre: z.string().trim().min(2, "El nombre debe tener al menos 2 caracteres."),
+  etapa: z.enum(schema.oportunidadEtapa.enumValues).optional(),
+  capacidadKwp: z.number().nonnegative().nullable().optional(),
+  montoEstimado: z.number().nonnegative().nullable().optional(),
+  fechaCierreEstimada: fechaOpcional,
+});
+
+type CrearOportunidadDeClienteInput = z.input<
+  typeof crearOportunidadDeClienteSchema
+>;
+
+/**
+ * Crea una oportunidad asociada a un cliente. La probabilidad la define la etapa
+ * (modelo de embudo). El vendedor se hereda: rol acotado -> su userId; si no, el
+ * vendedor del cliente. Deja traza en la bitácora (oportunidad + cliente).
+ */
+export async function crearOportunidadDeCliente(
+  clienteId: string,
+  data: CrearOportunidadDeClienteInput,
+): Promise<ActionResult & { id?: string }> {
+  const user = await assertPerm("oportunidades", "edit");
+  const actor = actorOf(user);
+
+  const parsed = crearOportunidadDeClienteSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+  const etapa: OportEtapa = d.etapa ?? "calificacion";
+  const probabilidad = PROBABILIDAD_POR_ETAPA[etapa];
+
+  try {
+    const id = await db.transaction(async (tx) => {
+      const [cliente] = await tx
+        .select({ vendedorId: schema.clientes.vendedorId })
+        .from(schema.clientes)
+        .where(eq(schema.clientes.id, clienteId))
+        .limit(1);
+      if (!cliente) throw new Error("Cliente no encontrado");
+
+      const scoped = isScoped((user.rol ?? "") as Parameters<typeof isScoped>[0]);
+      const vendedorId = scoped ? user.id : cliente.vendedorId;
+
+      const [oport] = await tx
+        .insert(schema.oportunidades)
+        .values({
+          clienteId,
+          vendedorId,
+          nombre: d.nombre,
+          etapa,
+          probabilidad,
+          capacidadKwp:
+            d.capacidadKwp == null ? null : String(d.capacidadKwp),
+          montoEstimado:
+            d.montoEstimado == null ? null : String(d.montoEstimado),
+          fechaCierreEstimada: d.fechaCierreEstimada,
+        })
+        .returning({ id: schema.oportunidades.id });
+
+      await tx.insert(schema.eventos).values([
+        {
+          entidadTipo: "oportunidad",
+          entidadId: oport.id,
+          tipo: "creado",
+          descripcion: `Oportunidad ${d.nombre} creada`,
+          payload: { clienteId, etapa },
+          actor,
+        },
+        {
+          entidadTipo: "cliente",
+          entidadId: clienteId,
+          tipo: "oportunidad_creada",
+          descripcion: `Oportunidad ${d.nombre} creada`,
+          payload: { oportunidadId: oport.id, etapa },
+          actor,
+        },
+      ]);
+
+      return oport.id;
+    });
+
+    revalidatePath("/je-admin/oportunidades");
+    revalidatePath(`/je-admin/clientes/${clienteId}`);
+    return { ok: true, id };
+  } catch {
+    return { ok: false, error: "No se pudo crear la oportunidad." };
+  }
+}
+
+const registrarDocumentoSchema = z.object({
+  entidadTipo: z.enum(schema.entidadTipo.enumValues),
+  entidadId: z.string().uuid("Entidad no válida."),
+  tipo: z.enum(schema.documentoTipo.enumValues).default("otro"),
+  nombre: z
+    .string()
+    .trim()
+    .min(1, "El nombre es obligatorio.")
+    .max(200, "Nombre demasiado largo."),
+  url: z.string().url("URL no válida.").max(2000, "URL demasiado larga."),
+});
+
+type RegistrarDocumentoInput = z.input<typeof registrarDocumentoSchema>;
+
+/**
+ * Registra un documento (alta por URL) sobre una entidad. La subida real del
+ * archivo va por una ruta aparte; aquí solo se persiste el registro y se deja
+ * traza. `subidoPor` = usuario actual.
+ */
+export async function registrarDocumento(
+  data: RegistrarDocumentoInput,
+): Promise<ActionResult & { id?: string }> {
+  const user = await assertPerm("documentos", "edit");
+  const actor = actorOf(user);
+
+  const parsed = registrarDocumentoSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+
+  try {
+    const id = await db.transaction(async (tx) => {
+      const [doc] = await tx
+        .insert(schema.documentos)
+        .values({
+          entidadTipo: d.entidadTipo,
+          entidadId: d.entidadId,
+          tipo: d.tipo,
+          nombre: d.nombre,
+          url: d.url,
+          subidoPor: user.id ?? null,
+        })
+        .returning({ id: schema.documentos.id });
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: d.entidadTipo,
+        entidadId: d.entidadId,
+        tipo: "documento_registrado",
+        descripcion: `Documento registrado: ${d.nombre}`,
+        payload: { documentoId: doc.id, tipo: d.tipo, nombre: d.nombre },
+        actor,
+      });
+
+      return doc.id;
+    });
+
+    revalidatePath(`/je-admin/clientes/${d.entidadId}`);
+    revalidatePath("/je-admin/documentos");
+    return { ok: true, id };
+  } catch {
+    return { ok: false, error: "No se pudo registrar el documento." };
+  }
+}
+
+/** Elimina un documento. Resuelve su entidad para revalidar + traza. */
+export async function eliminarDocumento(id: string): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("documentos", "edit"));
+
+  const documentoId = id; // documentos.id es uuid (string)
+
+  try {
+    const entidad = await db.transaction(async (tx) => {
+      const [doc] = await tx
+        .select({
+          entidadTipo: schema.documentos.entidadTipo,
+          entidadId: schema.documentos.entidadId,
+        })
+        .from(schema.documentos)
+        .where(eq(schema.documentos.id, documentoId))
+        .limit(1);
+      if (!doc) throw new Error("Documento no encontrado");
+
+      await tx
+        .delete(schema.documentos)
+        .where(eq(schema.documentos.id, documentoId));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: doc.entidadTipo,
+        entidadId: doc.entidadId,
+        tipo: "documento_eliminado",
+        descripcion: "Documento eliminado",
+        payload: { documentoId },
+        actor,
+      });
+
+      return doc;
+    });
+
+    revalidatePath(`/je-admin/clientes/${entidad.entidadId}`);
+    revalidatePath("/je-admin/documentos");
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo eliminar el documento." };
+  }
+}
+
+/** ISO datetime (acepta date o datetime); vacío / ausente -> null. */
+const venceAtOpcional = z
+  .string()
+  .trim()
+  .nullish()
+  .transform((v, ctx) => {
+    if (!v) return null;
+    const parsed = new Date(v);
+    if (Number.isNaN(parsed.getTime())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Fecha de vencimiento no válida.",
+      });
+      return z.NEVER;
+    }
+    return parsed.toISOString();
+  });
+
+const crearActividadSchema = z.object({
+  entidadTipo: z.enum(schema.entidadTipo.enumValues),
+  entidadId: z.string().uuid("Entidad no válida."),
+  tipo: z.enum(schema.actividadTipo.enumValues),
+  titulo: z
+    .string()
+    .trim()
+    .min(2, "El título debe tener al menos 2 caracteres.")
+    .max(200, "Título demasiado largo."),
+  descripcion: optionalText(2000),
+  asignadoA: z
+    .string()
+    .uuid("Asignado no válido.")
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  venceAt: venceAtOpcional,
+});
+
+type CrearActividadInput = z.input<typeof crearActividadSchema>;
+
+/**
+ * Crea una actividad sobre una entidad. `createdBy` = usuario actual. Deja traza
+ * en la bitácora del cliente. `actividades.id` es bigint -> String(id) al
+ * exponer.
+ */
+export async function crearActividad(
+  data: CrearActividadInput,
+): Promise<ActionResult & { id?: string }> {
+  const user = await assertPerm("actividades", "edit");
+  const actor = actorOf(user);
+
+  const parsed = crearActividadSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+
+  try {
+    const id = await db.transaction(async (tx) => {
+      const [actividad] = await tx
+        .insert(schema.actividades)
+        .values({
+          entidadTipo: d.entidadTipo,
+          entidadId: d.entidadId,
+          tipo: d.tipo,
+          titulo: d.titulo,
+          descripcion: d.descripcion,
+          asignadoA: d.asignadoA,
+          venceAt: d.venceAt,
+          createdBy: user.id ?? null,
+        })
+        .returning({ id: schema.actividades.id });
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "cliente",
+        entidadId: d.entidadId,
+        tipo: "actividad_creada",
+        descripcion: `Actividad creada: ${d.titulo}`,
+        payload: { actividadId: String(actividad.id), titulo: d.titulo },
+        actor,
+      });
+
+      return actividad.id;
+    });
+
+    revalidatePath(`/je-admin/clientes/${d.entidadId}`);
+    return { ok: true, id: String(id) };
+  } catch {
+    return { ok: false, error: "No se pudo crear la actividad." };
+  }
+}
+
+/**
+ * Marca una actividad como completada / pendiente. Resuelve la entidad para
+ * revalidar + traza. `actividades.id` es bigint -> Number(id) en where.
+ */
+export async function completarActividad(
+  id: string,
+  completada: boolean,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("actividades", "edit"));
+
+  const actividadId = Number(id); // actividades.id es bigint
+
+  try {
+    const entidadId = await db.transaction(async (tx) => {
+      const [actividad] = await tx
+        .select({ entidadId: schema.actividades.entidadId })
+        .from(schema.actividades)
+        .where(eq(schema.actividades.id, actividadId))
+        .limit(1);
+      if (!actividad) throw new Error("Actividad no encontrada");
+
+      await tx
+        .update(schema.actividades)
+        .set({
+          estado: completada ? "completada" : "pendiente",
+          completadoAt: completada ? new Date().toISOString() : null,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.actividades.id, actividadId));
+
+      if (actividad.entidadId) {
+        await tx.insert(schema.eventos).values({
+          entidadTipo: "cliente",
+          entidadId: actividad.entidadId,
+          tipo: "actividad_completada",
+          descripcion: completada
+            ? "Actividad completada"
+            : "Actividad reabierta",
+          payload: { actividadId: String(actividadId), completada },
+          actor,
+        });
+      }
+
+      return actividad.entidadId;
+    });
+
+    if (entidadId) revalidatePath(`/je-admin/clientes/${entidadId}`);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo actualizar la actividad." };
+  }
+}
+
+/**
+ * Elimina un cliente. Solo admin. Se bloquea si tiene relaciones comerciales
+ * (proyectos / cotizaciones / oportunidades). Los contactos caen por cascade.
+ */
+export async function eliminarCliente(id: string): Promise<ActionResult> {
+  const user = await assertPerm("clientes", "edit");
+  if (user.rol !== "admin") {
+    return {
+      ok: false,
+      error: "Solo un administrador puede eliminar clientes.",
+    };
+  }
+  const actor = actorOf(user);
+
+  try {
+    const resultado = await db.transaction(async (tx) => {
+      const [{ relaciones }] = await tx
+        .select({
+          relaciones: sql<number>`(
+            (SELECT count(*) FROM proyectos WHERE cliente_id = ${id})
+          + (SELECT count(*) FROM cotizaciones WHERE cliente_id = ${id})
+          + (SELECT count(*) FROM oportunidades WHERE cliente_id = ${id})
+          )::int`,
+        })
+        .from(sql`(select 1) as x`);
+
+      if (Number(relaciones) > 0) {
+        return {
+          ok: false as const,
+          error:
+            "No se puede eliminar: tiene relaciones (proyectos/cotizaciones/oportunidades).",
+        };
+      }
+
+      await tx.delete(schema.clientes).where(eq(schema.clientes.id, id));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "cliente",
+        entidadId: id,
+        tipo: "eliminado",
+        descripcion: "Cliente eliminado",
+        payload: {},
+        actor,
+      });
+
+      return { ok: true as const };
+    });
+
+    if (resultado.ok) revalidatePath("/je-admin/clientes");
+    return resultado;
+  } catch {
+    return { ok: false, error: "No se pudo eliminar el cliente." };
   }
 }

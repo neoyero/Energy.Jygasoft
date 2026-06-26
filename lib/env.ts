@@ -56,6 +56,14 @@ const serverSchema = z.object({
   M365_CLIENT_SECRET: z.string().optional(),
   M365_SENDER: z.string().email().optional(),
 
+  // je-admin — Documentos en SharePoint/OneDrive (Graph). Destino del upload.
+  // Requiere permiso de APLICACIÓN Sites.ReadWrite.All (consentido por admin).
+  // Define el drive (biblioteca) destino, directo o vía el id del sitio.
+  M365_DOCS_DRIVE_ID: z.string().optional(),
+  M365_DOCS_SITE_ID: z.string().optional(),
+  // Carpeta raíz dentro del drive donde se guardan los documentos del CRM.
+  M365_DOCS_ROOT: z.string().default("CRM"),
+
   // je-admin — Login passwordless por código (OTP)
   OTP_TTL_MINUTES: z.coerce.number().int().positive().default(5),
   OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
