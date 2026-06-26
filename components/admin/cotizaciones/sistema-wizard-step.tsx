@@ -29,6 +29,18 @@ const ESQUEMAS = esquemaCfe.enumValues
 
 const MONEDA_DEFAULT = "MXN"
 
+/** Tarifas CFE frecuentes (value alineado con resolveCalcConfig). */
+const TARIFAS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "", label: "Sin especificar" },
+  { value: "1", label: "Doméstica (1, 1A…1F)" },
+  { value: "DAC", label: "DAC (doméstica alto consumo)" },
+  { value: "PDBT", label: "PDBT (negocio baja tensión)" },
+  { value: "GDMTO", label: "GDMTO (media tensión)" },
+]
+
+/** Capacidad (kWp) por encima de la cual avisamos posible error de captura. */
+const KWP_SOSPECHOSO = 150
+
 export interface SistemaWizardStepProps {
   cotizacionId: string
   cabecera: CotizacionDetalleCabecera
@@ -41,7 +53,10 @@ export interface SistemaWizardStepProps {
 
 /** Estado interno del form de insumos: strings controlados. */
 interface InsumosState {
-  consumoKwhMes: string
+  /** Consumo TAL CUAL aparece en el recibo (del período). */
+  consumoPeriodo: string
+  /** Período del recibo: mensual o bimestral (CFE residencial suele ser bimestral). */
+  periodo: "mensual" | "bimestral"
   reciboMxn: string
   capacidadKwpObjetivo: string
   usarCapacidad: boolean
@@ -74,8 +89,10 @@ function estadoInicial(
   cabecera: CotizacionDetalleCabecera,
   calcContext: CotizacionCalcContext | null,
 ): InsumosState {
+  // El consumo del contexto (lead) ya es MENSUAL → período "mensual".
   return {
-    consumoKwhMes: numStr(calcContext?.consumoKwhMes),
+    consumoPeriodo: numStr(calcContext?.consumoKwhMes),
+    periodo: "mensual",
     reciboMxn: numStr(calcContext?.reciboMxn),
     capacidadKwpObjetivo: "",
     usarCapacidad: false,
@@ -118,15 +135,46 @@ export function SistemaWizardStep({
     setForm((prev) => ({ ...prev, [key]: value }))
   }
 
+  // Consumo mensual derivado del período (para mostrar y enviar).
+  const consumoMensual = (() => {
+    const n = nullableNum(form.consumoPeriodo)
+    if (n === null) return null
+    return form.periodo === "bimestral" ? n / 2 : n
+  })()
+
   function onCalcular(e: React.FormEvent<HTMLFormElement>): void {
     e.preventDefault()
     setError(null)
 
     const usarCapacidad = form.usarCapacidad
+
+    // Validaciones antes de llamar al servidor (UX a prueba de errores).
+    if (usarCapacidad) {
+      const kwp = nullableNum(form.capacidadKwpObjetivo)
+      if (kwp === null || kwp <= 0) {
+        setError("Captura la capacidad objetivo en kWp (p. ej. 5).")
+        return
+      }
+      if (kwp > KWP_SOSPECHOSO) {
+        setError(
+          `Una capacidad de ${kwp} kWp es inusualmente alta. ¿Quisiste capturar el CONSUMO (kWh)? Desactiva "capacidad objetivo" y usa el consumo del recibo.`,
+        )
+        return
+      }
+    } else {
+      const recibo = nullableNum(form.reciboMxn)
+      if (consumoMensual === null && recibo === null) {
+        setError(
+          "Captura el consumo del recibo (kWh) o el importe del recibo (MXN).",
+        )
+        return
+      }
+    }
+
     const input = {
       cotizacionId,
       // Si se usa capacidad objetivo se ignora consumo/recibo.
-      consumoKwhMes: usarCapacidad ? null : nullableNum(form.consumoKwhMes),
+      consumoKwhMes: usarCapacidad ? null : consumoMensual,
       reciboMxn: usarCapacidad ? null : nullableNum(form.reciboMxn),
       capacidadKwpObjetivo: usarCapacidad
         ? nullableNum(form.capacidadKwpObjetivo)
@@ -203,63 +251,130 @@ export function SistemaWizardStep({
 
       {/* Form de insumos */}
       <form onSubmit={onCalcular} className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {!form.usarCapacidad ? (
-            <>
+        {!form.usarCapacidad ? (
+          <fieldset className="space-y-3 rounded-lg border border-border p-3">
+            <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Datos del recibo CFE
+            </legend>
+            <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">
-                <Label htmlFor="wizard-consumo">Consumo (kWh/mes)</Label>
+                <Label htmlFor="wizard-consumo">Consumo del período (kWh)</Label>
                 <Input
                   id="wizard-consumo"
                   type="number"
                   step="any"
                   inputMode="decimal"
-                  value={form.consumoKwhMes}
-                  onChange={(e) => set("consumoKwhMes", e.target.value)}
+                  value={form.consumoPeriodo}
+                  onChange={(e) => set("consumoPeriodo", e.target.value)}
                   disabled={busy}
+                  placeholder="p. ej. 516"
                 />
+                <p className="text-xs text-muted-foreground">
+                  El “Total período (kWh)” de tu recibo.
+                </p>
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="wizard-recibo">Recibo (MXN)</Label>
-                <Input
-                  id="wizard-recibo"
-                  type="number"
-                  step="any"
-                  inputMode="decimal"
-                  value={form.reciboMxn}
-                  onChange={(e) => set("reciboMxn", e.target.value)}
+                <Label htmlFor="wizard-periodo">Período del recibo</Label>
+                <select
+                  id="wizard-periodo"
+                  value={form.periodo}
+                  onChange={(e) =>
+                    set("periodo", e.target.value as InsumosState["periodo"])
+                  }
                   disabled={busy}
-                />
+                  className={SELECT_CLASS}
+                >
+                  <option value="bimestral">Bimestral (2 meses)</option>
+                  <option value="mensual">Mensual (1 mes)</option>
+                </select>
+                {consumoMensual !== null ? (
+                  <p className="text-xs text-muted-foreground">
+                    ≈ {Math.round(consumoMensual)} kWh/mes
+                  </p>
+                ) : null}
               </div>
-            </>
-          ) : (
-            <div className="space-y-1.5">
-              <Label htmlFor="wizard-capacidad">
-                Capacidad objetivo (kWp)
-              </Label>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="wizard-tarifa">Tarifa</Label>
+                <select
+                  id="wizard-tarifa"
+                  value={form.tarifa}
+                  onChange={(e) => set("tarifa", e.target.value)}
+                  disabled={busy}
+                  className={SELECT_CLASS}
+                >
+                  {TARIFAS.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 sm:max-w-xs">
+              <Label htmlFor="wizard-recibo">Importe del recibo (MXN)</Label>
               <Input
-                id="wizard-capacidad"
+                id="wizard-recibo"
                 type="number"
                 step="any"
                 inputMode="decimal"
-                value={form.capacidadKwpObjetivo}
-                onChange={(e) => set("capacidadKwpObjetivo", e.target.value)}
+                value={form.reciboMxn}
+                onChange={(e) => set("reciboMxn", e.target.value)}
                 disabled={busy}
+                placeholder="Opcional"
               />
+              <p className="text-xs text-muted-foreground">
+                Opcional. Se usa solo si no capturas el consumo.
+              </p>
             </div>
-          )}
+          </fieldset>
+        ) : (
+          <fieldset className="space-y-3 rounded-lg border border-amber-300/60 bg-amber-50/40 p-3 dark:border-amber-500/30 dark:bg-amber-500/5">
+            <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+              Modo avanzado · capacidad objetivo
+            </legend>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="wizard-capacidad">Capacidad (kWp)</Label>
+                <Input
+                  id="wizard-capacidad"
+                  type="number"
+                  step="any"
+                  inputMode="decimal"
+                  value={form.capacidadKwpObjetivo}
+                  onChange={(e) => set("capacidadKwpObjetivo", e.target.value)}
+                  disabled={busy}
+                  placeholder="p. ej. 5"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Tamaño del sistema, <strong>no</strong> el consumo en kWh.
+                </p>
+              </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="wizard-tarifa">Tarifa</Label>
-            <Input
-              id="wizard-tarifa"
-              value={form.tarifa}
-              onChange={(e) => set("tarifa", e.target.value)}
-              disabled={busy}
-              placeholder="Sin especificar"
-            />
-          </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="wizard-tarifa-cap">Tarifa</Label>
+                <select
+                  id="wizard-tarifa-cap"
+                  value={form.tarifa}
+                  onChange={(e) => set("tarifa", e.target.value)}
+                  disabled={busy}
+                  className={SELECT_CLASS}
+                >
+                  {TARIFAS.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </fieldset>
+        )}
 
+        {/* Esquema + moneda (aplican a la cabecera) */}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="space-y-1.5">
             <Label htmlFor="wizard-esquema">Esquema CFE</Label>
             <select
@@ -290,7 +405,7 @@ export function SistemaWizardStep({
           </div>
         </div>
 
-        {/* Toggle capacidad objetivo */}
+        {/* Toggle modo avanzado (capacidad objetivo) */}
         <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
           <input
             type="checkbox"
@@ -299,9 +414,9 @@ export function SistemaWizardStep({
             disabled={busy}
             className="h-4 w-4 accent-brand-green"
           />
-          Usar capacidad objetivo (kWp)
+          Dimensionar por capacidad objetivo (kWp)
           <span className="text-xs text-muted-foreground">
-            (ignora consumo y recibo)
+            (avanzado — ignora el consumo del recibo)
           </span>
         </label>
 
