@@ -760,3 +760,47 @@ export const municipios = pgTable("municipios", {
 			name: "municipios_clave_estado_fkey"
 		}),
 ]);
+
+// Módulo Productos (catálogo unificado). El "tipo" es editable (producto_tipos)
+// y cada producto lleva atributos JSON flexibles según su tipo. Reemplaza
+// progresivamente a catalogo_equipos (ver migración 0006 y posteriores).
+export const productoTipos = pgTable("producto_tipos", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	nombre: text().notNull(),
+	clave: text().notNull(),
+	descripcion: text(),
+	activo: boolean().default(true).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	unique("producto_tipos_nombre_key").on(table.nombre),
+	unique("producto_tipos_clave_key").on(table.clave),
+]);
+
+export const productos = pgTable("productos", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	productoTipoId: uuid("producto_tipo_id").notNull(),
+	sku: text(),
+	nombre: text().notNull(),
+	marca: text(),
+	modelo: text(),
+	descripcion: text(),
+	unidad: text().default('pieza').notNull(),
+	precioCompra: numeric("precio_compra", { precision: 14, scale: 2 }),
+	precioVenta: numeric("precio_venta", { precision: 14, scale: 2 }),
+	moneda: text().default('MXN').notNull(),
+	stock: integer(),
+	activo: boolean().default(true).notNull(),
+	atributos: jsonb().default({}).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("ix_productos_tipo").using("btree", table.productoTipoId.asc().nullsLast().op("uuid_ops")),
+	index("ix_productos_activo").using("btree", table.activo.asc().nullsLast().op("bool_ops")),
+	unique("productos_sku_key").on(table.sku),
+	foreignKey({
+			columns: [table.productoTipoId],
+			foreignColumns: [productoTipos.id],
+			name: "productos_producto_tipo_id_fkey"
+		}),
+]);

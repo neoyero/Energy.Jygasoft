@@ -12,6 +12,32 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0006 — Módulo Productos (catálogo unificado) · 2026-06-26
+
+**Migración:** `db/migrations/0006_productos.sql`
+
+- **`producto_tipos`**: catálogo de tipos **editable** (id, `nombre` único, `clave`
+  único, descripcion, activo, timestamps). Reemplaza al enum hardcodeado
+  `equipo_tipo`. Seed: Panel, Inversor, Estructura de montaje, Material eléctrico,
+  Protecciones (+ "Otro" para preservar filas existentes).
+- **`productos`**: catálogo de productos con `producto_tipo_id` (FK), `sku` único,
+  nombre, marca, modelo, descripcion, unidad, `precio_compra`, `precio_venta`,
+  moneda, stock, activo y **`atributos` jsonb** (specs flexibles por tipo).
+- **Backfill aditivo y seguro**: las filas de `catalogo_equipos` se copian a
+  `productos` **conservando el mismo `id`** (specs+potencia_wp → `atributos`,
+  precio → precio_venta), de modo que las FK `equipo_id` de cotizaciones/proyectos
+  siguen válidas. El re-cableado a `productos` se hará en una migración posterior.
+
+---
+
+## 0005 — Parámetros de costeo (cotizaciones) · 2026-06-26
+
+**Migración:** `db/migrations/0005_costeo_cotizacion.sql` — constantes de costeo
+en `config_parametros` (panel, estructura, material, protecciones, mano de obra,
+inversor) para el wizard de dimensionamiento.
+
+---
+
 ## 0004 — Catálogos geográficos (estado → municipio → CP) · 2026-06-25
 
 **Migración:** `db/migrations/0004_geo_estados_municipios.sql`
