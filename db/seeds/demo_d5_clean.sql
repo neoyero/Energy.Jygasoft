@@ -1,0 +1,30 @@
+-- =====================================================================
+-- Limpieza del SEED DEMO (db/seeds/demo_d5.sql). Borra solo los registros
+-- demo por sus UUIDs fijos. Los hijos con ON DELETE CASCADE caen solos al
+-- borrar el proyecto/cotización; igual se listan por claridad.
+--   pnpm db:apply-sql db/seeds/demo_d5_clean.sql
+-- =====================================================================
+
+BEGIN;
+
+DELETE FROM pagos WHERE id IN (
+  'd0000000-0000-4000-8000-000000000040','d0000000-0000-4000-8000-000000000041',
+  'd0000000-0000-4000-8000-000000000042','d0000000-0000-4000-8000-000000000043');
+DELETE FROM proyecto_materiales WHERE proyecto_id IN (
+  'd0000000-0000-4000-8000-000000000010','d0000000-0000-4000-8000-000000000011');
+DELETE FROM instalaciones WHERE id = 'd0000000-0000-4000-8000-000000000030';
+DELETE FROM tramites_cfe  WHERE id = 'd0000000-0000-4000-8000-000000000020';
+DELETE FROM proyectos WHERE id IN (
+  'd0000000-0000-4000-8000-000000000010','d0000000-0000-4000-8000-000000000011');
+DELETE FROM cotizacion_items WHERE cotizacion_id = 'd0000000-0000-4000-8000-000000000070';
+DELETE FROM cotizaciones WHERE id = 'd0000000-0000-4000-8000-000000000070';
+DELETE FROM oportunidades WHERE id IN (
+  'd0000000-0000-4000-8000-000000000005','d0000000-0000-4000-8000-000000000006');
+DELETE FROM leads WHERE id IN (
+  'd0000000-0000-4000-8000-000000000060','d0000000-0000-4000-8000-000000000061','d0000000-0000-4000-8000-000000000062');
+DELETE FROM clientes WHERE id = 'd0000000-0000-4000-8000-000000000001';
+DELETE FROM cuadrillas WHERE id = 'd0000000-0000-4000-8000-000000000003';
+DELETE FROM asesores WHERE id = 'd0000000-0000-4000-8000-000000000004';
+DELETE FROM usuarios WHERE id = 'd0000000-0000-4000-8000-000000000002';
+
+COMMIT;
