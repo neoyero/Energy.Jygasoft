@@ -44,7 +44,7 @@ ON CONFLICT (id) DO NOTHING;
 -- Oportunidades demo (pipeline + conversión en métricas) -------------------
 INSERT INTO oportunidades (id, cliente_id, vendedor_id, nombre, etapa, capacidad_kwp, monto_estimado, probabilidad)
 VALUES
- ('d0000000-0000-4000-8000-000000000005', 'd0000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000002', 'Oportunidad DEMO — Residencial 5 kWp', 'propuesta', 5.00, 120000, 60),
+ ('d0000000-0000-4000-8000-000000000005', 'd0000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000002', 'Oportunidad DEMO — Residencial 5 kWp', 'propuesta', 5.00, 120000, 50),
  ('d0000000-0000-4000-8000-000000000006', 'd0000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000002', 'Oportunidad DEMO — Negocio 10 kWp', 'ganada', 10.00, 240000, 100)
 ON CONFLICT (id) DO NOTHING;
 

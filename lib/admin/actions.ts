@@ -14,6 +14,7 @@ import {
   type FetchLeadsInput,
 } from "@/lib/admin/queries";
 import type { Rol } from "@/lib/admin/rbac";
+import { ETAPAS_CERRADAS, PROBABILIDAD_POR_ETAPA } from "@/lib/admin/pipeline";
 import { calcularTotales, IVA_RATE } from "@/lib/admin/cotizacion-calc";
 
 type LeadEstado = (typeof schema.leadEstado.enumValues)[number];
@@ -39,18 +40,13 @@ export async function updateLeadEstado(id: string, estado: LeadEstado) {
 export async function updateOportunidadEtapa(id: string, etapa: OportEtapa) {
   const actor = actorOf(await assertPerm("oportunidades", "edit"));
 
-  // Al cerrar el deal, la probabilidad y la fecha de cierre se ajustan:
-  // ganada => 100%, perdida => 0%; reabrir => sin fecha de cierre.
-  const patch: {
-    etapa: OportEtapa;
-    probabilidad?: number;
-    cerradaAt: string | null;
-  } =
-    etapa === "ganada"
-      ? { etapa, probabilidad: 100, cerradaAt: new Date().toISOString() }
-      : etapa === "perdida"
-        ? { etapa, probabilidad: 0, cerradaAt: new Date().toISOString() }
-        : { etapa, cerradaAt: null };
+  // La probabilidad la define la etapa (modelo de embudo). Las etapas cerradas
+  // sellan la fecha de cierre; reabrir la limpia.
+  const patch = {
+    etapa,
+    probabilidad: PROBABILIDAD_POR_ETAPA[etapa],
+    cerradaAt: ETAPAS_CERRADAS.has(etapa) ? new Date().toISOString() : null,
+  };
 
   await db.transaction(async (tx) => {
     await tx

@@ -12,10 +12,11 @@ import { StatCard } from "@/components/admin/ui/stat-card";
 import type { OportunidadRow, PipelineData } from "@/lib/admin/queries";
 import { updateOportunidadEtapa } from "@/lib/admin/actions";
 import { oportunidadEtapa } from "@/db/schema";
+import {
+  ETAPAS_CERRADAS,
+  PROBABILIDAD_POR_ETAPA,
+} from "@/lib/admin/pipeline";
 import { DealCard } from "@/components/admin/oportunidades/deal-card";
-
-/** Etapas cerradas: no cuentan para forecast / monto abierto / abiertas. */
-const ETAPAS_CERRADAS: ReadonlySet<string> = new Set(["ganada", "perdida"]);
 
 // Orden canónico de etapas = orden del enum. Local (desde @/db/schema, sin `pg`)
 // para no arrastrar la BD al bundle del cliente.
@@ -85,20 +86,18 @@ export function PipelineBoard({ data, puedeEditar }: PipelineBoardProps) {
     const actual = oportunidades.find((o) => o.id === id);
     if (!actual || actual.etapa === etapa) return;
 
-    // Update optimista inmutable. Al cerrar, la probabilidad y el ponderado se
-    // ajustan: ganada = 100% (ponderado = monto completo), perdida = 0%.
+    // Update optimista inmutable. La probabilidad la define la NUEVA etapa
+    // (modelo de embudo), y el ponderado se recalcula con ella.
     setOportunidades((prev) =>
       prev.map((o) => {
         if (o.id !== id) return o;
-        const probabilidad =
-          etapa === "ganada" ? 100 : etapa === "perdida" ? 0 : o.probabilidad;
-        const montoPonderado =
-          etapa === "ganada"
-            ? o.montoEstimado
-            : etapa === "perdida"
-              ? 0
-              : (o.montoEstimado * probabilidad) / 100;
-        return { ...o, etapa, probabilidad, montoPonderado };
+        const probabilidad = PROBABILIDAD_POR_ETAPA[etapa];
+        return {
+          ...o,
+          etapa,
+          probabilidad,
+          montoPonderado: (o.montoEstimado * probabilidad) / 100,
+        };
       }),
     );
 
