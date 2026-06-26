@@ -3,14 +3,19 @@
 import { useMemo, useState, useTransition } from "react";
 import type { DragEvent } from "react";
 import { useRouter } from "next/navigation";
+import { TrendingUp, Wallet, Target } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { formatMXN } from "@/lib/admin/format";
+import { formatMXN, formatInt } from "@/lib/admin/format";
 import { labelFor } from "@/components/admin/ui/status-badge";
+import { StatCard } from "@/components/admin/ui/stat-card";
 import type { OportunidadRow, PipelineData } from "@/lib/admin/queries";
 import { updateOportunidadEtapa } from "@/lib/admin/actions";
 import { oportunidadEtapa } from "@/db/schema";
 import { DealCard } from "@/components/admin/oportunidades/deal-card";
+
+/** Etapas cerradas: no cuentan para forecast / monto abierto / abiertas. */
+const ETAPAS_CERRADAS: ReadonlySet<string> = new Set(["ganada", "perdida"]);
 
 // Orden canónico de etapas = orden del enum. Local (desde @/db/schema, sin `pg`)
 // para no arrastrar la BD al bundle del cliente.
@@ -59,6 +64,17 @@ export function PipelineBoard({ data, puedeEditar }: PipelineBoardProps) {
     return mapa;
   }, [oportunidades]);
 
+  // KPIs derivados del estado VIVO (se recalculan al arrastrar): solo etapas
+  // abiertas (excluye ganada/perdida).
+  const kpis = useMemo(() => {
+    const abiertas = oportunidades.filter((o) => !ETAPAS_CERRADAS.has(o.etapa));
+    return {
+      forecast: abiertas.reduce((acc, o) => acc + o.montoPonderado, 0),
+      montoAbierto: abiertas.reduce((acc, o) => acc + o.montoEstimado, 0),
+      conteo: abiertas.length,
+    };
+  }, [oportunidades]);
+
   function handleDragStart(e: DragEvent<HTMLElement>, id: string) {
     e.dataTransfer.setData("text/plain", id);
     e.dataTransfer.effectAllowed = "move";
@@ -94,13 +110,35 @@ export function PipelineBoard({ data, puedeEditar }: PipelineBoardProps) {
   }
 
   return (
-    <div
-      className={cn(
-        "flex gap-4 overflow-x-auto pb-4",
-        isPending && "opacity-95",
-      )}
-    >
-      {COLUMNAS.map((etapa) => {
+    <div className="space-y-6">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatCard
+          label="Forecast ponderado"
+          value={formatMXN(kpis.forecast)}
+          icon={TrendingUp}
+          accent="green"
+        />
+        <StatCard
+          label="Monto abierto"
+          value={formatMXN(kpis.montoAbierto)}
+          icon={Wallet}
+          accent="gold"
+        />
+        <StatCard
+          label="Oportunidades abiertas"
+          value={formatInt(kpis.conteo)}
+          icon={Target}
+          accent="brand"
+        />
+      </section>
+
+      <div
+        className={cn(
+          "flex gap-4 overflow-x-auto pb-4",
+          isPending && "opacity-95",
+        )}
+      >
+        {COLUMNAS.map((etapa) => {
         const items = porEtapa.get(etapa) ?? [];
         const ponderado = items.reduce(
           (acc, o) => acc + o.montoPonderado,
@@ -174,6 +212,7 @@ export function PipelineBoard({ data, puedeEditar }: PipelineBoardProps) {
           </section>
         );
       })}
+      </div>
     </div>
   );
 }
