@@ -3,6 +3,7 @@ import Image from "next/image";
 import type { Metadata } from "next";
 import { auth } from "@/auth";
 import { AdminNav } from "@/components/admin/admin-nav";
+import { AdminMobileNav } from "@/components/admin/admin-mobile-nav";
 import { SignOutButton } from "@/components/admin/sign-out-button";
 
 export const metadata: Metadata = {
@@ -61,7 +62,9 @@ export default async function PanelLayout({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <main className="flex-1 overflow-x-auto p-6 lg:p-8">{children}</main>
+        {/* Navegación móvil (topbar + drawer); oculta en >= md */}
+        <AdminMobileNav rol={session.user.rol} name={name} initial={initial} />
+        <main className="flex-1 overflow-x-auto p-4 sm:p-6 lg:p-8">{children}</main>
       </div>
     </div>
   );
