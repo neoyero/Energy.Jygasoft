@@ -38,10 +38,24 @@ export async function updateLeadEstado(id: string, estado: LeadEstado) {
 
 export async function updateOportunidadEtapa(id: string, etapa: OportEtapa) {
   const actor = actorOf(await assertPerm("oportunidades", "edit"));
+
+  // Al cerrar el deal, la probabilidad y la fecha de cierre se ajustan:
+  // ganada => 100%, perdida => 0%; reabrir => sin fecha de cierre.
+  const patch: {
+    etapa: OportEtapa;
+    probabilidad?: number;
+    cerradaAt: string | null;
+  } =
+    etapa === "ganada"
+      ? { etapa, probabilidad: 100, cerradaAt: new Date().toISOString() }
+      : etapa === "perdida"
+        ? { etapa, probabilidad: 0, cerradaAt: new Date().toISOString() }
+        : { etapa, cerradaAt: null };
+
   await db.transaction(async (tx) => {
     await tx
       .update(schema.oportunidades)
-      .set({ etapa })
+      .set(patch)
       .where(eq(schema.oportunidades.id, id));
     await tx.insert(schema.eventos).values({
       entidadTipo: "oportunidad",

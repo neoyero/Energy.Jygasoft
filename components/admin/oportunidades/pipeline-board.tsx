@@ -85,9 +85,21 @@ export function PipelineBoard({ data, puedeEditar }: PipelineBoardProps) {
     const actual = oportunidades.find((o) => o.id === id);
     if (!actual || actual.etapa === etapa) return;
 
-    // Update optimista inmutable.
+    // Update optimista inmutable. Al cerrar, la probabilidad y el ponderado se
+    // ajustan: ganada = 100% (ponderado = monto completo), perdida = 0%.
     setOportunidades((prev) =>
-      prev.map((o) => (o.id === id ? { ...o, etapa } : o)),
+      prev.map((o) => {
+        if (o.id !== id) return o;
+        const probabilidad =
+          etapa === "ganada" ? 100 : etapa === "perdida" ? 0 : o.probabilidad;
+        const montoPonderado =
+          etapa === "ganada"
+            ? o.montoEstimado
+            : etapa === "perdida"
+              ? 0
+              : (o.montoEstimado * probabilidad) / 100;
+        return { ...o, etapa, probabilidad, montoPonderado };
+      }),
     );
 
     startTransition(async () => {
