@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { getMunicipioPorCp } from "@/lib/admin/queries";
 import cpMapAgs from "@/lib/data/cp-municipios.json";
 
 /**
@@ -18,7 +19,7 @@ const AGS_MAP = cpMapAgs as Record<string, string>;
 function agsFallback(cp: string) {
   const municipio = AGS_MAP[cp];
   if (!municipio) return null;
-  return { found: true, cp, estado: "Aguascalientes", municipio, ciudad: null, colonias: [] };
+  return { found: true, cp, estado: "Aguascalientes", municipio, ciudad: null, colonias: [], municipioId: null };
 }
 
 export async function GET(
@@ -33,16 +34,19 @@ export async function GET(
   const headers = { "Cache-Control": "public, max-age=86400" };
 
   try {
-    const rows = await db
-      .select({
-        estado: schema.codigosPostales.dEstado,
-        municipio: schema.codigosPostales.dMnpio,
-        ciudad: schema.codigosPostales.dCiudad,
-        colonia: schema.codigosPostales.dAsenta,
-      })
-      .from(schema.codigosPostales)
-      .where(sql`${schema.codigosPostales.dCodigo} = ${cp}`)
-      .orderBy(schema.codigosPostales.dAsenta);
+    const [rows, muniMatch] = await Promise.all([
+      db
+        .select({
+          estado: schema.codigosPostales.dEstado,
+          municipio: schema.codigosPostales.dMnpio,
+          ciudad: schema.codigosPostales.dCiudad,
+          colonia: schema.codigosPostales.dAsenta,
+        })
+        .from(schema.codigosPostales)
+        .where(sql`${schema.codigosPostales.dCodigo} = ${cp}`)
+        .orderBy(schema.codigosPostales.dAsenta),
+      getMunicipioPorCp(cp),
+    ]);
 
     if (rows.length > 0) {
       const first = rows[0];
@@ -50,7 +54,15 @@ export async function GET(
         new Set(rows.map((r) => r.colonia).filter((c): c is string => Boolean(c))),
       );
       return NextResponse.json(
-        { found: true, cp, estado: first.estado, municipio: first.municipio, ciudad: first.ciudad, colonias },
+        {
+          found: true,
+          cp,
+          estado: first.estado,
+          municipio: first.municipio,
+          ciudad: first.ciudad,
+          colonias,
+          municipioId: muniMatch?.municipioId ?? null,
+        },
         { headers },
       );
     }

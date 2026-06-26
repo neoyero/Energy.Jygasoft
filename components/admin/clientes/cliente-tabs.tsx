@@ -3,11 +3,15 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 
-import type { ClienteDetalle } from "@/lib/admin/queries"
+import type { ClienteDetalle, VendedorOption } from "@/lib/admin/queries"
 import { formatMXN, fmtFechaRel } from "@/lib/admin/format"
 import { StatusBadge } from "@/components/admin/ui/status-badge"
 import { EmptyState } from "@/components/admin/ui/empty-state"
 import { ContactosPanel } from "@/components/admin/clientes/contactos-panel"
+import { OportunidadesPanel } from "@/components/admin/clientes/oportunidades-panel"
+import { CotizacionesPanel } from "@/components/admin/clientes/cotizaciones-panel"
+import { DocumentosPanel } from "@/components/admin/clientes/documentos-panel"
+import { ActividadesPanel } from "@/components/admin/clientes/actividades-panel"
 import { cn } from "@/lib/utils"
 
 const DASH = "—"
@@ -18,6 +22,7 @@ type TabId =
   | "cotizaciones"
   | "proyectos"
   | "documentos"
+  | "actividades"
   | "historial"
 
 interface TabDef {
@@ -28,8 +33,18 @@ interface TabDef {
 
 export interface ClienteTabsProps {
   detalle: ClienteDetalle
+  /** Vendedores asignables (para asignar actividades). */
+  vendedores: ReadonlyArray<VendedorOption>
   /** RBAC clientes:edit -> habilita acciones en el panel de contactos. */
   puedeEditar: boolean
+  /** RBAC oportunidades:edit -> habilita el alta de oportunidades. */
+  puedeCrearOport: boolean
+  /** RBAC cotizaciones:edit -> habilita el alta de cotizaciones. */
+  puedeCrearCotiz: boolean
+  /** RBAC documentos:edit -> habilita subida/borrado de documentos. */
+  puedeEditarDocs: boolean
+  /** RBAC actividades:edit -> habilita alta y completar/reabrir actividades. */
+  puedeEditarActs: boolean
 }
 
 /** Monto opcional (numeric|null) formateado en MXN; null -> em-dash. */
@@ -43,7 +58,15 @@ function money(v: number | null | undefined): string {
  * pipeline/cotizaciones). El historial es un timeline (<ol>) como en leads.
  * Los contactos delegan en ContactosPanel (editable).
  */
-export function ClienteTabs({ detalle, puedeEditar }: ClienteTabsProps) {
+export function ClienteTabs({
+  detalle,
+  vendedores,
+  puedeEditar,
+  puedeCrearOport,
+  puedeCrearCotiz,
+  puedeEditarDocs,
+  puedeEditarActs,
+}: ClienteTabsProps) {
   const [tab, setTab] = useState<TabId>("contactos")
 
   const tabs: ReadonlyArray<TabDef> = [
@@ -60,6 +83,11 @@ export function ClienteTabs({ detalle, puedeEditar }: ClienteTabsProps) {
     },
     { id: "proyectos", label: "Proyectos", count: detalle.proyectos.length },
     { id: "documentos", label: "Documentos", count: detalle.documentos.length },
+    {
+      id: "actividades",
+      label: "Actividades",
+      count: detalle.actividades.length,
+    },
     { id: "historial", label: "Historial", count: detalle.timeline.length },
   ]
 
@@ -105,63 +133,20 @@ export function ClienteTabs({ detalle, puedeEditar }: ClienteTabsProps) {
         ) : null}
 
         {tab === "oportunidades" ? (
-          detalle.oportunidades.length === 0 ? (
-            <EmptyState
-              title="Sin oportunidades"
-              description="Este cliente no tiene oportunidades en pipeline."
-              size="sm"
-            />
-          ) : (
-            <SimpleTable
-              head={["Nombre", "Etapa", "Monto", "Prob.", "Creada"]}
-            >
-              {detalle.oportunidades.map((o) => (
-                <Row
-                  key={o.id}
-                  href={`/je-admin/oportunidades/${o.id}`}
-                  cells={[
-                    <span key="nombre" className="font-medium text-foreground">
-                      {o.nombre}
-                    </span>,
-                    <StatusBadge key="etapa" value={o.etapa} withDot={false} />,
-                    money(o.montoEstimado),
-                    `${o.probabilidad}%`,
-                    fmtFechaRel(o.createdAt),
-                  ]}
-                />
-              ))}
-            </SimpleTable>
-          )
+          <OportunidadesPanel
+            clienteId={detalle.cliente.id}
+            oportunidades={detalle.oportunidades}
+            puedeCrear={puedeCrearOport}
+          />
         ) : null}
 
         {tab === "cotizaciones" ? (
-          detalle.cotizaciones.length === 0 ? (
-            <EmptyState
-              title="Sin cotizaciones"
-              description="Este cliente no tiene cotizaciones registradas."
-              size="sm"
-            />
-          ) : (
-            <SimpleTable
-              head={["Folio", "Versión", "Estado", "Total", "Vigencia"]}
-            >
-              {detalle.cotizaciones.map((c) => (
-                <Row
-                  key={c.id}
-                  href={`/je-admin/cotizaciones/${c.id}`}
-                  cells={[
-                    <span key="folio" className="font-medium text-foreground">
-                      {c.folio ?? DASH}
-                    </span>,
-                    `v${c.version}`,
-                    <StatusBadge key="estado" value={c.estado} withDot={false} />,
-                    money(c.total),
-                    fmtFechaRel(c.validaHasta),
-                  ]}
-                />
-              ))}
-            </SimpleTable>
-          )
+          <CotizacionesPanel
+            clienteId={detalle.cliente.id}
+            cotizaciones={detalle.cotizaciones}
+            oportunidades={detalle.oportunidades}
+            puedeCrear={puedeCrearCotiz}
+          />
         ) : null}
 
         {tab === "proyectos" ? (
@@ -191,30 +176,20 @@ export function ClienteTabs({ detalle, puedeEditar }: ClienteTabsProps) {
         ) : null}
 
         {tab === "documentos" ? (
-          detalle.documentos.length === 0 ? (
-            <EmptyState
-              title="Sin documentos"
-              description="Este cliente no tiene documentos cargados."
-              size="sm"
-            />
-          ) : (
-            <SimpleTable head={["Tipo", "Nombre", "Cargado"]}>
-              {detalle.documentos.map((d) => (
-                <Row
-                  key={d.id}
-                  href={d.url}
-                  external
-                  cells={[
-                    <StatusBadge key="tipo" value={d.tipo} withDot={false} />,
-                    <span key="nombre" className="font-medium text-foreground">
-                      {d.nombre}
-                    </span>,
-                    fmtFechaRel(d.createdAt),
-                  ]}
-                />
-              ))}
-            </SimpleTable>
-          )
+          <DocumentosPanel
+            clienteId={detalle.cliente.id}
+            documentos={detalle.documentos}
+            puedeEditar={puedeEditarDocs}
+          />
+        ) : null}
+
+        {tab === "actividades" ? (
+          <ActividadesPanel
+            clienteId={detalle.cliente.id}
+            actividades={detalle.actividades}
+            vendedores={vendedores}
+            puedeEditar={puedeEditarActs}
+          />
         ) : null}
 
         {tab === "historial" ? (

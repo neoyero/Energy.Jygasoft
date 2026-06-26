@@ -5,6 +5,7 @@ import { requirePerm } from "@/lib/admin/guard"
 import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getClienteDetalle,
+  getVendedores,
   type DashboardScope,
 } from "@/lib/admin/queries"
 import { fmtFechaRel } from "@/lib/admin/format"
@@ -18,6 +19,7 @@ import {
 } from "@/components/admin/ui/card"
 import { StatusBadge } from "@/components/admin/ui/status-badge"
 import { ClienteTabs } from "@/components/admin/clientes/cliente-tabs"
+import { ClienteHeaderActions } from "@/components/admin/clientes/cliente-header-actions"
 
 export const dynamic = "force-dynamic"
 
@@ -52,11 +54,21 @@ export default async function ClienteDetail({ params }: Params) {
     userId: user.id,
   }
 
-  const detalle = await getClienteDetalle(scope, id)
+  const [detalle, vendedores] = await Promise.all([
+    getClienteDetalle(scope, id),
+    getVendedores(),
+  ])
   if (!detalle) notFound()
 
-  const { cliente, vendedorNombre } = detalle
+  const { cliente, vendedorNombre, municipioNombre } = detalle
+
   const puedeEditar = can(user.rol, "clientes", "edit")
+  const puedeEditarCliente = can(user.rol, "clientes", "edit")
+  const puedeEliminarCliente = scope.rol === "admin"
+  const puedeCrearOport = can(user.rol, "oportunidades", "edit")
+  const puedeCrearCotiz = can(user.rol, "cotizaciones", "edit")
+  const puedeEditarDocs = can(user.rol, "documentos", "edit")
+  const puedeEditarActs = can(user.rol, "actividades", "edit")
 
   const descripcion = [cliente.rfc, cliente.telefono, cliente.email]
     .filter(Boolean)
@@ -72,11 +84,19 @@ export default async function ClienteDetail({ params }: Params) {
           { label: cliente.nombre },
         ]}
         actions={
-          <StatusBadge
-            value={cliente.tipoPersona}
-            withDot={false}
-            size="md"
-          />
+          <div className="flex flex-wrap items-center gap-3">
+            <StatusBadge
+              value={cliente.tipoPersona}
+              withDot={false}
+              size="md"
+            />
+            <ClienteHeaderActions
+              cliente={cliente}
+              vendedores={vendedores}
+              puedeEditar={puedeEditarCliente}
+              puedeEliminar={puedeEliminarCliente}
+            />
+          </div>
         }
       />
 
@@ -139,6 +159,10 @@ export default async function ClienteDetail({ params }: Params) {
               label="Municipio / Estado"
               value={`${txt(cliente.municipio)} · ${txt(cliente.estadoMx)}`}
             />
+            <Field
+              label="Municipio (catálogo)"
+              value={txt(municipioNombre)}
+            />
             <Field label="CP" value={txt(cliente.cp)} />
           </CardContent>
         </Card>
@@ -165,7 +189,15 @@ export default async function ClienteDetail({ params }: Params) {
       </div>
 
       {/* Pestañas de relaciones */}
-      <ClienteTabs detalle={detalle} puedeEditar={puedeEditar} />
+      <ClienteTabs
+        detalle={detalle}
+        vendedores={vendedores}
+        puedeEditar={puedeEditar}
+        puedeCrearOport={puedeCrearOport}
+        puedeCrearCotiz={puedeCrearCotiz}
+        puedeEditarDocs={puedeEditarDocs}
+        puedeEditarActs={puedeEditarActs}
+      />
     </div>
   )
 }
