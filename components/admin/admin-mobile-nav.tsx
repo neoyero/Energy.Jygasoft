@@ -111,9 +111,7 @@ export function AdminMobileNav({ rol, name, initial }: AdminMobileNavProps) {
                     {rol ?? "—"}
                   </p>
                 </div>
-              </div>
-              <div className="mt-2">
-                <SignOutButton />
+                <SignOutButton variant="icon" />
               </div>
             </div>
           </aside>

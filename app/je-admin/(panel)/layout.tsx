@@ -42,7 +42,7 @@ export default async function PanelLayout({
           <AdminNav rol={session.user.rol} />
         </div>
 
-        {/* Usuario + salir */}
+        {/* Usuario + salir (icono dentro de la tarjeta) */}
         <div className="border-t border-stone-100 p-3">
           <div className="flex items-center gap-3 rounded-xl bg-stone-50 p-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-green text-sm font-bold text-white">
@@ -54,9 +54,7 @@ export default async function PanelLayout({
                 {session.user.rol ?? "—"}
               </p>
             </div>
-          </div>
-          <div className="mt-2">
-            <SignOutButton />
+            <SignOutButton variant="icon" />
           </div>
         </div>
       </aside>
