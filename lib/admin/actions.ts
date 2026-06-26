@@ -1575,3 +1575,842 @@ export async function nuevaVersionCotizacion(
     return { ok: false, error: "No se pudo crear la nueva versión." };
   }
 }
+
+/* ──────────────── Proyectos / Trámites / Instalación / Materiales / Pagos (D5)
+ *
+ * Estilo calcado de D4: assertPerm + actorOf, ActionResult, validación Zod con
+ * safeParse, transacciones con traza en `eventos`, numeric -> String(n) al
+ * persistir. proyecto_materiales.id es bigint -> Number(id) en where. La tabla
+ * `eventos` solo admite entidadTipo proyecto/instalacion (entre otros): para
+ * trámite/instalación/material/pago se usa entidadTipo "proyecto" con
+ * entidadId = proyectoId; un pago sin proyectoId NO genera evento.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+type ProyectoFase = (typeof schema.proyectoFase.enumValues)[number];
+type TramiteCfeEstado = (typeof schema.tramiteCfeEstado.enumValues)[number];
+type InstalacionEstado = (typeof schema.instalacionEstado.enumValues)[number];
+type PagoEstado = (typeof schema.pagoEstado.enumValues)[number];
+type EsquemaCfe = (typeof schema.esquemaCfe.enumValues)[number];
+
+/** Fecha (YYYY-MM-DD) opcional: vacío / ausente -> null. */
+const fechaOpcional = z
+  .string()
+  .date("Fecha no válida.")
+  .nullable()
+  .optional()
+  .transform((v) => v ?? null);
+
+/** Orden canónico de fases (igual a queries.FASE_ORDER) para validar avances. */
+const FASE_ORDER_ACTIONS = schema.proyectoFase.enumValues;
+
+/**
+ * Avanza (o retrocede) la fase de un proyecto en UN solo paso del orden
+ * canónico; rechaza saltos. Si la nueva fase es 'cierre' sella cierreAt = now.
+ * Deja traza en la bitácora (eventos).
+ */
+export async function avanzarFaseProyecto(
+  id: string,
+  fase: ProyectoFase,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("proyectos", "edit"));
+
+  try {
+    const resultado = await db.transaction(async (tx) => {
+      const [proy] = await tx
+        .select({ fase: schema.proyectos.fase })
+        .from(schema.proyectos)
+        .where(eq(schema.proyectos.id, id))
+        .limit(1);
+      if (!proy) throw new Error("Proyecto no encontrado");
+
+      const desde = FASE_ORDER_ACTIONS.indexOf(proy.fase);
+      const hasta = FASE_ORDER_ACTIONS.indexOf(fase);
+      if (desde === -1 || hasta === -1 || Math.abs(hasta - desde) !== 1) {
+        return {
+          ok: false as const,
+          error: `Transición de fase no permitida: ${proy.fase} → ${fase}.`,
+        };
+      }
+
+      const update: { fase: ProyectoFase; updatedAt: string; cierreAt?: string } =
+        {
+          fase,
+          updatedAt: new Date().toISOString(),
+        };
+      if (fase === "cierre") update.cierreAt = new Date().toISOString();
+
+      await tx
+        .update(schema.proyectos)
+        .set(update)
+        .where(eq(schema.proyectos.id, id));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "proyecto",
+        entidadId: id,
+        tipo: "cambio_fase",
+        descripcion: `Fase → ${fase}`,
+        payload: { de: proy.fase, a: fase },
+        actor,
+      });
+
+      return { ok: true as const };
+    });
+
+    if (resultado.ok) {
+      revalidatePath("/je-admin/proyectos");
+      revalidatePath(`/je-admin/proyectos/${id}`);
+    }
+    return resultado;
+  } catch {
+    return { ok: false, error: "No se pudo cambiar la fase del proyecto." };
+  }
+}
+
+const tramiteCfeSchema = z.object({
+  estado: z.enum(schema.tramiteCfeEstado.enumValues),
+  folioCfe: optionalText(60),
+  esquema: z
+    .enum(schema.esquemaCfe.enumValues)
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  estudioRequerido: z.boolean(),
+  fechaSolicitud: fechaOpcional,
+  fechaOficio: fechaOpcional,
+  fechaMedidor: fechaOpcional,
+  fechaOperacion: fechaOpcional,
+  observaciones: optionalText(2000),
+});
+
+type TramiteCfeInput = z.input<typeof tramiteCfeSchema>;
+
+/** Mapea los datos validados del trámite CFE a columnas persistibles. */
+function tramiteCfeValuesOf(d: z.output<typeof tramiteCfeSchema>): {
+  estado: TramiteCfeEstado;
+  folioCfe: string | null;
+  esquema: EsquemaCfe | null;
+  estudioRequerido: boolean;
+  fechaSolicitud: string | null;
+  fechaOficio: string | null;
+  fechaMedidor: string | null;
+  fechaOperacion: string | null;
+  observaciones: string | null;
+} {
+  return {
+    estado: d.estado,
+    folioCfe: d.folioCfe,
+    esquema: d.esquema,
+    estudioRequerido: d.estudioRequerido,
+    fechaSolicitud: d.fechaSolicitud,
+    fechaOficio: d.fechaOficio,
+    fechaMedidor: d.fechaMedidor,
+    fechaOperacion: d.fechaOperacion,
+    observaciones: d.observaciones,
+  };
+}
+
+/**
+ * Crea o actualiza (upsert por proyecto) el trámite CFE de un proyecto: si ya
+ * existe uno lo actualiza; si no, inserta. Deja traza en la bitácora.
+ */
+export async function guardarTramiteCfe(
+  proyectoId: string,
+  data: TramiteCfeInput,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("proyectos", "edit"));
+
+  const parsed = tramiteCfeSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const values = tramiteCfeValuesOf(parsed.data);
+
+  try {
+    await db.transaction(async (tx) => {
+      const [existente] = await tx
+        .select({ id: schema.tramitesCfe.id })
+        .from(schema.tramitesCfe)
+        .where(eq(schema.tramitesCfe.proyectoId, proyectoId))
+        .limit(1);
+
+      if (existente) {
+        await tx
+          .update(schema.tramitesCfe)
+          .set({ ...values, updatedAt: new Date().toISOString() })
+          .where(eq(schema.tramitesCfe.id, existente.id));
+      } else {
+        await tx
+          .insert(schema.tramitesCfe)
+          .values({ proyectoId, ...values });
+      }
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "proyecto",
+        entidadId: proyectoId,
+        tipo: "tramite_cfe",
+        descripcion: `Trámite CFE → ${values.estado}`,
+        payload: { estado: values.estado },
+        actor,
+      });
+    });
+  } catch {
+    return { ok: false, error: "No se pudo guardar el trámite CFE." };
+  }
+
+  revalidatePath(`/je-admin/proyectos/${proyectoId}`);
+  return { ok: true };
+}
+
+const instalacionSchema = z.object({
+  cuadrillaId: z
+    .string()
+    .uuid("Cuadrilla no válida.")
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  estado: z.enum(schema.instalacionEstado.enumValues),
+  fechaInicio: fechaOpcional,
+  fechaFin: fechaOpcional,
+  avancePct: z
+    .number()
+    .int("El avance debe ser un entero.")
+    .min(0, "El avance mínimo es 0.")
+    .max(100, "El avance máximo es 100."),
+  notas: optionalText(2000),
+});
+
+type InstalacionInput = z.input<typeof instalacionSchema>;
+
+/** Mapea los datos validados de la instalación a columnas persistibles. */
+function instalacionValuesOf(d: z.output<typeof instalacionSchema>): {
+  cuadrillaId: string | null;
+  estado: InstalacionEstado;
+  fechaInicio: string | null;
+  fechaFin: string | null;
+  avancePct: number;
+  notas: string | null;
+} {
+  return {
+    cuadrillaId: d.cuadrillaId,
+    estado: d.estado,
+    fechaInicio: d.fechaInicio,
+    fechaFin: d.fechaFin,
+    avancePct: d.avancePct,
+    notas: d.notas,
+  };
+}
+
+/**
+ * Crea o actualiza (upsert por proyecto) la instalación de un proyecto. Deja
+ * traza en la bitácora.
+ */
+export async function guardarInstalacion(
+  proyectoId: string,
+  data: InstalacionInput,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("proyectos", "edit"));
+
+  const parsed = instalacionSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const values = instalacionValuesOf(parsed.data);
+
+  try {
+    await db.transaction(async (tx) => {
+      const [existente] = await tx
+        .select({ id: schema.instalaciones.id })
+        .from(schema.instalaciones)
+        .where(eq(schema.instalaciones.proyectoId, proyectoId))
+        .limit(1);
+
+      if (existente) {
+        await tx
+          .update(schema.instalaciones)
+          .set({ ...values, updatedAt: new Date().toISOString() })
+          .where(eq(schema.instalaciones.id, existente.id));
+      } else {
+        await tx
+          .insert(schema.instalaciones)
+          .values({ proyectoId, ...values });
+      }
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "proyecto",
+        entidadId: proyectoId,
+        tipo: "instalacion",
+        descripcion: `Instalación → ${values.estado} (${values.avancePct}%)`,
+        payload: { estado: values.estado, avancePct: values.avancePct },
+        actor,
+      });
+    });
+  } catch {
+    return { ok: false, error: "No se pudo guardar la instalación." };
+  }
+
+  revalidatePath(`/je-admin/proyectos/${proyectoId}`);
+  return { ok: true };
+}
+
+const materialSchema = z.object({
+  equipoId: z
+    .string()
+    .uuid("Equipo no válido.")
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  descripcion: z.string().trim().min(1, "La descripción es obligatoria."),
+  cantidad: z.number().nonnegative("La cantidad no puede ser negativa."),
+  precioUnitario: z
+    .number()
+    .nonnegative("El precio no puede ser negativo."),
+});
+
+type MaterialInput = z.input<typeof materialSchema>;
+
+/** Resuelve el proyecto dueño de un material (bigint -> Number en where). */
+async function getProyectoIdDeMaterial(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  materialId: number,
+): Promise<string | null> {
+  const [row] = await tx
+    .select({ proyectoId: schema.proyectoMateriales.proyectoId })
+    .from(schema.proyectoMateriales)
+    .where(eq(schema.proyectoMateriales.id, materialId))
+    .limit(1);
+  return row?.proyectoId ?? null;
+}
+
+/**
+ * Agrega un material a un proyecto. NO escribe `importe` (no existe en el
+ * esquema; se calcula en lectura como cantidad * precioUnitario). Deja traza.
+ */
+export async function agregarMaterial(
+  proyectoId: string,
+  data: MaterialInput,
+): Promise<ActionResult & { id?: string }> {
+  const actor = actorOf(await assertPerm("proyectos", "edit"));
+
+  const parsed = materialSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+
+  try {
+    const id = await db.transaction(async (tx) => {
+      const [material] = await tx
+        .insert(schema.proyectoMateriales)
+        .values({
+          proyectoId,
+          equipoId: d.equipoId,
+          descripcion: d.descripcion,
+          cantidad: String(d.cantidad),
+          precioUnitario: String(d.precioUnitario),
+        })
+        .returning({ id: schema.proyectoMateriales.id });
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "proyecto",
+        entidadId: proyectoId,
+        tipo: "material_creado",
+        descripcion: `Material agregado: ${d.descripcion}`,
+        payload: { materialId: String(material.id), descripcion: d.descripcion },
+        actor,
+      });
+
+      return material.id;
+    });
+
+    revalidatePath(`/je-admin/proyectos/${proyectoId}`);
+    return { ok: true, id: String(id) };
+  } catch {
+    return { ok: false, error: "No se pudo agregar el material." };
+  }
+}
+
+/** Actualiza un material. Resuelve el proyecto para revalidar + traza. */
+export async function actualizarMaterial(
+  id: string,
+  data: MaterialInput,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("proyectos", "edit"));
+
+  const parsed = materialSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+  const materialId = Number(id); // proyecto_materiales.id es bigint
+
+  try {
+    const proyectoId = await db.transaction(async (tx) => {
+      const pid = await getProyectoIdDeMaterial(tx, materialId);
+      if (!pid) throw new Error("Material no encontrado");
+
+      await tx
+        .update(schema.proyectoMateriales)
+        .set({
+          equipoId: d.equipoId,
+          descripcion: d.descripcion,
+          cantidad: String(d.cantidad),
+          precioUnitario: String(d.precioUnitario),
+        })
+        .where(eq(schema.proyectoMateriales.id, materialId));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "proyecto",
+        entidadId: pid,
+        tipo: "material_actualizado",
+        descripcion: `Material actualizado: ${d.descripcion}`,
+        payload: { materialId: String(materialId), descripcion: d.descripcion },
+        actor,
+      });
+
+      return pid;
+    });
+
+    revalidatePath(`/je-admin/proyectos/${proyectoId}`);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo actualizar el material." };
+  }
+}
+
+/** Elimina un material. Resuelve el proyecto para revalidar + traza. */
+export async function eliminarMaterial(id: string): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("proyectos", "edit"));
+
+  const materialId = Number(id); // proyecto_materiales.id es bigint
+
+  try {
+    const proyectoId = await db.transaction(async (tx) => {
+      const pid = await getProyectoIdDeMaterial(tx, materialId);
+      if (!pid) throw new Error("Material no encontrado");
+
+      await tx
+        .delete(schema.proyectoMateriales)
+        .where(eq(schema.proyectoMateriales.id, materialId));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "proyecto",
+        entidadId: pid,
+        tipo: "material_eliminado",
+        descripcion: "Material eliminado",
+        payload: { materialId: String(materialId) },
+        actor,
+      });
+
+      return pid;
+    });
+
+    revalidatePath(`/je-admin/proyectos/${proyectoId}`);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo eliminar el material." };
+  }
+}
+
+/** Marca un material como entregado / no entregado. */
+export async function toggleMaterialEntregado(
+  id: string,
+  entregado: boolean,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("proyectos", "edit"));
+
+  const materialId = Number(id); // proyecto_materiales.id es bigint
+
+  try {
+    const proyectoId = await db.transaction(async (tx) => {
+      const pid = await getProyectoIdDeMaterial(tx, materialId);
+      if (!pid) throw new Error("Material no encontrado");
+
+      await tx
+        .update(schema.proyectoMateriales)
+        .set({ entregado })
+        .where(eq(schema.proyectoMateriales.id, materialId));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "proyecto",
+        entidadId: pid,
+        tipo: "material_entregado",
+        descripcion: entregado
+          ? "Material marcado como entregado"
+          : "Material marcado como no entregado",
+        payload: { materialId: String(materialId), entregado },
+        actor,
+      });
+
+      return pid;
+    });
+
+    revalidatePath(`/je-admin/proyectos/${proyectoId}`);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo actualizar el material." };
+  }
+}
+
+/* ──────────────────────────── Pagos (D5) ─────────────────────────────────── */
+
+const pagoSchema = z.object({
+  proyectoId: z
+    .string()
+    .uuid("Proyecto no válido.")
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  cotizacionId: z
+    .string()
+    .uuid("Cotización no válida.")
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  concepto: z.string().trim().min(1, "El concepto es obligatorio."),
+  monto: z.number().positive("El monto debe ser mayor a 0."),
+  moneda: z.string().trim().min(1).max(8).default("MXN"),
+  fechaProgramada: fechaOpcional,
+  metodo: optionalText(60),
+});
+
+type PagoInput = z.input<typeof pagoSchema>;
+
+/** Estados terminales de un pago (no admiten más transiciones). */
+const PAGO_ESTADOS_TERMINALES: ReadonlySet<PagoEstado> = new Set<PagoEstado>([
+  "pagado",
+  "cancelado",
+]);
+
+/** Inserta el evento de un pago SOLO si tiene proyectoId (si no, se omite). */
+async function eventoPagoSiProyecto(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  proyectoId: string | null,
+  tipo: string,
+  descripcion: string,
+  payload: Record<string, unknown>,
+  actor: string,
+): Promise<void> {
+  if (!proyectoId) return;
+  await tx.insert(schema.eventos).values({
+    entidadTipo: "proyecto",
+    entidadId: proyectoId,
+    tipo,
+    descripcion,
+    payload,
+    actor,
+  });
+}
+
+/** Hoy en formato YYYY-MM-DD (para fecha_pagada por defecto). */
+function hoyFecha(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Crea un pago (estado programado). Evento solo si tiene proyectoId. */
+export async function crearPago(
+  data: PagoInput,
+): Promise<ActionResult & { id?: string }> {
+  const actor = actorOf(await assertPerm("pagos", "edit"));
+
+  const parsed = pagoSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+
+  try {
+    const id = await db.transaction(async (tx) => {
+      const [pago] = await tx
+        .insert(schema.pagos)
+        .values({
+          proyectoId: d.proyectoId,
+          cotizacionId: d.cotizacionId,
+          concepto: d.concepto,
+          monto: String(d.monto),
+          moneda: d.moneda,
+          estado: "programado",
+          fechaProgramada: d.fechaProgramada,
+          metodo: d.metodo,
+        })
+        .returning({ id: schema.pagos.id });
+
+      await eventoPagoSiProyecto(
+        tx,
+        d.proyectoId,
+        "pago_creado",
+        `Pago programado: ${d.concepto}`,
+        { pagoId: pago.id, concepto: d.concepto, monto: d.monto },
+        actor,
+      );
+
+      return pago.id;
+    });
+
+    revalidatePath("/je-admin/pagos");
+    if (d.proyectoId) revalidatePath(`/je-admin/proyectos/${d.proyectoId}`);
+    return { ok: true, id };
+  } catch {
+    return { ok: false, error: "No se pudo crear el pago." };
+  }
+}
+
+/** Actualiza datos editables de un pago (no cambia su estado). */
+export async function actualizarPago(
+  id: string,
+  data: PagoInput,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("pagos", "edit"));
+
+  const parsed = pagoSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(schema.pagos)
+        .set({
+          proyectoId: d.proyectoId,
+          cotizacionId: d.cotizacionId,
+          concepto: d.concepto,
+          monto: String(d.monto),
+          moneda: d.moneda,
+          fechaProgramada: d.fechaProgramada,
+          metodo: d.metodo,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.pagos.id, id));
+
+      await eventoPagoSiProyecto(
+        tx,
+        d.proyectoId,
+        "pago_actualizado",
+        `Pago actualizado: ${d.concepto}`,
+        { pagoId: id, concepto: d.concepto, monto: d.monto },
+        actor,
+      );
+    });
+  } catch {
+    return { ok: false, error: "No se pudo actualizar el pago." };
+  }
+
+  revalidatePath("/je-admin/pagos");
+  if (d.proyectoId) revalidatePath(`/je-admin/proyectos/${d.proyectoId}`);
+  return { ok: true };
+}
+
+/**
+ * Marca un pago como pagado. Solo desde programado/vencido (terminales
+ * rechazados). fechaPagada por defecto = hoy. Evento solo si tiene proyectoId.
+ */
+export async function marcarPagoPagado(
+  id: string,
+  fechaPagada?: string | null,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("pagos", "edit"));
+
+  const parsedFecha = fechaOpcional.safeParse(fechaPagada);
+  if (!parsedFecha.success) {
+    return { ok: false, error: "Fecha de pago no válida." };
+  }
+
+  try {
+    const resultado = await db.transaction(async (tx) => {
+      const [pago] = await tx
+        .select({
+          estado: schema.pagos.estado,
+          proyectoId: schema.pagos.proyectoId,
+        })
+        .from(schema.pagos)
+        .where(eq(schema.pagos.id, id))
+        .limit(1);
+      if (!pago) throw new Error("Pago no encontrado");
+
+      if (PAGO_ESTADOS_TERMINALES.has(pago.estado)) {
+        return {
+          ok: false as const,
+          error: `El pago ya está en estado terminal (${pago.estado}).`,
+        };
+      }
+
+      const fecha = parsedFecha.data ?? hoyFecha();
+
+      await tx
+        .update(schema.pagos)
+        .set({
+          estado: "pagado",
+          fechaPagada: fecha,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.pagos.id, id));
+
+      await eventoPagoSiProyecto(
+        tx,
+        pago.proyectoId,
+        "pago_pagado",
+        `Pago marcado como pagado (${fecha})`,
+        { pagoId: id, fechaPagada: fecha },
+        actor,
+      );
+
+      return { ok: true as const, proyectoId: pago.proyectoId };
+    });
+
+    if (resultado.ok) {
+      revalidatePath("/je-admin/pagos");
+      if (resultado.proyectoId) {
+        revalidatePath(`/je-admin/proyectos/${resultado.proyectoId}`);
+      }
+    }
+    return resultado.ok ? { ok: true } : resultado;
+  } catch {
+    return { ok: false, error: "No se pudo marcar el pago como pagado." };
+  }
+}
+
+/**
+ * Registra el CFDI (UUID) de un pago. No cambia el estado; se rechaza si el
+ * pago está cancelado. Evento solo si tiene proyectoId.
+ */
+export async function registrarCfdiPago(
+  id: string,
+  cfdiUuid: string,
+): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("pagos", "edit"));
+
+  const parsed = z
+    .string()
+    .trim()
+    .min(1, "CFDI no válido.")
+    .max(60, "CFDI demasiado largo.")
+    .safeParse(cfdiUuid);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "CFDI no válido.",
+    };
+  }
+  const uuid = parsed.data;
+
+  try {
+    const resultado = await db.transaction(async (tx) => {
+      const [pago] = await tx
+        .select({
+          estado: schema.pagos.estado,
+          proyectoId: schema.pagos.proyectoId,
+        })
+        .from(schema.pagos)
+        .where(eq(schema.pagos.id, id))
+        .limit(1);
+      if (!pago) throw new Error("Pago no encontrado");
+
+      if (pago.estado === "cancelado") {
+        return {
+          ok: false as const,
+          error: "No se puede registrar CFDI en un pago cancelado.",
+        };
+      }
+
+      await tx
+        .update(schema.pagos)
+        .set({ cfdiUuid: uuid, updatedAt: new Date().toISOString() })
+        .where(eq(schema.pagos.id, id));
+
+      await eventoPagoSiProyecto(
+        tx,
+        pago.proyectoId,
+        "pago_cfdi",
+        "CFDI registrado",
+        { pagoId: id, cfdiUuid: uuid },
+        actor,
+      );
+
+      return { ok: true as const, proyectoId: pago.proyectoId };
+    });
+
+    if (resultado.ok) {
+      revalidatePath("/je-admin/pagos");
+      if (resultado.proyectoId) {
+        revalidatePath(`/je-admin/proyectos/${resultado.proyectoId}`);
+      }
+    }
+    return resultado.ok ? { ok: true } : resultado;
+  } catch {
+    return { ok: false, error: "No se pudo registrar el CFDI." };
+  }
+}
+
+/**
+ * Cancela un pago. Solo desde programado/vencido (terminales rechazados).
+ * Evento solo si tiene proyectoId.
+ */
+export async function cancelarPago(id: string): Promise<ActionResult> {
+  const actor = actorOf(await assertPerm("pagos", "edit"));
+
+  try {
+    const resultado = await db.transaction(async (tx) => {
+      const [pago] = await tx
+        .select({
+          estado: schema.pagos.estado,
+          proyectoId: schema.pagos.proyectoId,
+        })
+        .from(schema.pagos)
+        .where(eq(schema.pagos.id, id))
+        .limit(1);
+      if (!pago) throw new Error("Pago no encontrado");
+
+      if (PAGO_ESTADOS_TERMINALES.has(pago.estado)) {
+        return {
+          ok: false as const,
+          error: `El pago ya está en estado terminal (${pago.estado}).`,
+        };
+      }
+
+      await tx
+        .update(schema.pagos)
+        .set({ estado: "cancelado", updatedAt: new Date().toISOString() })
+        .where(eq(schema.pagos.id, id));
+
+      await eventoPagoSiProyecto(
+        tx,
+        pago.proyectoId,
+        "pago_cancelado",
+        "Pago cancelado",
+        { pagoId: id },
+        actor,
+      );
+
+      return { ok: true as const, proyectoId: pago.proyectoId };
+    });
+
+    if (resultado.ok) {
+      revalidatePath("/je-admin/pagos");
+      if (resultado.proyectoId) {
+        revalidatePath(`/je-admin/proyectos/${resultado.proyectoId}`);
+      }
+    }
+    return resultado.ok ? { ok: true } : resultado;
+  } catch {
+    return { ok: false, error: "No se pudo cancelar el pago." };
+  }
+}

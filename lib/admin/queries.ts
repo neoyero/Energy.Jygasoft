@@ -1820,3 +1820,833 @@ export async function getCatalogoDisponible(): Promise<CatalogoOption[]> {
     precio: numOrNull(row.precio),
   }));
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * PROYECTOS / TRÁMITES / INSTALACIÓN / MATERIALES / PAGOS / MÉTRICAS (D5)
+ *
+ * Estilo: query builder de Drizzle (eq/ilike/and/or/isNull) + leftJoin para
+ * listados y detalle; db.execute(sql`…`) con scoping inyectado para métricas
+ * agregadas (igual que getDashboardKpis). Los numeric (mode:'string') se
+ * convierten con numOrNull/numOrZero. proyecto_materiales.id es bigint -> se
+ * serializa a string en filas y se castea con Number(id) en los where. Scoping
+ * por rol vía isScoped(): vendedor/preventa ven SOLO sus proyectos/pagos
+ * (proyectos.vendedor_id = userId; pagos vía EXISTS sobre el proyecto dueño).
+ * ──────────────────────────────────────────────────────────────────────── */
+
+export type ProyectoFase = (typeof schema.proyectoFase.enumValues)[number];
+export type TramiteCfeEstado =
+  (typeof schema.tramiteCfeEstado.enumValues)[number];
+export type InstalacionEstado =
+  (typeof schema.instalacionEstado.enumValues)[number];
+export type PagoEstado = (typeof schema.pagoEstado.enumValues)[number];
+
+export interface ProyectosFiltros {
+  fase?: ProyectoFase;
+  vendedorId?: string | null;
+  busqueda?: string;
+}
+
+export interface ProyectoRow {
+  id: string;
+  folio: string | null;
+  anio: number;
+  clienteId: string | null;
+  clienteNombre: string | null;
+  vendedorId: string | null;
+  vendedorNombre: string | null;
+  fase: ProyectoFase;
+  capacidadKwp: number | null;
+  totalConIva: number | null;
+  createdAt: string;
+}
+
+export interface TramiteCfeRow {
+  id: string;
+  estado: TramiteCfeEstado;
+  folioCfe: string | null;
+  esquema: EsquemaCfe | null;
+  estudioRequerido: boolean;
+  fechaSolicitud: string | null;
+  fechaOficio: string | null;
+  fechaMedidor: string | null;
+  fechaOperacion: string | null;
+  observaciones: string | null;
+  updatedAt: string;
+}
+
+export interface InstalacionRow {
+  id: string;
+  cuadrillaId: string | null;
+  cuadrillaNombre: string | null;
+  estado: InstalacionEstado;
+  fechaInicio: string | null;
+  fechaFin: string | null;
+  avancePct: number;
+  notas: string | null;
+  updatedAt: string;
+}
+
+export interface ProyectoMaterialRow {
+  id: string;
+  equipoId: string | null;
+  equipoMarca: string | null;
+  equipoModelo: string | null;
+  descripcion: string;
+  cantidad: number;
+  precioUnitario: number;
+  importe: number;
+  entregado: boolean;
+}
+
+export interface ProyectoPagoRow {
+  id: string;
+  concepto: string;
+  monto: number;
+  moneda: string;
+  estado: PagoEstado;
+  fechaProgramada: string | null;
+  fechaPagada: string | null;
+  metodo: string | null;
+  cfdiUuid: string | null;
+  vencido: boolean;
+  createdAt: string;
+}
+
+export interface ProyectoDetalleCabecera {
+  id: string;
+  folio: string | null;
+  anio: number;
+  carpetaPath: string | null;
+  clienteId: string | null;
+  clienteNombre: string | null;
+  oportunidadId: string | null;
+  vendedorId: string | null;
+  vendedorNombre: string | null;
+  tipoPersona: TipoPersona | null;
+  capacidadKwp: number | null;
+  nivelTension: NivelTension | null;
+  tarifa: string | null;
+  esquema: EsquemaCfe | null;
+  uvieRequerido: boolean;
+  fase: ProyectoFase;
+  precioSinIva: number | null;
+  totalConIva: number | null;
+  costoTotal: number | null;
+  margenReal: number | null;
+  createdAt: string;
+  updatedAt: string;
+  cierreAt: string | null;
+}
+
+export interface ProyectoDetalle {
+  proyecto: ProyectoDetalleCabecera;
+  tramite: TramiteCfeRow | null;
+  instalacion: InstalacionRow | null;
+  materiales: ProyectoMaterialRow[];
+  pagos: ProyectoPagoRow[];
+  documentos: ClienteDocumentoRow[];
+  timeline: EventoRow[];
+}
+
+const PROYECTO_QUERY_LIMIT = 500;
+const PAGO_QUERY_LIMIT = 500;
+
+/**
+ * Lista de proyectos filtrada (con nombres de cliente/vendedor vía leftJoin).
+ * Scoping por vendedor para roles acotados. Filtros: fase (eq), vendedorId
+ * (null = sin asignar / isNull), busqueda (ilike folio / nombre del cliente).
+ */
+export async function getProyectosFiltrados(
+  scope: DashboardScope,
+  filtros: ProyectosFiltros = {},
+): Promise<ProyectoRow[]> {
+  const conds: SQL[] = [];
+
+  if (isScoped(scope.rol)) {
+    conds.push(eq(schema.proyectos.vendedorId, scope.userId));
+  }
+
+  if (filtros.fase) conds.push(eq(schema.proyectos.fase, filtros.fase));
+
+  if (filtros.vendedorId !== undefined) {
+    conds.push(
+      filtros.vendedorId === null
+        ? isNull(schema.proyectos.vendedorId)
+        : eq(schema.proyectos.vendedorId, filtros.vendedorId),
+    );
+  }
+
+  const q = filtros.busqueda?.trim();
+  if (q) {
+    const like = `%${q.toLowerCase()}%`;
+    const busquedaCond = or(
+      ilike(schema.proyectos.folio, like),
+      ilike(schema.clientes.nombre, like),
+    );
+    if (busquedaCond) conds.push(busquedaCond);
+  }
+
+  const rows = await db
+    .select({
+      id: schema.proyectos.id,
+      folio: schema.proyectos.folio,
+      anio: schema.proyectos.anio,
+      clienteId: schema.proyectos.clienteId,
+      clienteNombre: schema.clientes.nombre,
+      vendedorId: schema.proyectos.vendedorId,
+      vendedorNombre: schema.usuarios.nombre,
+      fase: schema.proyectos.fase,
+      capacidadKwp: schema.proyectos.capacidadKwp,
+      totalConIva: schema.proyectos.totalConIva,
+      createdAt: schema.proyectos.createdAt,
+    })
+    .from(schema.proyectos)
+    .leftJoin(schema.clientes, eq(schema.proyectos.clienteId, schema.clientes.id))
+    .leftJoin(
+      schema.usuarios,
+      eq(schema.proyectos.vendedorId, schema.usuarios.id),
+    )
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(schema.proyectos.createdAt))
+    .limit(PROYECTO_QUERY_LIMIT);
+
+  return rows.map((row) => ({
+    id: row.id,
+    folio: row.folio,
+    anio: row.anio,
+    clienteId: row.clienteId,
+    clienteNombre: row.clienteNombre,
+    vendedorId: row.vendedorId,
+    vendedorNombre: row.vendedorNombre,
+    fase: row.fase,
+    capacidadKwp: numOrNull(row.capacidadKwp),
+    totalConIva: numOrNull(row.totalConIva),
+    createdAt: row.createdAt,
+  }));
+}
+
+/**
+ * Detalle de un proyecto: cabecera + trámite CFE (más reciente), instalación
+ * (más reciente), materiales, pagos, documentos (entidad proyecto) y timeline.
+ * Aplica scoping: un rol acotado solo ve proyectos propios; si no le pertenece
+ * (o no existe) devuelve null.
+ */
+export async function getProyectoDetalle(
+  scope: DashboardScope,
+  id: string,
+): Promise<ProyectoDetalle | null> {
+  const [proyecto] = await db
+    .select()
+    .from(schema.proyectos)
+    .where(eq(schema.proyectos.id, id))
+    .limit(1);
+
+  if (!proyecto) return null;
+  if (isScoped(scope.rol) && proyecto.vendedorId !== scope.userId) return null;
+
+  const [
+    clienteNombre,
+    vendedorNombre,
+    tramite,
+    instalacion,
+    materiales,
+    pagos,
+    documentos,
+    timeline,
+  ] = await Promise.all([
+    getClienteNombre(proyecto.clienteId),
+    getVendedorNombre(proyecto.vendedorId),
+    getTramiteCfeDeProyecto(id),
+    getInstalacionDeProyecto(id),
+    getMaterialesDeProyecto(id),
+    getPagosDeProyecto(id),
+    getDocumentosDeEntidad("proyecto", id),
+    getTimelineDeEntidad("proyecto", id),
+  ]);
+
+  return {
+    proyecto: {
+      id: proyecto.id,
+      folio: proyecto.folio,
+      anio: proyecto.anio,
+      carpetaPath: proyecto.carpetaPath,
+      clienteId: proyecto.clienteId,
+      clienteNombre,
+      oportunidadId: proyecto.oportunidadId,
+      vendedorId: proyecto.vendedorId,
+      vendedorNombre,
+      tipoPersona: proyecto.tipoPersona,
+      capacidadKwp: numOrNull(proyecto.capacidadKwp),
+      nivelTension: proyecto.nivelTension,
+      tarifa: proyecto.tarifa,
+      esquema: proyecto.esquema,
+      uvieRequerido: proyecto.uvieRequerido ?? false,
+      fase: proyecto.fase,
+      precioSinIva: numOrNull(proyecto.precioSinIva),
+      totalConIva: numOrNull(proyecto.totalConIva),
+      costoTotal: numOrNull(proyecto.costoTotal),
+      margenReal: numOrNull(proyecto.margenReal),
+      createdAt: proyecto.createdAt,
+      updatedAt: proyecto.updatedAt,
+      cierreAt: proyecto.cierreAt,
+    },
+    tramite,
+    instalacion,
+    materiales,
+    pagos,
+    documentos,
+    timeline,
+  };
+}
+
+/** Nombre del cliente (o null). */
+async function getClienteNombre(
+  clienteId: string | null,
+): Promise<string | null> {
+  if (!clienteId) return null;
+  const [row] = await db
+    .select({ nombre: schema.clientes.nombre })
+    .from(schema.clientes)
+    .where(eq(schema.clientes.id, clienteId))
+    .limit(1);
+  return row?.nombre ?? null;
+}
+
+/** Trámite CFE más reciente (by updatedAt) del proyecto, o null. */
+async function getTramiteCfeDeProyecto(
+  proyectoId: string,
+): Promise<TramiteCfeRow | null> {
+  const [row] = await db
+    .select({
+      id: schema.tramitesCfe.id,
+      estado: schema.tramitesCfe.estado,
+      folioCfe: schema.tramitesCfe.folioCfe,
+      esquema: schema.tramitesCfe.esquema,
+      estudioRequerido: schema.tramitesCfe.estudioRequerido,
+      fechaSolicitud: schema.tramitesCfe.fechaSolicitud,
+      fechaOficio: schema.tramitesCfe.fechaOficio,
+      fechaMedidor: schema.tramitesCfe.fechaMedidor,
+      fechaOperacion: schema.tramitesCfe.fechaOperacion,
+      observaciones: schema.tramitesCfe.observaciones,
+      updatedAt: schema.tramitesCfe.updatedAt,
+    })
+    .from(schema.tramitesCfe)
+    .where(eq(schema.tramitesCfe.proyectoId, proyectoId))
+    .orderBy(desc(schema.tramitesCfe.updatedAt))
+    .limit(1);
+
+  if (!row) return null;
+  return {
+    id: row.id,
+    estado: row.estado,
+    folioCfe: row.folioCfe,
+    esquema: row.esquema,
+    estudioRequerido: row.estudioRequerido ?? false,
+    fechaSolicitud: row.fechaSolicitud,
+    fechaOficio: row.fechaOficio,
+    fechaMedidor: row.fechaMedidor,
+    fechaOperacion: row.fechaOperacion,
+    observaciones: row.observaciones,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/** Instalación más reciente (by updatedAt) del proyecto, o null. */
+async function getInstalacionDeProyecto(
+  proyectoId: string,
+): Promise<InstalacionRow | null> {
+  const [row] = await db
+    .select({
+      id: schema.instalaciones.id,
+      cuadrillaId: schema.instalaciones.cuadrillaId,
+      cuadrillaNombre: schema.cuadrillas.nombre,
+      estado: schema.instalaciones.estado,
+      fechaInicio: schema.instalaciones.fechaInicio,
+      fechaFin: schema.instalaciones.fechaFin,
+      avancePct: schema.instalaciones.avancePct,
+      notas: schema.instalaciones.notas,
+      updatedAt: schema.instalaciones.updatedAt,
+    })
+    .from(schema.instalaciones)
+    .leftJoin(
+      schema.cuadrillas,
+      eq(schema.instalaciones.cuadrillaId, schema.cuadrillas.id),
+    )
+    .where(eq(schema.instalaciones.proyectoId, proyectoId))
+    .orderBy(desc(schema.instalaciones.updatedAt))
+    .limit(1);
+
+  if (!row) return null;
+  return {
+    id: row.id,
+    cuadrillaId: row.cuadrillaId,
+    cuadrillaNombre: row.cuadrillaNombre,
+    estado: row.estado,
+    fechaInicio: row.fechaInicio,
+    fechaFin: row.fechaFin,
+    avancePct: row.avancePct ?? 0,
+    notas: row.notas,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/**
+ * Materiales del proyecto (con marca/modelo del equipo vía leftJoin a
+ * catálogo). El esquema NO tiene columna `importe`: se calcula en JS como
+ * cantidad * precioUnitario. id bigint -> string.
+ */
+async function getMaterialesDeProyecto(
+  proyectoId: string,
+): Promise<ProyectoMaterialRow[]> {
+  const rows = await db
+    .select({
+      id: schema.proyectoMateriales.id,
+      equipoId: schema.proyectoMateriales.equipoId,
+      equipoMarca: schema.catalogoEquipos.marca,
+      equipoModelo: schema.catalogoEquipos.modelo,
+      descripcion: schema.proyectoMateriales.descripcion,
+      cantidad: schema.proyectoMateriales.cantidad,
+      precioUnitario: schema.proyectoMateriales.precioUnitario,
+      entregado: schema.proyectoMateriales.entregado,
+    })
+    .from(schema.proyectoMateriales)
+    .leftJoin(
+      schema.catalogoEquipos,
+      eq(schema.proyectoMateriales.equipoId, schema.catalogoEquipos.id),
+    )
+    .where(eq(schema.proyectoMateriales.proyectoId, proyectoId))
+    .orderBy(asc(schema.proyectoMateriales.id));
+
+  return rows.map((row) => {
+    const cantidad = numOrZero(row.cantidad);
+    const precioUnitario = numOrZero(row.precioUnitario);
+    return {
+      id: String(row.id),
+      equipoId: row.equipoId,
+      equipoMarca: row.equipoMarca,
+      equipoModelo: row.equipoModelo,
+      descripcion: row.descripcion,
+      cantidad,
+      precioUnitario,
+      importe: cantidad * precioUnitario,
+      entregado: row.entregado,
+    };
+  });
+}
+
+/**
+ * Pagos del proyecto. `vencido` = estado 'programado' y fecha_programada
+ * anterior a la fecha actual.
+ */
+async function getPagosDeProyecto(
+  proyectoId: string,
+): Promise<ProyectoPagoRow[]> {
+  const rows = await db
+    .select({
+      id: schema.pagos.id,
+      concepto: schema.pagos.concepto,
+      monto: schema.pagos.monto,
+      moneda: schema.pagos.moneda,
+      estado: schema.pagos.estado,
+      fechaProgramada: schema.pagos.fechaProgramada,
+      fechaPagada: schema.pagos.fechaPagada,
+      metodo: schema.pagos.metodo,
+      cfdiUuid: schema.pagos.cfdiUuid,
+      vencido: sql<boolean>`(${schema.pagos.estado} = 'programado' AND ${schema.pagos.fechaProgramada} < current_date)`,
+      createdAt: schema.pagos.createdAt,
+    })
+    .from(schema.pagos)
+    .where(eq(schema.pagos.proyectoId, proyectoId))
+    .orderBy(desc(schema.pagos.createdAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    concepto: row.concepto,
+    monto: numOrZero(row.monto),
+    moneda: row.moneda ?? "MXN",
+    estado: row.estado,
+    fechaProgramada: row.fechaProgramada,
+    fechaPagada: row.fechaPagada,
+    metodo: row.metodo,
+    cfdiUuid: row.cfdiUuid,
+    vencido: Boolean(row.vencido),
+    createdAt: row.createdAt,
+  }));
+}
+
+/** Cuadrillas activas (para selects de asignación), ordenadas por nombre. */
+export async function getCuadrillasActivas(): Promise<
+  { id: string; nombre: string }[]
+> {
+  const rows = await db
+    .select({ id: schema.cuadrillas.id, nombre: schema.cuadrillas.nombre })
+    .from(schema.cuadrillas)
+    .where(eq(schema.cuadrillas.activa, true))
+    .orderBy(asc(schema.cuadrillas.nombre));
+
+  return rows.map((row) => ({ id: row.id, nombre: row.nombre }));
+}
+
+export interface PagosFiltros {
+  estado?: PagoEstado;
+  busqueda?: string;
+  soloVencidos?: boolean;
+}
+
+export interface PagoRow {
+  id: string;
+  proyectoId: string | null;
+  proyectoFolio: string | null;
+  clienteNombre: string | null;
+  concepto: string;
+  monto: number;
+  moneda: string;
+  estado: PagoEstado;
+  fechaProgramada: string | null;
+  fechaPagada: string | null;
+  metodo: string | null;
+  cfdiUuid: string | null;
+  vencido: boolean;
+  createdAt: string;
+}
+
+export interface PagosTotales {
+  programado: number;
+  pagado: number;
+  vencido: number;
+  cancelado: number;
+}
+
+export interface PagosData {
+  rows: PagoRow[];
+  totales: PagosTotales;
+}
+
+/**
+ * Pagos filtrados (con folio del proyecto y nombre del cliente vía leftJoin) +
+ * totales por estado. Scoping para roles acotados vía EXISTS sobre el proyecto
+ * dueño (pagos no tiene vendedor_id). Filtros: estado (eq), soloVencidos
+ * (programado + fecha_programada < hoy), busqueda (ilike concepto / folio del
+ * proyecto). Orden: vencidos primero, luego desc(createdAt).
+ */
+export async function getPagosData(
+  scope: DashboardScope,
+  filtros: PagosFiltros = {},
+): Promise<PagosData> {
+  const conds: SQL[] = [];
+
+  if (isScoped(scope.rol)) {
+    conds.push(
+      sql`EXISTS (SELECT 1 FROM proyectos pr WHERE pr.id = ${schema.pagos.proyectoId} AND pr.vendedor_id = ${scope.userId})`,
+    );
+  }
+
+  if (filtros.estado) conds.push(eq(schema.pagos.estado, filtros.estado));
+
+  if (filtros.soloVencidos) {
+    conds.push(
+      sql`(${schema.pagos.estado} = 'programado' AND ${schema.pagos.fechaProgramada} < current_date)`,
+    );
+  }
+
+  const q = filtros.busqueda?.trim();
+  if (q) {
+    const like = `%${q.toLowerCase()}%`;
+    const busquedaCond = or(
+      ilike(schema.pagos.concepto, like),
+      ilike(schema.proyectos.folio, like),
+    );
+    if (busquedaCond) conds.push(busquedaCond);
+  }
+
+  const where = conds.length ? and(...conds) : undefined;
+  const vencidoExpr = sql<boolean>`(${schema.pagos.estado} = 'programado' AND ${schema.pagos.fechaProgramada} < current_date)`;
+
+  const rows = await db
+    .select({
+      id: schema.pagos.id,
+      proyectoId: schema.pagos.proyectoId,
+      proyectoFolio: schema.proyectos.folio,
+      clienteNombre: schema.clientes.nombre,
+      concepto: schema.pagos.concepto,
+      monto: schema.pagos.monto,
+      moneda: schema.pagos.moneda,
+      estado: schema.pagos.estado,
+      fechaProgramada: schema.pagos.fechaProgramada,
+      fechaPagada: schema.pagos.fechaPagada,
+      metodo: schema.pagos.metodo,
+      cfdiUuid: schema.pagos.cfdiUuid,
+      vencido: vencidoExpr,
+      createdAt: schema.pagos.createdAt,
+    })
+    .from(schema.pagos)
+    .leftJoin(schema.proyectos, eq(schema.pagos.proyectoId, schema.proyectos.id))
+    .leftJoin(schema.clientes, eq(schema.proyectos.clienteId, schema.clientes.id))
+    .where(where)
+    .orderBy(desc(vencidoExpr), desc(schema.pagos.createdAt))
+    .limit(PAGO_QUERY_LIMIT);
+
+  const pagoRows: PagoRow[] = rows.map((row) => ({
+    id: row.id,
+    proyectoId: row.proyectoId,
+    proyectoFolio: row.proyectoFolio,
+    clienteNombre: row.clienteNombre,
+    concepto: row.concepto,
+    monto: numOrZero(row.monto),
+    moneda: row.moneda ?? "MXN",
+    estado: row.estado,
+    fechaProgramada: row.fechaProgramada,
+    fechaPagada: row.fechaPagada,
+    metodo: row.metodo,
+    cfdiUuid: row.cfdiUuid,
+    vencido: Boolean(row.vencido),
+    createdAt: row.createdAt,
+  }));
+
+  const totales = await getPagosTotales(where);
+
+  return { rows: pagoRows, totales };
+}
+
+/** Totales por estado (suma de monto) sobre el mismo filtro del listado. */
+async function getPagosTotales(where: SQL | undefined): Promise<PagosTotales> {
+  const [row] = await db
+    .select({
+      programado: sql<number>`coalesce(sum(${schema.pagos.monto}) FILTER (WHERE ${schema.pagos.estado} = 'programado'),0)::float8`,
+      pagado: sql<number>`coalesce(sum(${schema.pagos.monto}) FILTER (WHERE ${schema.pagos.estado} = 'pagado'),0)::float8`,
+      vencido: sql<number>`coalesce(sum(${schema.pagos.monto}) FILTER (WHERE ${schema.pagos.estado} = 'vencido'),0)::float8`,
+      cancelado: sql<number>`coalesce(sum(${schema.pagos.monto}) FILTER (WHERE ${schema.pagos.estado} = 'cancelado'),0)::float8`,
+    })
+    .from(schema.pagos)
+    .leftJoin(schema.proyectos, eq(schema.pagos.proyectoId, schema.proyectos.id))
+    .where(where);
+
+  return {
+    programado: num(row?.programado),
+    pagado: num(row?.pagado),
+    vencido: num(row?.vencido),
+    cancelado: num(row?.cancelado),
+  };
+}
+
+export interface MetricasFiltros {
+  desde?: string;
+  hasta?: string;
+  vendedorId?: string | null;
+}
+
+export interface VentasMensualRow {
+  mes: string;
+  ingresos: number;
+  proyectos: number;
+}
+
+export interface ConversionEtapaRow {
+  etapa: string;
+  conteo: number;
+  monto: number;
+}
+
+export interface ProyectoFaseMetricaRow {
+  fase: string;
+  conteo: number;
+  total: number;
+}
+
+export interface CobranzaRow {
+  estado: string;
+  monto: number;
+}
+
+export interface MetricasResumen {
+  ingresosPeriodo: number;
+  proyectosNuevos: number;
+  tasaConversion: number | null;
+  cobranzaPendiente: number;
+}
+
+export interface MetricasData {
+  ventasMensuales: VentasMensualRow[];
+  conversionPipeline: ConversionEtapaRow[];
+  proyectosPorFase: ProyectoFaseMetricaRow[];
+  cobranza: CobranzaRow[];
+  resumen: MetricasResumen;
+}
+
+/**
+ * Métricas del panel: ventas mensuales (12 meses), conversión del pipeline por
+ * etapa, proyectos por fase, cobranza y un resumen. Estilo db.execute(sql`…`)
+ * con rango opcional (gte created_at desde / lt hasta) y scoping inyectado como
+ * en getDashboardKpis. Montos ::float8, conteos ::int.
+ */
+export async function getMetricasData(
+  scope: DashboardScope,
+  filtros: MetricasFiltros = {},
+): Promise<MetricasData> {
+  const scoped = isScoped(scope.rol);
+  const uid = scope.userId;
+
+  // Filtro de vendedor explícito (override por filtro) o scoping por rol.
+  const filtroVendedor =
+    filtros.vendedorId !== undefined && filtros.vendedorId !== null
+      ? filtros.vendedorId
+      : scoped
+        ? uid
+        : null;
+
+  const fProy = filtroVendedor
+    ? sql`AND vendedor_id = ${filtroVendedor}`
+    : sql``;
+  const fOport = filtroVendedor
+    ? sql`AND vendedor_id = ${filtroVendedor}`
+    : sql``;
+  // pagos no tiene vendedor_id -> se acota via el proyecto dueño.
+  const fPago = filtroVendedor
+    ? sql`AND EXISTS (SELECT 1 FROM proyectos pr WHERE pr.id = p.proyecto_id AND pr.vendedor_id = ${filtroVendedor})`
+    : sql``;
+
+  // Rango temporal opcional [desde, hasta) sobre created_at.
+  const rProy = sqlRango("created_at", filtros.desde, filtros.hasta);
+  const rOport = sqlRango("created_at", filtros.desde, filtros.hasta);
+
+  const [ventasRes, conversionRes, faseRes, cobranzaRes, resumenRes] =
+    await Promise.all([
+      // Ventas mensuales: 12 meses. ingresos = pagos pagados del mes (por
+      // fecha_pagada); proyectos = proyectos creados del mes.
+      db.execute(sql`
+        SELECT to_char(m.mes, 'YYYY-MM') AS mes,
+               coalesce((
+                 SELECT sum(p.monto)
+                 FROM pagos p
+                 WHERE p.estado = 'pagado'
+                   AND date_trunc('month', p.fecha_pagada) = m.mes ${fPago}
+               ),0)::float8 AS ingresos,
+               coalesce((
+                 SELECT count(*)
+                 FROM proyectos
+                 WHERE date_trunc('month', created_at) = m.mes ${fProy}
+               ),0)::int AS proyectos
+        FROM generate_series(
+               date_trunc('month', current_date) - interval '11 months',
+               date_trunc('month', current_date),
+               interval '1 month'
+             ) AS m(mes)
+        ORDER BY m.mes ASC
+      `),
+      // Conversión: oportunidades por etapa en rango.
+      db.execute(sql`
+        SELECT etapa::text AS etapa,
+               count(*)::int AS conteo,
+               coalesce(sum(coalesce(monto_estimado,0)),0)::float8 AS monto
+        FROM oportunidades
+        WHERE true ${rOport} ${fOport}
+        GROUP BY etapa
+      `),
+      // Proyectos por fase en rango.
+      db.execute(sql`
+        SELECT fase::text AS fase,
+               count(*)::int AS conteo,
+               coalesce(sum(coalesce(total_con_iva,0)),0)::float8 AS total
+        FROM proyectos
+        WHERE true ${rProy} ${fProy}
+        GROUP BY fase
+      `),
+      // Cobranza por estado (programado/pagado/vencido).
+      db.execute(sql`
+        SELECT estado::text AS estado,
+               coalesce(sum(monto),0)::float8 AS monto
+        FROM pagos p
+        WHERE estado IN ('programado','pagado','vencido') ${fPago}
+        GROUP BY estado
+      `),
+      // Resumen del periodo.
+      db.execute(sql`
+        SELECT
+          (SELECT coalesce(sum(p.monto),0)::float8 FROM pagos p
+            WHERE p.estado = 'pagado'
+              ${sqlRango("p.fecha_pagada", filtros.desde, filtros.hasta)} ${fPago}
+          ) AS ingresos_periodo,
+          (SELECT count(*)::int FROM proyectos
+            WHERE true ${rProy} ${fProy}
+          ) AS proyectos_nuevos,
+          (SELECT count(*)::int FROM oportunidades
+            WHERE etapa = 'ganada' ${rOport} ${fOport}
+          ) AS ganadas,
+          (SELECT count(*)::int FROM oportunidades
+            WHERE etapa = 'perdida' ${rOport} ${fOport}
+          ) AS perdidas,
+          (SELECT coalesce(sum(monto),0)::float8 FROM pagos p
+            WHERE estado IN ('programado','vencido') ${fPago}
+          ) AS cobranza_pendiente
+      `),
+    ]);
+
+  const ventasMensuales = asRows(ventasRes).map((row) => ({
+    mes: str(row.mes),
+    ingresos: num(row.ingresos),
+    proyectos: num(row.proyectos),
+  }));
+
+  const conversionPipeline = sortByOrder(
+    asRows(conversionRes).map((row) => ({
+      etapa: str(row.etapa),
+      conteo: num(row.conteo),
+      monto: num(row.monto),
+    })),
+    (r) => r.etapa,
+    ETAPA_ORDER,
+  );
+
+  const proyectosPorFase = sortByOrder(
+    asRows(faseRes).map((row) => ({
+      fase: str(row.fase),
+      conteo: num(row.conteo),
+      total: num(row.total),
+    })),
+    (r) => r.fase,
+    FASE_ORDER,
+  );
+
+  const cobranza = asRows(cobranzaRes).map((row) => ({
+    estado: str(row.estado),
+    monto: num(row.monto),
+  }));
+
+  const r = asRows(resumenRes)[0] ?? {};
+  const ganadas = num(r.ganadas);
+  const perdidas = num(r.perdidas);
+  const cerradas = ganadas + perdidas;
+  const tasaConversion =
+    cerradas === 0 ? null : Math.round((ganadas / cerradas) * 1000) / 10;
+
+  const resumen: MetricasResumen = {
+    ingresosPeriodo: num(r.ingresos_periodo),
+    proyectosNuevos: num(r.proyectos_nuevos),
+    tasaConversion,
+    cobranzaPendiente: num(r.cobranza_pendiente),
+  };
+
+  return {
+    ventasMensuales,
+    conversionPipeline,
+    proyectosPorFase,
+    cobranza,
+    resumen,
+  };
+}
+
+/**
+ * Construye un fragmento de rango temporal `AND col >= desde AND col < hasta`
+ * para columnas/fechas en consultas db.execute. Cada extremo es opcional; el
+ * nombre de columna se interpola como SQL crudo (no es input de usuario).
+ */
+function sqlRango(
+  columna: string,
+  desde: string | undefined,
+  hasta: string | undefined,
+): SQL {
+  const col = sql.raw(columna);
+  const desdeCond = desde ? sql`AND ${col} >= ${desde}` : sql``;
+  const hastaCond = hasta ? sql`AND ${col} < ${hasta}` : sql``;
+  return sql`${desdeCond} ${hastaCond}`;
+}
