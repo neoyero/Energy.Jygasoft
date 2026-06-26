@@ -20,9 +20,14 @@ import {
 } from "@/components/admin/cotizaciones/item-editor-row";
 import { TotalesPanel } from "@/components/admin/cotizaciones/totales-panel";
 import { SistemaFields } from "@/components/admin/cotizaciones/sistema-fields";
+import { SistemaForm } from "@/components/admin/cotizaciones/sistema-form";
+import { RelacionesCard } from "@/components/admin/cotizaciones/relaciones-card";
+import { CotizacionDocumentosPanel } from "@/components/admin/cotizaciones/cotizacion-documentos-panel";
+import { CotizacionHistorial } from "@/components/admin/cotizaciones/cotizacion-historial";
 import { EstadoActions } from "@/components/admin/cotizaciones/estado-actions";
 import { calcularTotales, type Totales } from "@/lib/admin/cotizacion-calc";
 import { actualizarCotizacionItems } from "@/lib/admin/actions";
+import { cn } from "@/lib/utils";
 import type {
   CatalogoOption,
   CotizacionDetalle,
@@ -31,7 +36,18 @@ import type {
 export interface CotizacionBuilderProps {
   detalle: CotizacionDetalle;
   catalogo: ReadonlyArray<CatalogoOption>;
+  /** RBAC cotizaciones:edit -> habilita edicion de partidas y datos del sistema. */
   puedeEditar: boolean;
+  /** RBAC documentos:edit -> habilita subida/borrado de documentos. */
+  puedeEditarDocs: boolean;
+}
+
+type TabId = "partidas" | "sistema" | "documentos" | "historial";
+
+interface TabDef {
+  id: TabId;
+  label: string;
+  count: number;
 }
 
 /** Genera un key efimero estable para una fila nueva (no persiste en BD). */
@@ -68,23 +84,32 @@ function getErrorMessage(err: unknown): string {
 }
 
 /**
- * Constructor/detalle de cotizacion (D4). Client component que orquesta:
- *  - Estado local de partidas (ItemUI[]) con totales calculados en vivo.
- *  - Alta de partidas (catalogo o manual) y edicion/borrado fila a fila.
- *  - Guardado via Server Action en useTransition; reconcilia los totales
- *    devueltos por el servidor (si los devuelve) y refresca la ruta.
- *  - Especificaciones del sistema (solo lectura) y acciones de estado.
- * Si !puedeEditar, todo es solo lectura (sin AddItem, sin guardar, filas
- * bloqueadas, sin acciones de estado).
+ * Constructor/detalle de cotizacion (D4). Client component que organiza el
+ * detalle 360 en pestañas (Partidas, Sistema, Documentos, Historial) más una
+ * columna lateral con relaciones, totales y acciones de estado.
+ *
+ *  - Partidas: estado local de partidas (ItemUI[]) con totales calculados en
+ *    vivo, alta (catalogo o manual), edicion/borrado fila a fila y guardado via
+ *    Server Action en useTransition; reconcilia los totales devueltos por el
+ *    servidor (si los devuelve) y refresca la ruta.
+ *  - Sistema: especificaciones de solo lectura (SistemaFields) + SistemaForm
+ *    para editar la cabecera (sizing, produccion, esquema, vigencia).
+ *  - Documentos: CotizacionDocumentosPanel (subida/borrado segun RBAC docs).
+ *  - Historial: CotizacionHistorial (timeline de eventos).
+ *
+ * Si !puedeEditar, las partidas y el sistema son solo lectura (sin AddItem, sin
+ * guardar, filas bloqueadas, sin SistemaForm ni acciones de estado).
  */
 export function CotizacionBuilder({
   detalle,
   catalogo,
   puedeEditar,
+  puedeEditarDocs,
 }: CotizacionBuilderProps) {
   const router = useRouter();
   const { cotizacion } = detalle;
 
+  const [tab, setTab] = useState<TabId>("partidas");
   const [items, setItems] = useState<ItemUI[]>(() => toItemsUI(detalle));
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -105,6 +130,17 @@ export function CotizacionBuilder({
   );
 
   const totales = totalesServidor ?? totalesLocales;
+
+  const tabs: ReadonlyArray<TabDef> = [
+    { id: "partidas", label: "Partidas", count: items.length },
+    { id: "sistema", label: "Sistema", count: 0 },
+    {
+      id: "documentos",
+      label: "Documentos",
+      count: detalle.documentos.length,
+    },
+    { id: "historial", label: "Historial", count: detalle.timeline.length },
+  ];
 
   function handleAdd(nuevo: Omit<ItemUI, "key">) {
     setOkMsg(null);
@@ -149,101 +185,187 @@ export function CotizacionBuilder({
 
   return (
     <div className="grid gap-6 lg:grid-cols-3">
-      {/* Columna principal: partidas */}
-      <div className="space-y-6 lg:col-span-2">
-        <Card>
-          <CardHeader
-            action={
-              puedeEditar ? (
-                <Button
-                  size="sm"
-                  disabled={pending}
-                  onClick={handleGuardar}
-                >
-                  <Save aria-hidden />
-                  {pending ? "Guardando…" : "Guardar partidas"}
-                </Button>
-              ) : null
-            }
-          >
-            <CardTitle>Partidas</CardTitle>
-            <CardDescription>
-              {puedeEditar
-                ? "Agrega equipos del catalogo o partidas manuales. Los totales se recalculan en vivo."
-                : "Detalle de partidas (solo lectura)."}
-            </CardDescription>
-          </CardHeader>
+      {/* Columna principal: pestañas del detalle 360 */}
+      <div className="space-y-4 lg:col-span-2">
+        {/* Barra de tabs */}
+        <div
+          role="tablist"
+          aria-label="Secciones de la cotización"
+          className="flex flex-wrap gap-1 border-b border-border"
+        >
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                "-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                tab === t.id
+                  ? "border-brand text-brand dark:border-primary dark:text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {t.label}
+              {t.count > 0 ? (
+                <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
+                  {t.count}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
 
-          <CardContent className="mt-4 space-y-3">
-            {puedeEditar ? (
-              <AddItemControl
-                catalogo={catalogo}
-                onAdd={handleAdd}
-                disabled={pending}
-              />
-            ) : null}
-
-            {items.length === 0 ? (
-              <EmptyState
-                title="Sin partidas"
-                description={
-                  puedeEditar
-                    ? "Agrega la primera partida desde el catalogo o como partida manual."
-                    : "Esta cotizacion aun no tiene partidas."
+        {/* Panel activo */}
+        <div role="tabpanel">
+          {/* Partidas */}
+          {tab === "partidas" ? (
+            <Card>
+              <CardHeader
+                action={
+                  puedeEditar ? (
+                    <Button
+                      size="sm"
+                      disabled={pending}
+                      onClick={handleGuardar}
+                    >
+                      <Save aria-hidden />
+                      {pending ? "Guardando…" : "Guardar partidas"}
+                    </Button>
+                  ) : null
                 }
-                size="sm"
-              />
-            ) : (
-              <div className="space-y-3">
-                {items.map((item) => (
-                  <ItemEditorRow
-                    key={item.key}
-                    item={item}
-                    readOnly={!puedeEditar || pending}
-                    onChange={(next) => handleChange(item.key, next)}
-                    onRemove={() => handleRemove(item.key)}
+              >
+                <CardTitle>Partidas</CardTitle>
+                <CardDescription>
+                  {puedeEditar
+                    ? "Agrega equipos del catalogo o partidas manuales. Los totales se recalculan en vivo."
+                    : "Detalle de partidas (solo lectura)."}
+                </CardDescription>
+              </CardHeader>
+
+              <CardContent className="mt-4 space-y-3">
+                {puedeEditar ? (
+                  <AddItemControl
+                    catalogo={catalogo}
+                    onAdd={handleAdd}
+                    disabled={pending}
                   />
-                ))}
-              </div>
-            )}
+                ) : null}
 
-            {error ? (
-              <p role="alert" className="text-xs font-medium text-destructive">
-                {error}
-              </p>
-            ) : null}
-            {okMsg ? (
-              <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                {okMsg}
-              </p>
-            ) : null}
-          </CardContent>
-        </Card>
+                {items.length === 0 ? (
+                  <EmptyState
+                    title="Sin partidas"
+                    description={
+                      puedeEditar
+                        ? "Agrega la primera partida desde el catalogo o como partida manual."
+                        : "Esta cotizacion aun no tiene partidas."
+                    }
+                    size="sm"
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {items.map((item) => (
+                      <ItemEditorRow
+                        key={item.key}
+                        item={item}
+                        readOnly={!puedeEditar || pending}
+                        onChange={(next) => handleChange(item.key, next)}
+                        onRemove={() => handleRemove(item.key)}
+                      />
+                    ))}
+                  </div>
+                )}
 
-        {/* Especificaciones del sistema */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Sistema</CardTitle>
-            <CardDescription>
-              Dimensionamiento y metricas energeticas (solo lectura).
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="mt-4">
-            <SistemaFields
-              capacidadKwp={cotizacion.capacidadKwp}
-              paneles={cotizacion.paneles}
-              inversor={cotizacion.inversor}
-              produccionAnualKwh={cotizacion.produccionAnualKwh}
-              ahorroAnualMxn={cotizacion.ahorroAnualMxn}
-              paybackAnios={cotizacion.paybackAnios}
-              esquema={cotizacion.esquema}
-            />
-          </CardContent>
-        </Card>
+                {error ? (
+                  <p
+                    role="alert"
+                    className="text-xs font-medium text-destructive"
+                  >
+                    {error}
+                  </p>
+                ) : null}
+                {okMsg ? (
+                  <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                    {okMsg}
+                  </p>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {/* Sistema */}
+          {tab === "sistema" ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Sistema</CardTitle>
+                <CardDescription>
+                  Dimensionamiento y metricas energeticas.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="mt-4 space-y-4">
+                <SistemaFields
+                  capacidadKwp={cotizacion.capacidadKwp}
+                  paneles={cotizacion.paneles}
+                  inversor={cotizacion.inversor}
+                  produccionAnualKwh={cotizacion.produccionAnualKwh}
+                  ahorroAnualMxn={cotizacion.ahorroAnualMxn}
+                  paybackAnios={cotizacion.paybackAnios}
+                  esquema={cotizacion.esquema}
+                />
+                <SistemaForm
+                  cotizacionId={cotizacion.id}
+                  datos={cotizacion}
+                  puedeEditar={puedeEditar}
+                />
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {/* Documentos */}
+          {tab === "documentos" ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Documentos</CardTitle>
+                <CardDescription>
+                  Archivos asociados a esta cotización.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="mt-4">
+                <CotizacionDocumentosPanel
+                  cotizacionId={cotizacion.id}
+                  documentos={detalle.documentos}
+                  puedeEditar={puedeEditarDocs}
+                />
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {/* Historial */}
+          {tab === "historial" ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Historial</CardTitle>
+                <CardDescription>
+                  Actividad registrada para esta cotización.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="mt-4">
+                <CotizacionHistorial timeline={detalle.timeline} />
+              </CardContent>
+            </Card>
+          ) : null}
+        </div>
       </div>
 
-      {/* Columna lateral: totales + acciones de estado */}
+      {/* Columna lateral: relaciones + totales + acciones de estado */}
       <div className="space-y-6">
+        <RelacionesCard
+          cliente={detalle.cliente}
+          oportunidad={detalle.oportunidad}
+        />
+
         <Card>
           <CardHeader>
             <CardTitle>Totales</CardTitle>

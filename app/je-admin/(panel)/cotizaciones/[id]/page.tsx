@@ -42,6 +42,7 @@ export default async function CotizacionDetailPage({ params }: Params) {
 
   const { cotizacion } = detalle;
   const puedeEditar = can(user.rol, "cotizaciones", "edit");
+  const puedeEditarDocs = can(user.rol, "documentos", "edit");
   const folio = cotizacion.folio ?? `#${cotizacion.id}`;
 
   return (
@@ -60,6 +61,7 @@ export default async function CotizacionDetailPage({ params }: Params) {
         detalle={detalle}
         catalogo={catalogo}
         puedeEditar={puedeEditar}
+        puedeEditarDocs={puedeEditarDocs}
       />
     </div>
   );

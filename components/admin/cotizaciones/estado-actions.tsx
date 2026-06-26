@@ -2,12 +2,16 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Send, Check, X, Copy } from "lucide-react";
+import { Send, Check, X, Copy, Mail, Clock, FolderPlus, Banknote } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { ConfirmButton } from "@/components/admin/ui/confirm-button";
+import { ProgramarPagoForm } from "@/components/admin/cotizaciones/programar-pago-form";
 import {
   cambiarEstadoCotizacion,
   nuevaVersionCotizacion,
+  enviarCotizacionPorCorreo,
+  crearProyectoDeCotizacion,
 } from "@/lib/admin/actions";
 import type { CotizacionEstado } from "@/lib/admin/queries";
 
@@ -27,11 +31,13 @@ function getErrorMessage(err: unknown): string {
 /**
  * Acciones de cambio de estado de la cotizacion segun las transiciones
  * validas:
- *  - borrador -> Enviar.
- *  - enviada  -> Aceptar / Rechazar.
+ *  - borrador          -> Enviar / Enviar por correo.
+ *  - enviada           -> Aceptar / Rechazar / Enviar por correo / Marcar expirada.
+ *  - aceptada          -> Generar proyecto / Programar pago.
  * "Nueva version" esta siempre disponible (clona la cotizacion en borrador).
  * Cada accion corre en useTransition; tras exito se refresca la ruta (RSC)
- * para reflejar el nuevo estado. Errores inline.
+ * para reflejar el nuevo estado. Errores inline; avisos no-error (ej. correo
+ * no configurado) se muestran aparte.
  */
 export function EstadoActions({
   cotizacionId,
@@ -41,11 +47,19 @@ export function EstadoActions({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [mostrarPago, setMostrarPago] = useState(false);
 
   if (!puedeEditar) return null;
 
-  function run(action: () => Promise<{ ok: boolean; error?: string } | void>) {
+  function run(
+    action: () => Promise<
+      { ok: boolean; error?: string; skipped?: boolean; id?: string } | void
+    >,
+    onOk?: (res: { ok: boolean; skipped?: boolean; id?: string }) => void,
+  ) {
     setError(null);
+    setAviso(null);
     startTransition(async () => {
       try {
         const res = await action();
@@ -53,6 +67,10 @@ export function EstadoActions({
           setError(res.error ?? "No se pudo completar la acción.");
           return;
         }
+        if (res && res.skipped) {
+          setAviso("Correo no configurado; no se envió.");
+        }
+        if (res) onOk?.(res);
         router.refresh();
       } catch (err: unknown) {
         setError(getErrorMessage(err));
@@ -62,6 +80,7 @@ export function EstadoActions({
 
   const esBorrador = estado === "borrador";
   const esEnviada = estado === "enviada";
+  const esAceptada = estado === "aceptada";
 
   return (
     <div className="flex flex-col gap-3">
@@ -79,6 +98,23 @@ export function EstadoActions({
           >
             <Send aria-hidden />
             Enviar
+          </ConfirmButton>
+        ) : null}
+
+        {esBorrador || esEnviada ? (
+          <ConfirmButton
+            size="sm"
+            variant="outline"
+            title="Enviar por correo"
+            description="Se generará el PDF y se enviará la cotización al correo del cliente. ¿Continuar?"
+            confirmLabel="Enviar"
+            disabled={pending}
+            onConfirm={() =>
+              run(() => enviarCotizacionPorCorreo(cotizacionId))
+            }
+          >
+            <Mail aria-hidden />
+            Enviar por correo
           </ConfirmButton>
         ) : null}
 
@@ -111,6 +147,56 @@ export function EstadoActions({
               <X aria-hidden />
               Rechazar
             </ConfirmButton>
+            <ConfirmButton
+              size="sm"
+              variant="destructive"
+              title="Marcar expirada"
+              description="Se marcará la cotización como «expirada». ¿Continuar?"
+              confirmLabel="Marcar expirada"
+              disabled={pending}
+              onConfirm={() =>
+                run(() => cambiarEstadoCotizacion(cotizacionId, "expirada"))
+              }
+            >
+              <Clock aria-hidden />
+              Marcar expirada
+            </ConfirmButton>
+          </>
+        ) : null}
+
+        {esAceptada ? (
+          <>
+            <ConfirmButton
+              size="sm"
+              title="Generar proyecto"
+              description="Se creará un proyecto a partir de esta cotización aceptada. ¿Continuar?"
+              confirmLabel="Generar proyecto"
+              disabled={pending}
+              onConfirm={() =>
+                run(
+                  () => crearProyectoDeCotizacion(cotizacionId),
+                  (res) => {
+                    if (res.ok && res.id) {
+                      router.push(`/je-admin/proyectos/${res.id}`);
+                    }
+                  },
+                )
+              }
+            >
+              <FolderPlus aria-hidden />
+              Generar proyecto
+            </ConfirmButton>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => setMostrarPago((v) => !v)}
+              aria-expanded={mostrarPago}
+            >
+              <Banknote aria-hidden />
+              Programar pago
+            </Button>
           </>
         ) : null}
 
@@ -132,6 +218,19 @@ export function EstadoActions({
         <p role="alert" className="text-xs font-medium text-destructive">
           {error}
         </p>
+      ) : null}
+
+      {aviso ? (
+        <p role="status" className="text-xs font-medium text-muted-foreground">
+          {aviso}
+        </p>
+      ) : null}
+
+      {esAceptada && mostrarPago ? (
+        <ProgramarPagoForm
+          cotizacionId={cotizacionId}
+          onSuccess={() => setMostrarPago(false)}
+        />
       ) : null}
     </div>
   );

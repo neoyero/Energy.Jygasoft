@@ -4,6 +4,7 @@ import { requirePerm } from "@/lib/admin/guard"
 import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getCotizacionesFiltradas,
+  getCotizacionesKpis,
   getVendedores,
   isScoped,
   type DashboardScope,
@@ -27,9 +28,10 @@ export default async function CotizacionesPage() {
     userId: user.id,
   }
 
-  const [cotizaciones, vendedores] = await Promise.all([
+  const [cotizaciones, vendedores, kpis] = await Promise.all([
     getCotizacionesFiltradas(scope, {}),
     getVendedores(),
+    getCotizacionesKpis(scope),
   ])
 
   const puedeEditar = can(user.rol, "cotizaciones", "edit")
@@ -46,6 +48,7 @@ export default async function CotizacionesPage() {
       <CotizacionesView
         cotizacionesIniciales={cotizaciones}
         vendedores={vendedores}
+        kpis={kpis}
         puedeEditar={puedeEditar}
         rolScoped={rolScoped}
       />

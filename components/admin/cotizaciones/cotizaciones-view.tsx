@@ -2,18 +2,25 @@
 
 import { useEffect, useMemo, useState } from "react"
 
-import type { CotizacionRow, VendedorOption } from "@/lib/admin/queries"
+import type {
+  CotizacionRow,
+  CotizacionesKpis as CotizacionesKpisData,
+  VendedorOption,
+} from "@/lib/admin/queries"
 import {
   CotizacionesFilters,
   FILTROS_INICIALES,
   SIN_ASIGNAR,
   type CotizacionesFiltrosUI,
 } from "@/components/admin/cotizaciones/cotizaciones-filters"
+import { CotizacionesKpis } from "@/components/admin/cotizaciones/cotizaciones-kpis"
 import { CotizacionesTable } from "@/components/admin/cotizaciones/cotizaciones-table"
 
 export interface CotizacionesViewProps {
   cotizacionesIniciales: ReadonlyArray<CotizacionRow>
   vendedores: ReadonlyArray<VendedorOption>
+  /** KPIs agregados del scope (total, montos por estado, conteo por estado). */
+  kpis: CotizacionesKpisData
   /** RBAC cotizaciones:edit -> habilita acciones de edicion (reservado). */
   puedeEditar: boolean
   /** vendedor/preventa: oculta el filtro de vendedor. */
@@ -37,6 +44,7 @@ function normalizar(texto: string): string {
 export function CotizacionesView({
   cotizacionesIniciales,
   vendedores,
+  kpis,
   rolScoped,
 }: CotizacionesViewProps) {
   const [filtros, setFiltros] = useState<CotizacionesFiltrosUI>(FILTROS_INICIALES)
@@ -83,6 +91,8 @@ export function CotizacionesView({
 
   return (
     <div className="flex flex-col gap-4">
+      <CotizacionesKpis kpis={kpis} />
+
       <CotizacionesFilters
         filtros={filtros}
         onChange={setFiltros}

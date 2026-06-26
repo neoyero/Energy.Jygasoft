@@ -109,6 +109,26 @@ export function CotizacionesTable({ rows }: CotizacionesTableProps) {
       columns={columns}
       rowKey={(row) => row.id}
       onRowClick={irADetalle}
+      pageSize={15}
+      mobileCard={(row) => (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-start justify-between gap-2">
+            <span className="font-medium text-stone-800 dark:text-foreground">
+              {row.folio ?? "—"}
+            </span>
+            <StatusBadge value={row.estado} />
+          </div>
+          <p className="text-xs text-stone-600 dark:text-muted-foreground">
+            {row.clienteNombre ?? "Sin cliente"}
+          </p>
+          <p className="flex items-center justify-between gap-2 text-xs text-stone-500 dark:text-muted-foreground">
+            <span className="font-medium tabular-nums text-stone-800 dark:text-foreground">
+              {formatMXN(row.total)}
+            </span>
+            <span className="tabular-nums">v{row.version}</span>
+          </p>
+        </div>
+      )}
       defaultSort={{ columnId: "createdAt", direction: "desc" }}
       empty={{
         icon: FileText,
