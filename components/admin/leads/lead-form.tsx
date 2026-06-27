@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useEffect, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
 import { leadCanal, usoInmueble } from "@/db/schema"
@@ -42,8 +42,12 @@ export interface LeadFormProps {
   /** Registro a precargar (obligatorio en modo "editar"). */
   lead?: LeadRecord
   vendedores: ReadonlyArray<VendedorOption>
-  /** Callback opcional tras guardar con éxito (p. ej. cerrar el panel). */
+  /** Callback opcional tras guardar con éxito (p. ej. cerrar el modal). */
   onSuccess?: () => void
+  /** Callback al cancelar (cierra el modal sin guardar). */
+  onCancel?: () => void
+  /** Notifica si hay un guardado en curso (para bloquear el cierre del modal). */
+  onSavingChange?: (saving: boolean) => void
 }
 
 /** Estado interno del form: strings controlados (los vacíos -> null al enviar). */
@@ -104,11 +108,16 @@ function estadoInicial(lead?: LeadRecord): FormState {
  * Llama a crearLead / actualizarLead en useTransition y, al éxito, refresca la
  * ruta (RSC) e invoca onSuccess (cierre del panel).
  */
-export function LeadForm({ modo, lead, vendedores, onSuccess }: LeadFormProps) {
+export function LeadForm({ modo, lead, vendedores, onSuccess, onCancel, onSavingChange }: LeadFormProps) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(() => estadoInicial(lead))
+
+  // Informa al contenedor del estado de guardado (bloquea cierre del modal).
+  useEffect(() => {
+    onSavingChange?.(pending)
+  }, [pending, onSavingChange])
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]): void {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -161,7 +170,7 @@ export function LeadForm({ modo, lead, vendedores, onSuccess }: LeadFormProps) {
   return (
     <form
       onSubmit={onSubmit}
-      className="grid gap-4 rounded-xl border border-border p-5 sm:grid-cols-2 lg:grid-cols-3"
+      className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
     >
       {/* Contacto */}
       <div className="space-y-1.5 sm:col-span-2">
@@ -391,7 +400,9 @@ export function LeadForm({ modo, lead, vendedores, onSuccess }: LeadFormProps) {
         />
       </div>
 
-      <div className="flex items-center gap-3 sm:col-span-2 lg:col-span-3">
+      {/* Footer pegajoso: el botón Guardar queda visible al pie del modal en
+          pantallas bajas sin tener que scrollear todo el formulario. */}
+      <div className="sticky bottom-0 -mx-5 -mb-5 flex items-center gap-3 border-t border-stone-200 bg-white px-5 py-3 sm:col-span-2 lg:col-span-3 dark:border-border dark:bg-popover">
         <Button type="submit" size="sm" disabled={pending}>
           {pending
             ? "Guardando…"
@@ -399,13 +410,13 @@ export function LeadForm({ modo, lead, vendedores, onSuccess }: LeadFormProps) {
               ? "Guardar cambios"
               : "Crear lead"}
         </Button>
-        {onSuccess ? (
+        {onCancel ? (
           <Button
             type="button"
             size="sm"
             variant="ghost"
             disabled={pending}
-            onClick={onSuccess}
+            onClick={onCancel}
           >
             Cancelar
           </Button>

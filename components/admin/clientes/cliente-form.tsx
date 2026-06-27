@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useEffect, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
 import { tipoPersona, nivelTension } from "@/db/schema"
@@ -33,8 +33,12 @@ export interface ClienteFormProps {
   /** Datos a precargar (obligatorio en modo "editar"). */
   cliente?: ClienteFull
   vendedores: ReadonlyArray<VendedorOption>
-  /** Callback opcional tras guardar con exito (ej. cerrar drawer). */
+  /** Callback opcional tras guardar con exito (ej. cerrar el modal). */
   onSuccess?: () => void
+  /** Callback al cancelar (cierra el modal sin guardar). */
+  onCancel?: () => void
+  /** Notifica si hay un guardado en curso (para bloquear el cierre del modal). */
+  onSavingChange?: (saving: boolean) => void
 }
 
 /** Estado interno del form: strings controlados (los vacios -> null al enviar). */
@@ -100,18 +104,25 @@ function nullable(v: string): string | null {
 /**
  * Formulario controlado de alta/edicion de cliente. Llama a crearCliente /
  * actualizarCliente dentro de useTransition y maneja el ActionResult. Al exito
- * refresca la ruta (router.refresh) e invoca onSuccess (cierre del drawer).
+ * refresca la ruta (router.refresh) e invoca onSuccess (cierre del modal).
  */
 export function ClienteForm({
   modo,
   cliente,
   vendedores,
   onSuccess,
+  onCancel,
+  onSavingChange,
 }: ClienteFormProps) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(() => estadoInicial(cliente))
+
+  // Informa al contenedor del estado de guardado (bloquea cierre del modal).
+  useEffect(() => {
+    onSavingChange?.(pending)
+  }, [pending, onSavingChange])
 
   // Parche inmutable de un campo del form.
   function set<K extends keyof FormState>(key: K, value: FormState[K]): void {
@@ -492,7 +503,9 @@ export function ClienteForm({
         </div>
       </fieldset>
 
-      <div className="flex items-center gap-3 sm:col-span-2 lg:col-span-3">
+      {/* Footer pegajoso: el botón Guardar queda visible al pie del modal en
+          pantallas bajas sin tener que scrollear todo el formulario. */}
+      <div className="sticky bottom-0 -mx-5 -mb-5 flex items-center gap-3 border-t border-stone-200 bg-white px-5 py-3 sm:col-span-2 lg:col-span-3 dark:border-border dark:bg-popover">
         <Button type="submit" size="sm" disabled={pending}>
           {pending
             ? "Guardando…"
@@ -500,13 +513,13 @@ export function ClienteForm({
               ? "Guardar cambios"
               : "Crear cliente"}
         </Button>
-        {onSuccess ? (
+        {onCancel ? (
           <Button
             type="button"
             size="sm"
             variant="ghost"
             disabled={pending}
-            onClick={onSuccess}
+            onClick={onCancel}
           >
             Cancelar
           </Button>

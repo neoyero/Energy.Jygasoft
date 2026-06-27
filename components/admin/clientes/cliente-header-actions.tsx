@@ -2,12 +2,13 @@
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { Pencil, Trash2, X } from "lucide-react"
+import { Pencil, Trash2 } from "lucide-react"
 
 import { eliminarCliente } from "@/lib/admin/actions"
 import type { ClienteDetalle, VendedorOption } from "@/lib/admin/queries"
 import { Button } from "@/components/ui/button"
 import { ConfirmButton } from "@/components/admin/ui/confirm-button"
+import { Modal } from "@/components/admin/ui/modal"
 import { ClienteForm } from "@/components/admin/clientes/cliente-form"
 
 export interface ClienteHeaderActionsProps {
@@ -33,6 +34,7 @@ export function ClienteHeaderActions({
 }: ClienteHeaderActionsProps) {
   const router = useRouter()
   const [editando, setEditando] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
 
@@ -55,21 +57,11 @@ export function ClienteHeaderActions({
           <Button
             type="button"
             size="sm"
-            variant={editando ? "outline" : "default"}
             disabled={pending}
-            onClick={() => setEditando((prev) => !prev)}
+            onClick={() => setEditando(true)}
           >
-            {editando ? (
-              <>
-                <X className="size-4" aria-hidden />
-                Cerrar
-              </>
-            ) : (
-              <>
-                <Pencil className="size-4" aria-hidden />
-                Editar
-              </>
-            )}
+            <Pencil className="size-4" aria-hidden />
+            Editar
           </Button>
         ) : null}
 
@@ -94,17 +86,27 @@ export function ClienteHeaderActions({
         ) : null}
       </div>
 
-      {/* Form de edición (plegable) */}
-      {puedeEditar && editando ? (
-        <ClienteForm
-          modo="editar"
-          cliente={cliente}
-          vendedores={vendedores}
-          onSuccess={() => {
-            setEditando(false)
-            router.refresh()
+      {/* Edición de cliente en modal (responsive). */}
+      {puedeEditar ? (
+        <Modal
+          open={editando}
+          onOpenChange={(abierto) => {
+            if (!abierto) setEditando(false)
           }}
-        />
+          title="Editar cliente"
+          description="Actualiza los datos fiscales, de contacto y comerciales."
+          size="3xl"
+          dismissable={!saving}
+        >
+          <ClienteForm
+            modo="editar"
+            cliente={cliente}
+            vendedores={vendedores}
+            onSuccess={() => setEditando(false)}
+            onCancel={() => setEditando(false)}
+            onSavingChange={setSaving}
+          />
+        </Modal>
       ) : null}
     </div>
   )

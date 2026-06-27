@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Plus, X } from "lucide-react"
+import { Plus } from "lucide-react"
 
 import type { ClienteRow, VendedorOption } from "@/lib/admin/queries"
 import { Button } from "@/components/ui/button"
@@ -13,6 +13,7 @@ import {
 } from "@/components/admin/clientes/clientes-filters"
 import { ClientesTable } from "@/components/admin/clientes/clientes-table"
 import { ClienteForm } from "@/components/admin/clientes/cliente-form"
+import { Modal } from "@/components/admin/ui/modal"
 
 export interface ClientesViewProps {
   clientesIniciales: ReadonlyArray<ClienteRow>
@@ -45,6 +46,7 @@ export function ClientesView({
 }: ClientesViewProps) {
   const [filtros, setFiltros] = useState<ClientesFiltrosUI>(FILTROS_INICIALES)
   const [creando, setCreando] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   // Debounce simple de la busqueda: el input actualiza filtros.busqueda de
   // inmediato, pero el termino efectivo se aplica 250 ms despues.
@@ -108,34 +110,33 @@ export function ClientesView({
         />
 
         {puedeEditar ? (
-          <Button
-            type="button"
-            size="sm"
-            variant={creando ? "outline" : "default"}
-            onClick={() => setCreando((prev) => !prev)}
-          >
-            {creando ? (
-              <>
-                <X className="size-4" aria-hidden />
-                Cerrar
-              </>
-            ) : (
-              <>
-                <Plus className="size-4" aria-hidden />
-                Nuevo cliente
-              </>
-            )}
+          <Button type="button" size="sm" onClick={() => setCreando(true)}>
+            <Plus className="size-4" aria-hidden />
+            Nuevo cliente
           </Button>
         ) : null}
       </div>
 
-      {/* Form de alta (plegable) */}
-      {puedeEditar && creando ? (
-        <ClienteForm
-          modo="crear"
-          vendedores={vendedores}
-          onSuccess={() => setCreando(false)}
-        />
+      {/* Alta de cliente en modal (responsive). */}
+      {puedeEditar ? (
+        <Modal
+          open={creando}
+          onOpenChange={(abierto) => {
+            if (!abierto) setCreando(false)
+          }}
+          title="Nuevo cliente"
+          description="Registra un cliente nuevo en la cartera."
+          size="3xl"
+          dismissable={!saving}
+        >
+          <ClienteForm
+            modo="crear"
+            vendedores={vendedores}
+            onSuccess={() => setCreando(false)}
+            onCancel={() => setCreando(false)}
+            onSavingChange={setSaving}
+          />
+        </Modal>
       ) : null}
 
       {/* Tabla */}

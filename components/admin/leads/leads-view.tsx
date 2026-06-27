@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { LayoutGrid, Plus, Table2, X } from "lucide-react"
+import { LayoutGrid, Plus, Table2 } from "lucide-react"
 
 import type {
   FetchLeadsFiltros,
@@ -19,6 +19,7 @@ import {
 import { LeadsTable } from "@/components/admin/leads/leads-table"
 import { LeadsKanban } from "@/components/admin/leads/leads-kanban"
 import { LeadForm } from "@/components/admin/leads/lead-form"
+import { Modal } from "@/components/admin/ui/modal"
 import { cn } from "@/lib/utils"
 
 type Vista = "tabla" | "kanban"
@@ -72,6 +73,7 @@ export function LeadsView({
   const [filtros, setFiltros] = useState<LeadsFiltrosUI>(FILTROS_INICIALES)
   const [vista, setVista] = useState<Vista>("tabla")
   const [creando, setCreando] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   // Debounce simple de la búsqueda: el input actualiza filtros.busqueda de
   // inmediato, pero el término efectivo (que dispara fetch) se aplica 250 ms después.
@@ -132,20 +134,10 @@ export function LeadsView({
             <Button
               type="button"
               size="sm"
-              variant={creando ? "outline" : "default"}
-              onClick={() => setCreando((prev) => !prev)}
+              onClick={() => setCreando(true)}
             >
-              {creando ? (
-                <>
-                  <X className="size-4" aria-hidden />
-                  Cerrar
-                </>
-              ) : (
-                <>
-                  <Plus className="size-4" aria-hidden />
-                  Nuevo lead
-                </>
-              )}
+              <Plus className="size-4" aria-hidden />
+              Nuevo lead
             </Button>
           ) : null}
 
@@ -172,13 +164,26 @@ export function LeadsView({
         </div>
       </div>
 
-      {/* Form de alta (plegable) */}
-      {puedeEditar && creando ? (
-        <LeadForm
-          modo="crear"
-          vendedores={vendedores}
-          onSuccess={() => setCreando(false)}
-        />
+      {/* Alta de lead en modal (responsive). */}
+      {puedeEditar ? (
+        <Modal
+          open={creando}
+          onOpenChange={(abierto) => {
+            if (!abierto) setCreando(false)
+          }}
+          title="Nuevo lead"
+          description="Registra un prospecto manualmente."
+          size="3xl"
+          dismissable={!saving}
+        >
+          <LeadForm
+            modo="crear"
+            vendedores={vendedores}
+            onSuccess={() => setCreando(false)}
+            onCancel={() => setCreando(false)}
+            onSavingChange={setSaving}
+          />
+        </Modal>
       ) : null}
 
       {/* Vista activa */}
