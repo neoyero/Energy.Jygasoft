@@ -69,16 +69,29 @@ CREATE TABLE cuadrilla_miembros (
   UNIQUE (cuadrilla_id, usuario_id)
 );
 
-CREATE TABLE catalogo_equipos (
+-- PRODUCTOS (catálogo unificado): tipo editable + atributos JSON por tipo.
+CREATE TABLE producto_tipos (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tipo equipo_tipo NOT NULL,
-  marca text, modelo text,
-  potencia_wp numeric(10,2),
-  certificacion text,
-  precio numeric(14,2), moneda text DEFAULT 'MXN',
-  specs jsonb NOT NULL DEFAULT '{}'::jsonb,
-  proveedor text,
-  disponible boolean NOT NULL DEFAULT true,
+  nombre text NOT NULL UNIQUE,
+  clave text NOT NULL UNIQUE,
+  descripcion text,
+  activo boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE productos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  producto_tipo_id uuid NOT NULL REFERENCES producto_tipos(id),
+  sku text UNIQUE,
+  nombre text NOT NULL,
+  marca text, modelo text, descripcion text,
+  unidad text NOT NULL DEFAULT 'pieza',
+  precio_compra numeric(14,2), precio_venta numeric(14,2),
+  moneda text NOT NULL DEFAULT 'MXN',
+  stock integer,
+  activo boolean NOT NULL DEFAULT true,
+  atributos jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -209,7 +222,7 @@ CREATE TABLE cotizaciones (
 CREATE TABLE cotizacion_items (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   cotizacion_id uuid NOT NULL REFERENCES cotizaciones(id) ON DELETE CASCADE,
-  equipo_id uuid REFERENCES catalogo_equipos(id) ON DELETE SET NULL,
+  equipo_id uuid REFERENCES productos(id) ON DELETE SET NULL,
   descripcion text NOT NULL,
   cantidad numeric(12,2) NOT NULL DEFAULT 1,
   precio_unitario numeric(14,2) NOT NULL DEFAULT 0,
@@ -263,7 +276,7 @@ CREATE TABLE instalaciones (
 CREATE TABLE proyecto_materiales (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   proyecto_id uuid NOT NULL REFERENCES proyectos(id) ON DELETE CASCADE,
-  equipo_id uuid REFERENCES catalogo_equipos(id) ON DELETE SET NULL,
+  equipo_id uuid REFERENCES productos(id) ON DELETE SET NULL,
   descripcion text NOT NULL,
   cantidad numeric(12,2) NOT NULL DEFAULT 1,
   precio_unitario numeric(14,2) DEFAULT 0,

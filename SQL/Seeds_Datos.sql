@@ -60,10 +60,24 @@ INSERT INTO config_parametros (clave,valor,unidad,descripcion) VALUES
  ('IVA',0.16,'-','Tasa general'),
  ('VIDA_UTIL',25,'anios','Vida util estimada');
 
-INSERT INTO catalogo_equipos (tipo,marca,modelo,potencia_wp,certificacion,precio) VALUES
- ('panel','Jinko/Trina/Risen','Mono TOPCon 600 W',600,'IEC/UL',3500),
- ('panel','Premium','Mono 645 W',645,'IEC/UL',4200),
- ('inversor','Growatt','String 5 kW',NULL,'UL1741/IEEE1547',18000),
- ('inversor','Goodwe','String 8-10 kW',NULL,'UL1741/IEEE1547',30000),
- ('estructura','-','Riel techo (por panel)',NULL,NULL,700),
- ('material_electrico','-','Cable + MC4 + protecciones (por kWp)',NULL,NULL,1500);
+-- Catálogo unificado: tipos editables + productos con atributos JSON por tipo.
+INSERT INTO producto_tipos (nombre,clave,descripcion) VALUES
+ ('Panel','panel','Módulos fotovoltaicos'),
+ ('Inversor','inversor','Inversores y microinversores'),
+ ('Estructura de montaje','estructura','Estructura y soportería'),
+ ('Material eléctrico','material_electrico','Cable, conectores y material eléctrico'),
+ ('Protecciones','protecciones','Centros de carga, supresores y protecciones'),
+ ('Otro','otro','Otros productos')
+ON CONFLICT (clave) DO NOTHING;
+
+INSERT INTO productos (producto_tipo_id,nombre,marca,modelo,precio_venta,atributos)
+SELECT pt.id, v.nombre, v.marca, v.modelo, v.precio, v.atributos
+FROM (VALUES
+ ('panel','Jinko/Trina/Risen Mono TOPCon 600 W','Jinko/Trina/Risen','Mono TOPCon 600 W',3500::numeric,'{"potencia_wp":600}'::jsonb),
+ ('panel','Premium Mono 645 W','Premium','Mono 645 W',4200,'{"potencia_wp":645}'),
+ ('inversor','Growatt String 5 kW','Growatt','String 5 kW',18000,'{}'),
+ ('inversor','Goodwe String 8-10 kW','Goodwe','String 8-10 kW',30000,'{}'),
+ ('estructura','Riel techo (por panel)','-','Riel techo (por panel)',700,'{}'),
+ ('material_electrico','Cable + MC4 + protecciones (por kWp)','-','Cable + MC4 + protecciones (por kWp)',1500,'{}')
+) AS v(clave,nombre,marca,modelo,precio,atributos)
+JOIN producto_tipos pt ON pt.clave = v.clave;
