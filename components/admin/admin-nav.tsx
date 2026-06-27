@@ -29,7 +29,6 @@ const ICONS: Record<Modulo, React.ComponentType<{ className?: string }>> = {
   actividades: CheckSquare,
   proyectos: FolderKanban,
   documentos: FolderOpen,
-  catalogo: Package,
   productos: Package,
   pagos: CreditCard,
   metricas: BarChart3,

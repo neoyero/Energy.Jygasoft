@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { usuarios, cuadrillas, cuadrillaMiembros, campanas, leads, clientes, contactos, oportunidades, cotizaciones, cotizacionItems, catalogoEquipos, proyectos, tramitesCfe, instalaciones, proyectoMateriales, pagos, actividades, documentos, calculadoraSimulaciones, formSubmissions } from "./schema";
+import { usuarios, cuadrillas, cuadrillaMiembros, campanas, leads, clientes, contactos, oportunidades, cotizaciones, cotizacionItems, productos, productoTipos, proyectos, tramitesCfe, instalaciones, proyectoMateriales, pagos, actividades, documentos, calculadoraSimulaciones, formSubmissions } from "./schema";
 
 export const cuadrillasRelations = relations(cuadrillas, ({one, many}) => ({
 	usuario: one(usuarios, {
@@ -118,15 +118,23 @@ export const cotizacionItemsRelations = relations(cotizacionItems, ({one}) => ({
 		fields: [cotizacionItems.cotizacionId],
 		references: [cotizaciones.id]
 	}),
-	catalogoEquipo: one(catalogoEquipos, {
+	producto: one(productos, {
 		fields: [cotizacionItems.equipoId],
-		references: [catalogoEquipos.id]
+		references: [productos.id]
 	}),
 }));
 
-export const catalogoEquiposRelations = relations(catalogoEquipos, ({many}) => ({
+export const productosRelations = relations(productos, ({one, many}) => ({
+	productoTipo: one(productoTipos, {
+		fields: [productos.productoTipoId],
+		references: [productoTipos.id]
+	}),
 	cotizacionItems: many(cotizacionItems),
 	proyectoMateriales: many(proyectoMateriales),
+}));
+
+export const productoTiposRelations = relations(productoTipos, ({many}) => ({
+	productos: many(productos),
 }));
 
 export const proyectosRelations = relations(proyectos, ({one, many}) => ({
@@ -171,9 +179,9 @@ export const proyectoMaterialesRelations = relations(proyectoMateriales, ({one})
 		fields: [proyectoMateriales.proyectoId],
 		references: [proyectos.id]
 	}),
-	catalogoEquipo: one(catalogoEquipos, {
+	producto: one(productos, {
 		fields: [proyectoMateriales.equipoId],
-		references: [catalogoEquipos.id]
+		references: [productos.id]
 	}),
 }));
 

@@ -90,22 +90,48 @@ export const cuadrillaMiembros = pgTable("cuadrilla_miembros", {
 	unique("cuadrilla_miembros_cuadrilla_id_usuario_id_key").on(table.usuarioId, table.cuadrillaId),
 ]);
 
-export const catalogoEquipos = pgTable("catalogo_equipos", {
+// Módulo Productos (catálogo unificado). El "tipo" es editable (producto_tipos)
+// y cada producto lleva atributos JSON flexibles según su tipo. Reemplazó a
+// catalogo_equipos (migración 0006: backfill; 0007: re-cableado de FK + drop).
+export const productoTipos = pgTable("producto_tipos", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
-	tipo: equipoTipo().notNull(),
-	marca: text(),
-	modelo: text(),
-	potenciaWp: numeric("potencia_wp", { precision: 10, scale:  2 }),
-	certificacion: text(),
-	precio: numeric({ precision: 14, scale:  2 }),
-	moneda: text().default('MXN'),
-	specs: jsonb().default({}).notNull(),
-	proveedor: text(),
-	disponible: boolean().default(true).notNull(),
+	nombre: text().notNull(),
+	clave: text().notNull(),
+	descripcion: text(),
+	activo: boolean().default(true).notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("ix_catalogo_tipo").using("btree", table.tipo.asc().nullsLast().op("enum_ops")),
+	unique("producto_tipos_nombre_key").on(table.nombre),
+	unique("producto_tipos_clave_key").on(table.clave),
+]);
+
+export const productos = pgTable("productos", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	productoTipoId: uuid("producto_tipo_id").notNull(),
+	sku: text(),
+	nombre: text().notNull(),
+	marca: text(),
+	modelo: text(),
+	descripcion: text(),
+	unidad: text().default('pieza').notNull(),
+	precioCompra: numeric("precio_compra", { precision: 14, scale: 2 }),
+	precioVenta: numeric("precio_venta", { precision: 14, scale: 2 }),
+	moneda: text().default('MXN').notNull(),
+	stock: integer(),
+	activo: boolean().default(true).notNull(),
+	atributos: jsonb().default({}).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("ix_productos_tipo").using("btree", table.productoTipoId.asc().nullsLast().op("uuid_ops")),
+	index("ix_productos_activo").using("btree", table.activo.asc().nullsLast().op("bool_ops")),
+	unique("productos_sku_key").on(table.sku),
+	foreignKey({
+			columns: [table.productoTipoId],
+			foreignColumns: [productoTipos.id],
+			name: "productos_producto_tipo_id_fkey"
+		}),
 ]);
 
 export const hspZonas = pgTable("hsp_zonas", {
@@ -363,7 +389,7 @@ export const cotizacionItems = pgTable("cotizacion_items", {
 		}).onDelete("cascade"),
 	foreignKey({
 			columns: [table.equipoId],
-			foreignColumns: [catalogoEquipos.id],
+			foreignColumns: [productos.id],
 			name: "cotizacion_items_equipo_id_fkey"
 		}).onDelete("set null"),
 ]);
@@ -481,7 +507,7 @@ export const proyectoMateriales = pgTable("proyecto_materiales", {
 		}).onDelete("cascade"),
 	foreignKey({
 			columns: [table.equipoId],
-			foreignColumns: [catalogoEquipos.id],
+			foreignColumns: [productos.id],
 			name: "proyecto_materiales_equipo_id_fkey"
 		}).onDelete("set null"),
 ]);
@@ -758,49 +784,5 @@ export const municipios = pgTable("municipios", {
 			columns: [table.claveEstado],
 			foreignColumns: [estados.clave],
 			name: "municipios_clave_estado_fkey"
-		}),
-]);
-
-// Módulo Productos (catálogo unificado). El "tipo" es editable (producto_tipos)
-// y cada producto lleva atributos JSON flexibles según su tipo. Reemplaza
-// progresivamente a catalogo_equipos (ver migración 0006 y posteriores).
-export const productoTipos = pgTable("producto_tipos", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	nombre: text().notNull(),
-	clave: text().notNull(),
-	descripcion: text(),
-	activo: boolean().default(true).notNull(),
-	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	unique("producto_tipos_nombre_key").on(table.nombre),
-	unique("producto_tipos_clave_key").on(table.clave),
-]);
-
-export const productos = pgTable("productos", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	productoTipoId: uuid("producto_tipo_id").notNull(),
-	sku: text(),
-	nombre: text().notNull(),
-	marca: text(),
-	modelo: text(),
-	descripcion: text(),
-	unidad: text().default('pieza').notNull(),
-	precioCompra: numeric("precio_compra", { precision: 14, scale: 2 }),
-	precioVenta: numeric("precio_venta", { precision: 14, scale: 2 }),
-	moneda: text().default('MXN').notNull(),
-	stock: integer(),
-	activo: boolean().default(true).notNull(),
-	atributos: jsonb().default({}).notNull(),
-	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	index("ix_productos_tipo").using("btree", table.productoTipoId.asc().nullsLast().op("uuid_ops")),
-	index("ix_productos_activo").using("btree", table.activo.asc().nullsLast().op("bool_ops")),
-	unique("productos_sku_key").on(table.sku),
-	foreignKey({
-			columns: [table.productoTipoId],
-			foreignColumns: [productoTipos.id],
-			name: "productos_producto_tipo_id_fkey"
 		}),
 ]);

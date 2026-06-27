@@ -30,7 +30,6 @@ export type Modulo =
   | "clientes"
   | "proyectos"
   | "pagos"
-  | "catalogo"
   | "productos"
   | "campanas"
   | "actividades"
@@ -70,7 +69,6 @@ const MATRIX: Record<Modulo, { view: Rol[]; edit: Rol[] }> = {
     edit: OPS,
   },
   pagos: { view: [...FINANZAS, "lectura"], edit: FINANZAS },
-  catalogo: { view: [...ALL], edit: OPS },
   productos: { view: [...ALL], edit: OPS },
   campanas: { view: [...MKT, "finanzas", "lectura"], edit: MKT },
   actividades: {

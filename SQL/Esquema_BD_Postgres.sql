@@ -78,21 +78,37 @@ CREATE TABLE cuadrilla_miembros (
   UNIQUE (cuadrilla_id, usuario_id)
 );
 
-CREATE TABLE catalogo_equipos (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tipo equipo_tipo NOT NULL,
-  marca text, modelo text,
-  potencia_wp numeric(10,2),
-  certificacion text,                          -- UL1741 / IEEE1547 / IEC
-  precio numeric(14,2), moneda text DEFAULT 'MXN',
-  specs jsonb NOT NULL DEFAULT '{}'::jsonb,
-  proveedor text,
-  disponible boolean NOT NULL DEFAULT true,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+-- PRODUCTOS (catálogo unificado): el "tipo" es editable (producto_tipos) y cada
+-- producto lleva atributos JSON flexibles por tipo. Reemplazó a catalogo_equipos.
+CREATE TABLE producto_tipos (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre      text NOT NULL UNIQUE,
+  clave       text NOT NULL UNIQUE,
+  descripcion text,
+  activo      boolean NOT NULL DEFAULT true,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX ix_catalogo_tipo ON catalogo_equipos (tipo);
-CREATE TRIGGER trg_catalogo_upd BEFORE UPDATE ON catalogo_equipos FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_producto_tipos_upd BEFORE UPDATE ON producto_tipos FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE productos (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  producto_tipo_id uuid NOT NULL REFERENCES producto_tipos(id),
+  sku              text UNIQUE,
+  nombre           text NOT NULL,
+  marca            text, modelo text, descripcion text,
+  unidad           text NOT NULL DEFAULT 'pieza',
+  precio_compra    numeric(14,2), precio_venta numeric(14,2),
+  moneda           text NOT NULL DEFAULT 'MXN',
+  stock            integer,
+  activo           boolean NOT NULL DEFAULT true,
+  atributos        jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_productos_tipo   ON productos (producto_tipo_id);
+CREATE INDEX ix_productos_activo ON productos (activo);
+CREATE TRIGGER trg_productos_upd BEFORE UPDATE ON productos FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TABLE hsp_zonas (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -236,7 +252,7 @@ CREATE TRIGGER trg_cotiz_upd BEFORE UPDATE ON cotizaciones FOR EACH ROW EXECUTE 
 CREATE TABLE cotizacion_items (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   cotizacion_id uuid NOT NULL REFERENCES cotizaciones(id) ON DELETE CASCADE,
-  equipo_id uuid REFERENCES catalogo_equipos(id) ON DELETE SET NULL,
+  equipo_id uuid REFERENCES productos(id) ON DELETE SET NULL,
   descripcion text NOT NULL,
   cantidad numeric(12,2) NOT NULL DEFAULT 1,
   precio_unitario numeric(14,2) NOT NULL DEFAULT 0,
@@ -301,7 +317,7 @@ CREATE TRIGGER trg_inst_upd BEFORE UPDATE ON instalaciones FOR EACH ROW EXECUTE 
 CREATE TABLE proyecto_materiales (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   proyecto_id uuid NOT NULL REFERENCES proyectos(id) ON DELETE CASCADE,
-  equipo_id uuid REFERENCES catalogo_equipos(id) ON DELETE SET NULL,
+  equipo_id uuid REFERENCES productos(id) ON DELETE SET NULL,
   descripcion text NOT NULL,
   cantidad numeric(12,2) NOT NULL DEFAULT 1,
   precio_unitario numeric(14,2) DEFAULT 0,
@@ -509,36 +525,3 @@ ALTER TABLE leads    ADD COLUMN municipio_id bigint REFERENCES municipios (id) O
 ALTER TABLE clientes ADD COLUMN municipio_id bigint REFERENCES municipios (id) ON DELETE SET NULL;
 CREATE INDEX ix_leads_municipio    ON leads (municipio_id);
 CREATE INDEX ix_clientes_municipio ON clientes (municipio_id);
-
--- ===================== PRODUCTOS (catálogo unificado) =====================
--- El "tipo" es editable (producto_tipos) y cada producto lleva atributos JSON
--- flexibles por tipo. Reemplaza progresivamente a catalogo_equipos.
-CREATE TABLE producto_tipos (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  nombre      text NOT NULL UNIQUE,
-  clave       text NOT NULL UNIQUE,
-  descripcion text,
-  activo      boolean NOT NULL DEFAULT true,
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  updated_at  timestamptz NOT NULL DEFAULT now()
-);
-CREATE TRIGGER trg_producto_tipos_upd BEFORE UPDATE ON producto_tipos FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-CREATE TABLE productos (
-  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  producto_tipo_id uuid NOT NULL REFERENCES producto_tipos(id),
-  sku              text UNIQUE,
-  nombre           text NOT NULL,
-  marca            text, modelo text, descripcion text,
-  unidad           text NOT NULL DEFAULT 'pieza',
-  precio_compra    numeric(14,2), precio_venta numeric(14,2),
-  moneda           text NOT NULL DEFAULT 'MXN',
-  stock            integer,
-  activo           boolean NOT NULL DEFAULT true,
-  atributos        jsonb NOT NULL DEFAULT '{}'::jsonb,
-  created_at       timestamptz NOT NULL DEFAULT now(),
-  updated_at       timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX ix_productos_tipo   ON productos (producto_tipo_id);
-CREATE INDEX ix_productos_activo ON productos (activo);
-CREATE TRIGGER trg_productos_upd BEFORE UPDATE ON productos FOR EACH ROW EXECUTE FUNCTION set_updated_at();

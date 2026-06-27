@@ -12,6 +12,25 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0007 — Productos: re-cableado de FK + retiro de catalogo_equipos · 2026-06-26
+
+**Migración:** `db/migrations/0007_productos_recableado.sql`
+
+- Cierra la unificación de 0006: las FK `equipo_id` pasan de `catalogo_equipos`
+  a `productos` (con `ON DELETE SET NULL`):
+  - `cotizacion_items.equipo_id` → `productos(id)`.
+  - `proyecto_materiales.equipo_id` → `productos(id)`.
+- Como el backfill de 0006 conservó el mismo `id`, **no hay datos que ajustar**.
+  La migración incluye una salvaguarda (DO block) que **aborta** si quedara
+  algún `equipo_id` huérfano antes de re-cablear.
+- **`DROP TABLE catalogo_equipos`** (ya migrado a `productos`). El enum
+  `equipo_tipo` se conserva (sin usos en tablas) por compatibilidad de tipos.
+- App: `getCatalogoDisponible` lee de `productos` (tipo = `producto_tipos.clave`,
+  `potencia_wp` desde `atributos`, precio = `precio_venta`); se retiró la página
+  y el módulo RBAC `catalogo` (sustituidos por `productos`).
+
+---
+
 ## 0006 — Módulo Productos (catálogo unificado) · 2026-06-26
 
 **Migración:** `db/migrations/0006_productos.sql`

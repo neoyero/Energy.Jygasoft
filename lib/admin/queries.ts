@@ -117,14 +117,6 @@ export async function getClientes() {
     .limit(200);
 }
 
-export async function getCatalogo() {
-  return db
-    .select()
-    .from(schema.catalogoEquipos)
-    .orderBy(desc(schema.catalogoEquipos.createdAt))
-    .limit(200);
-}
-
 export async function getUsuarios() {
   return db
     .select({
@@ -1333,7 +1325,8 @@ export interface CotizacionesKpis {
 
 export interface CatalogoOption {
   id: string;
-  tipo: EquipoTipo;
+  /** Clave del tipo de producto (producto_tipos.clave), ahora dinámica. */
+  tipo: string;
   marca: string | null;
   modelo: string | null;
   potenciaWp: number | null;
@@ -1928,13 +1921,13 @@ export async function getCotizacion(
       cantidad: schema.cotizacionItems.cantidad,
       precioUnitario: schema.cotizacionItems.precioUnitario,
       importe: schema.cotizacionItems.importe,
-      equipoMarca: schema.catalogoEquipos.marca,
-      equipoModelo: schema.catalogoEquipos.modelo,
+      equipoMarca: schema.productos.marca,
+      equipoModelo: schema.productos.modelo,
     })
     .from(schema.cotizacionItems)
     .leftJoin(
-      schema.catalogoEquipos,
-      eq(schema.cotizacionItems.equipoId, schema.catalogoEquipos.id),
+      schema.productos,
+      eq(schema.cotizacionItems.equipoId, schema.productos.id),
     )
     .where(eq(schema.cotizacionItems.cotizacionId, id))
     .orderBy(asc(schema.cotizacionItems.id));
@@ -2094,20 +2087,28 @@ export async function getCotizacionCalcContext(
   };
 }
 
-/** Equipos disponibles del catálogo, ordenados por tipo y marca. */
+/**
+ * Productos activos como opciones del catálogo (para cotizaciones/proyectos),
+ * ordenados por tipo y marca. `tipo` es la clave del tipo (producto_tipos.clave)
+ * y `potenciaWp` se extrae de atributos->>'potencia_wp'. `precio` = precio_venta.
+ */
 export async function getCatalogoDisponible(): Promise<CatalogoOption[]> {
   const rows = await db
     .select({
-      id: schema.catalogoEquipos.id,
-      tipo: schema.catalogoEquipos.tipo,
-      marca: schema.catalogoEquipos.marca,
-      modelo: schema.catalogoEquipos.modelo,
-      potenciaWp: schema.catalogoEquipos.potenciaWp,
-      precio: schema.catalogoEquipos.precio,
+      id: schema.productos.id,
+      tipo: schema.productoTipos.clave,
+      marca: schema.productos.marca,
+      modelo: schema.productos.modelo,
+      potenciaWp: sql<string | null>`${schema.productos.atributos}->>'potencia_wp'`,
+      precio: schema.productos.precioVenta,
     })
-    .from(schema.catalogoEquipos)
-    .where(eq(schema.catalogoEquipos.disponible, true))
-    .orderBy(asc(schema.catalogoEquipos.tipo), asc(schema.catalogoEquipos.marca));
+    .from(schema.productos)
+    .innerJoin(
+      schema.productoTipos,
+      eq(schema.productos.productoTipoId, schema.productoTipos.id),
+    )
+    .where(eq(schema.productos.activo, true))
+    .orderBy(asc(schema.productoTipos.clave), asc(schema.productos.marca));
 
   return rows.map((row) => ({
     id: row.id,
@@ -2500,8 +2501,8 @@ async function getMaterialesDeProyecto(
     .select({
       id: schema.proyectoMateriales.id,
       equipoId: schema.proyectoMateriales.equipoId,
-      equipoMarca: schema.catalogoEquipos.marca,
-      equipoModelo: schema.catalogoEquipos.modelo,
+      equipoMarca: schema.productos.marca,
+      equipoModelo: schema.productos.modelo,
       descripcion: schema.proyectoMateriales.descripcion,
       cantidad: schema.proyectoMateriales.cantidad,
       precioUnitario: schema.proyectoMateriales.precioUnitario,
@@ -2509,8 +2510,8 @@ async function getMaterialesDeProyecto(
     })
     .from(schema.proyectoMateriales)
     .leftJoin(
-      schema.catalogoEquipos,
-      eq(schema.proyectoMateriales.equipoId, schema.catalogoEquipos.id),
+      schema.productos,
+      eq(schema.proyectoMateriales.equipoId, schema.productos.id),
     )
     .where(eq(schema.proyectoMateriales.proyectoId, proyectoId))
     .orderBy(asc(schema.proyectoMateriales.id));
