@@ -11,10 +11,13 @@ import {
   getCotizacion,
   getCotizacionCalcContext,
   getCatalogoDisponible,
+  getProductosPage,
   type DashboardScope,
   type LeadsFiltros,
   type LeadsPage,
   type FetchLeadsInput,
+  type ProductosPage,
+  type ProductosFiltros,
 } from "@/lib/admin/queries";
 import type { Rol } from "@/lib/admin/rbac";
 import { ETAPAS_CERRADAS, PROBABILIDAD_POR_ETAPA } from "@/lib/admin/pipeline";
@@ -3576,6 +3579,24 @@ function txtOrNull(v: string | null | undefined): string | null {
 /** numeric (Postgres) se persiste como string o null. */
 function numParaDb(v: number | null | undefined): string | null {
   return v == null ? null : String(v);
+}
+
+/** Página de productos para la tabla cliente (filtros + paginación server-side). */
+export async function fetchProductos(input: {
+  filtros?: ProductosFiltros;
+  limit: number;
+  offset: number;
+}): Promise<ProductosPage> {
+  await assertPerm("productos", "view");
+  const f = input.filtros ?? {};
+  const filtros: ProductosFiltros = {
+    productoTipoId: f.productoTipoId ?? undefined,
+    busqueda: f.busqueda,
+    soloActivos: f.soloActivos,
+  };
+  const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
+  const offset = Math.max(0, Math.trunc(input.offset));
+  return getProductosPage(filtros, { limit, offset });
 }
 
 // ── Tipos de producto ──────────────────────────────────────────────────────

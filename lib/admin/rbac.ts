@@ -124,7 +124,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/je-admin/actividades", label: "Actividades", modulo: "actividades", grupo: "Comercial" },
   { href: "/je-admin/proyectos", label: "Proyectos", modulo: "proyectos", grupo: "Operaciones" },
   { href: "/je-admin/documentos", label: "Documentos", modulo: "documentos", grupo: "Operaciones" },
-  { href: "/je-admin/catalogo", label: "Catálogo", modulo: "catalogo", grupo: "Operaciones" },
+  { href: "/je-admin/productos", label: "Productos", modulo: "productos", grupo: "Operaciones" },
   { href: "/je-admin/pagos", label: "Pagos", modulo: "pagos", grupo: "Finanzas" },
   { href: "/je-admin/metricas", label: "Métricas", modulo: "metricas", grupo: "Finanzas" },
   { href: "/je-admin/campanas", label: "Campañas", modulo: "campanas", grupo: "Marketing" },
