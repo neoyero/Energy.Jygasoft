@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Plus, Search, Tags, X } from "lucide-react"
+import { Plus, Search, Tags } from "lucide-react"
 
 import type {
   ProductoRecord,
@@ -10,6 +10,7 @@ import type {
 } from "@/lib/admin/queries"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Modal } from "@/components/admin/ui/modal"
 import { cn } from "@/lib/utils"
 import { ProductosTable } from "@/components/admin/productos/productos-table"
 import { ProductoForm } from "@/components/admin/productos/producto-form"
@@ -42,6 +43,7 @@ export function ProductosView({ tipos, puedeEditar, puedeEliminar }: ProductosVi
   const [creando, setCreando] = useState(false)
   const [editando, setEditando] = useState<ProductoRecord | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
+  const [saving, setSaving] = useState(false)
 
   // Debounce de la búsqueda (250 ms).
   useEffect(() => {
@@ -63,9 +65,15 @@ export function ProductosView({ tipos, puedeEditar, puedeEliminar }: ProductosVi
     [tipos],
   )
 
-  function trasGuardar(): void {
+  /** Cierra el modal sin recargar (cancelar / cerrar). */
+  function cerrarFormulario(): void {
     setCreando(false)
     setEditando(null)
+  }
+
+  /** Tras guardar con éxito: cierra el modal y fuerza recarga de la tabla. */
+  function trasGuardar(): void {
+    cerrarFormulario()
     setReloadToken((n) => n + 1)
   }
 
@@ -128,41 +136,17 @@ export function ProductosView({ tipos, puedeEditar, puedeEliminar }: ProductosVi
               <Button
                 type="button"
                 size="sm"
-                variant={creando ? "outline" : "default"}
                 onClick={() => {
                   setEditando(null)
-                  setCreando((p) => !p)
+                  setCreando(true)
                 }}
                 disabled={tiposActivos.length === 0}
                 title={tiposActivos.length === 0 ? "Crea un tipo activo primero" : undefined}
               >
-                {creando ? (
-                  <>
-                    <X className="size-4" aria-hidden /> Cerrar
-                  </>
-                ) : (
-                  <>
-                    <Plus className="size-4" aria-hidden /> Nuevo producto
-                  </>
-                )}
+                <Plus className="size-4" aria-hidden /> Nuevo producto
               </Button>
             ) : null}
           </div>
-
-          {/* Form de alta */}
-          {puedeEditar && creando ? (
-            <ProductoForm modo="crear" tipos={tiposActivos} onSuccess={trasGuardar} />
-          ) : null}
-
-          {/* Form de edición */}
-          {puedeEditar && editando ? (
-            <ProductoForm
-              modo="editar"
-              producto={editando}
-              tipos={tiposActivos}
-              onSuccess={trasGuardar}
-            />
-          ) : null}
 
           <ProductosTable
             filtros={filtros}
@@ -174,6 +158,34 @@ export function ProductosView({ tipos, puedeEditar, puedeEliminar }: ProductosVi
             }}
             reloadToken={reloadToken}
           />
+
+          {/* Alta / edición en modal (responsive). */}
+          {puedeEditar ? (
+            <Modal
+              open={creando || editando !== null}
+              onOpenChange={(abierto) => {
+                if (!abierto) cerrarFormulario()
+              }}
+              title={editando ? "Editar producto" : "Nuevo producto"}
+              description={
+                editando
+                  ? "Modifica los datos del producto."
+                  : "Completa los datos del nuevo producto."
+              }
+              size="3xl"
+              dismissable={!saving}
+            >
+              <ProductoForm
+                key={editando?.id ?? "nuevo"}
+                modo={editando ? "editar" : "crear"}
+                producto={editando ?? undefined}
+                tipos={tiposActivos}
+                onSuccess={trasGuardar}
+                onCancel={cerrarFormulario}
+                onSavingChange={setSaving}
+              />
+            </Modal>
+          ) : null}
         </>
       ) : (
         <ProductoTiposPanel tipos={tipos} puedeEditar={puedeEditar} />

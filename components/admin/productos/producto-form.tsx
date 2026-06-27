@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
 import { crearProducto, actualizarProducto } from "@/lib/admin/actions"
@@ -22,7 +22,12 @@ export interface ProductoFormProps {
   producto?: ProductoRecord
   /** Tipos activos para el select. */
   tipos: ReadonlyArray<ProductoTipoOption>
+  /** Callback tras guardar con éxito (cierra el modal y recarga). */
   onSuccess?: () => void
+  /** Callback al cancelar (cierra el modal sin recargar). */
+  onCancel?: () => void
+  /** Notifica si hay un guardado en curso (para bloquear el cierre del modal). */
+  onSavingChange?: (saving: boolean) => void
 }
 
 /** "" -> null para columnas opcionales de texto. */
@@ -101,9 +106,14 @@ function estadoInicial(p?: ProductoRecord, tipos?: ReadonlyArray<ProductoTipoOpt
  * Los atributos heredados no editables se preservan. Llama a crearProducto /
  * actualizarProducto en useTransition y, al éxito, refresca la ruta.
  */
-export function ProductoForm({ modo, producto, tipos, onSuccess }: ProductoFormProps) {
+export function ProductoForm({ modo, producto, tipos, onSuccess, onCancel, onSavingChange }: ProductoFormProps) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+
+  // Informa al contenedor del estado de guardado (bloquea cierre del modal).
+  useEffect(() => {
+    onSavingChange?.(pending)
+  }, [pending, onSavingChange])
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(() => estadoInicial(producto, tipos))
 
@@ -172,7 +182,7 @@ export function ProductoForm({ modo, producto, tipos, onSuccess }: ProductoFormP
   return (
     <form
       onSubmit={onSubmit}
-      className="grid gap-4 rounded-xl border border-border p-5 sm:grid-cols-2 lg:grid-cols-3"
+      className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
     >
       {/* Tipo + identificación */}
       <div className="space-y-1.5">
@@ -350,7 +360,11 @@ export function ProductoForm({ modo, producto, tipos, onSuccess }: ProductoFormP
         Activo (disponible para cotizar)
       </label>
 
-      <div className="flex items-center gap-3 sm:col-span-2 lg:col-span-3">
+      {/* Footer pegajoso: en pantallas bajas (móvil) el botón Guardar queda
+          siempre visible al pie del modal sin tener que scrollear todo el form.
+          -mx-5/-mb-5 sangran el padding del cuerpo del modal para llegar a los
+          bordes. */}
+      <div className="sticky bottom-0 -mx-5 -mb-5 flex items-center gap-3 border-t border-stone-200 bg-white px-5 py-3 sm:col-span-2 lg:col-span-3 dark:border-border dark:bg-popover">
         <Button type="submit" size="sm" disabled={pending}>
           {pending
             ? "Guardando…"
@@ -358,13 +372,13 @@ export function ProductoForm({ modo, producto, tipos, onSuccess }: ProductoFormP
               ? "Guardar cambios"
               : "Crear producto"}
         </Button>
-        {onSuccess ? (
+        {onCancel ? (
           <Button
             type="button"
             size="sm"
             variant="ghost"
             disabled={pending}
-            onClick={onSuccess}
+            onClick={onCancel}
           >
             Cancelar
           </Button>
