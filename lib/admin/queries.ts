@@ -2948,3 +2948,232 @@ function sqlRango(
   const hastaCond = hasta ? sql`AND ${col} < ${hasta}` : sql``;
   return sql`${desdeCond} ${hastaCond}`;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * PRODUCTOS (catálogo unificado) — capa de datos
+ *
+ * El "tipo" vive en producto_tipos (editable). Cada producto lleva atributos
+ * jsonb flexibles por tipo. Reglas: numeric (mode:'string') → number con
+ * numOrNull; atributos se devuelve como objeto plano.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+export interface ProductoTipoRecord {
+  id: string;
+  nombre: string;
+  clave: string;
+  descripcion: string | null;
+  activo: boolean;
+  /** Nº de productos que apuntan a este tipo (para impedir borrado). */
+  productos: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Opción ligera de tipo para selects del formulario. */
+export interface ProductoTipoOption {
+  id: string;
+  nombre: string;
+  clave: string;
+}
+
+export interface ProductoRecord {
+  id: string;
+  productoTipoId: string;
+  tipoNombre: string;
+  tipoClave: string;
+  sku: string | null;
+  nombre: string;
+  marca: string | null;
+  modelo: string | null;
+  descripcion: string | null;
+  unidad: string;
+  precioCompra: number | null;
+  precioVenta: number | null;
+  moneda: string;
+  stock: number | null;
+  activo: boolean;
+  atributos: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductosFiltros {
+  productoTipoId?: string | null;
+  busqueda?: string;
+  /** Si es true, oculta los productos inactivos. */
+  soloActivos?: boolean;
+}
+
+export interface ProductosPage {
+  rows: ProductoRecord[];
+  total: number;
+}
+
+/**
+ * Tipos de producto con su conteo de productos asociados. Ordenados por nombre.
+ * Usado por la administración de tipos (decide si un tipo es borrable).
+ */
+export async function getProductoTipos(): Promise<ProductoTipoRecord[]> {
+  const rows = await db
+    .select({
+      id: schema.productoTipos.id,
+      nombre: schema.productoTipos.nombre,
+      clave: schema.productoTipos.clave,
+      descripcion: schema.productoTipos.descripcion,
+      activo: schema.productoTipos.activo,
+      createdAt: schema.productoTipos.createdAt,
+      updatedAt: schema.productoTipos.updatedAt,
+      productos: sql<number>`(
+        SELECT count(*) FROM productos p WHERE p.producto_tipo_id = ${schema.productoTipos.id}
+      )::int`,
+    })
+    .from(schema.productoTipos)
+    .orderBy(asc(schema.productoTipos.nombre));
+
+  return rows.map((r) => ({ ...r, productos: Number(r.productos) }));
+}
+
+/** Tipos activos como opciones para selects (orden alfabético). */
+export async function getProductoTiposActivos(): Promise<ProductoTipoOption[]> {
+  return db
+    .select({
+      id: schema.productoTipos.id,
+      nombre: schema.productoTipos.nombre,
+      clave: schema.productoTipos.clave,
+    })
+    .from(schema.productoTipos)
+    .where(eq(schema.productoTipos.activo, true))
+    .orderBy(asc(schema.productoTipos.nombre));
+}
+
+/** Condiciones WHERE compartidas por la página y el conteo de productos. */
+function productosWhereConds(filtros: ProductosFiltros): SQL[] {
+  const conds: SQL[] = [];
+  if (filtros.productoTipoId) {
+    conds.push(eq(schema.productos.productoTipoId, filtros.productoTipoId));
+  }
+  if (filtros.soloActivos) {
+    conds.push(eq(schema.productos.activo, true));
+  }
+  const q = filtros.busqueda?.trim();
+  if (q) {
+    const term = `%${q}%`;
+    const busc = or(
+      ilike(schema.productos.nombre, term),
+      ilike(schema.productos.sku, term),
+      ilike(schema.productos.marca, term),
+    );
+    if (busc) conds.push(busc);
+  }
+  return conds;
+}
+
+function mapProductoRow(row: {
+  id: string;
+  productoTipoId: string;
+  tipoNombre: string;
+  tipoClave: string;
+  sku: string | null;
+  nombre: string;
+  marca: string | null;
+  modelo: string | null;
+  descripcion: string | null;
+  unidad: string;
+  precioCompra: string | null;
+  precioVenta: string | null;
+  moneda: string;
+  stock: number | null;
+  activo: boolean;
+  atributos: unknown;
+  createdAt: string;
+  updatedAt: string;
+}): ProductoRecord {
+  return {
+    id: row.id,
+    productoTipoId: row.productoTipoId,
+    tipoNombre: row.tipoNombre,
+    tipoClave: row.tipoClave,
+    sku: row.sku,
+    nombre: row.nombre,
+    marca: row.marca,
+    modelo: row.modelo,
+    descripcion: row.descripcion,
+    unidad: row.unidad,
+    precioCompra: numOrNull(row.precioCompra),
+    precioVenta: numOrNull(row.precioVenta),
+    moneda: row.moneda,
+    stock: row.stock,
+    activo: row.activo,
+    atributos: (row.atributos ?? {}) as Record<string, unknown>,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+const productoSelect = {
+  id: schema.productos.id,
+  productoTipoId: schema.productos.productoTipoId,
+  tipoNombre: schema.productoTipos.nombre,
+  tipoClave: schema.productoTipos.clave,
+  sku: schema.productos.sku,
+  nombre: schema.productos.nombre,
+  marca: schema.productos.marca,
+  modelo: schema.productos.modelo,
+  descripcion: schema.productos.descripcion,
+  unidad: schema.productos.unidad,
+  precioCompra: schema.productos.precioCompra,
+  precioVenta: schema.productos.precioVenta,
+  moneda: schema.productos.moneda,
+  stock: schema.productos.stock,
+  activo: schema.productos.activo,
+  atributos: schema.productos.atributos,
+  createdAt: schema.productos.createdAt,
+  updatedAt: schema.productos.updatedAt,
+} as const;
+
+/**
+ * Página de productos (server-side): cuenta el total que cumple el filtro y
+ * devuelve solo la ventana [offset, offset+limit). Filtra por tipo y busca por
+ * nombre/sku/marca.
+ */
+export async function getProductosPage(
+  filtros: ProductosFiltros,
+  opts: { limit: number; offset: number },
+): Promise<ProductosPage> {
+  const conds = productosWhereConds(filtros);
+  const where = conds.length ? and(...conds) : undefined;
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(schema.productos)
+    .where(where);
+
+  const rows = await db
+    .select(productoSelect)
+    .from(schema.productos)
+    .innerJoin(
+      schema.productoTipos,
+      eq(schema.productos.productoTipoId, schema.productoTipos.id),
+    )
+    .where(where)
+    .orderBy(desc(schema.productos.createdAt))
+    .limit(opts.limit)
+    .offset(opts.offset);
+
+  return { rows: rows.map(mapProductoRow), total: Number(total) };
+}
+
+/** Un producto por id (con el nombre/clave de su tipo) o null. */
+export async function getProducto(id: string): Promise<ProductoRecord | null> {
+  const rows = await db
+    .select(productoSelect)
+    .from(schema.productos)
+    .innerJoin(
+      schema.productoTipos,
+      eq(schema.productos.productoTipoId, schema.productoTipos.id),
+    )
+    .where(eq(schema.productos.id, id))
+    .limit(1);
+
+  return rows[0] ? mapProductoRow(rows[0]) : null;
+}

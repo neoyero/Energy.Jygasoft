@@ -3555,3 +3555,310 @@ export async function eliminarCliente(id: string): Promise<ActionResult> {
     return { ok: false, error: "No se pudo eliminar el cliente." };
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * PRODUCTOS (catálogo unificado) — mutaciones
+ *
+ * producto_tipos: catálogo de tipos editable. No se puede borrar un tipo con
+ * productos asociados (sugerir desactivar). productos: CRUD con atributos JSON.
+ * Permiso: módulo "productos" (edit = OPS). Borrado duro: solo admin.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+const PRODUCTOS_PATH = "/je-admin/productos";
+
+/** "" o solo-espacios → null; recorta el resto. Para columnas de texto opcional. */
+function txtOrNull(v: string | null | undefined): string | null {
+  if (v == null) return null;
+  const t = v.trim();
+  return t === "" ? null : t;
+}
+
+/** numeric (Postgres) se persiste como string o null. */
+function numParaDb(v: number | null | undefined): string | null {
+  return v == null ? null : String(v);
+}
+
+// ── Tipos de producto ──────────────────────────────────────────────────────
+
+const productoTipoSchema = z.object({
+  nombre: z
+    .string()
+    .trim()
+    .min(1, "El nombre es obligatorio.")
+    .max(120, "El nombre es demasiado largo."),
+  clave: z
+    .string()
+    .trim()
+    .min(1, "La clave es obligatoria.")
+    .max(60, "La clave es demasiado larga.")
+    .regex(
+      /^[a-z0-9_]+$/,
+      "La clave solo admite minúsculas, números y guion bajo.",
+    ),
+  descripcion: z
+    .string()
+    .trim()
+    .max(500, "La descripción es demasiado larga.")
+    .nullable()
+    .optional(),
+  activo: z.boolean().optional(),
+});
+
+function productoTipoValues(data: z.output<typeof productoTipoSchema>) {
+  return {
+    nombre: data.nombre,
+    clave: data.clave,
+    descripcion: txtOrNull(data.descripcion),
+    activo: data.activo ?? true,
+  };
+}
+
+/** Traduce errores de unicidad (nombre/clave) a un mensaje claro. */
+function mensajeTipoConflicto(e: unknown): string {
+  const msg = e instanceof Error ? e.message : "";
+  if (msg.includes("producto_tipos_clave_key")) return "Ya existe un tipo con esa clave.";
+  if (msg.includes("producto_tipos_nombre_key")) return "Ya existe un tipo con ese nombre.";
+  return "No se pudo guardar el tipo de producto.";
+}
+
+export async function crearProductoTipo(
+  data: z.input<typeof productoTipoSchema>,
+): Promise<ActionResult & { id?: string }> {
+  await assertPerm("productos", "edit");
+  const parsed = productoTipoSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  try {
+    const [row] = await db
+      .insert(schema.productoTipos)
+      .values(productoTipoValues(parsed.data))
+      .returning({ id: schema.productoTipos.id });
+    revalidatePath(PRODUCTOS_PATH);
+    return { ok: true, id: row.id };
+  } catch (e) {
+    return { ok: false, error: mensajeTipoConflicto(e) };
+  }
+}
+
+export async function actualizarProductoTipo(
+  id: string,
+  data: z.input<typeof productoTipoSchema>,
+): Promise<ActionResult> {
+  await assertPerm("productos", "edit");
+  const parsed = productoTipoSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  try {
+    await db
+      .update(schema.productoTipos)
+      .set({ ...productoTipoValues(parsed.data), updatedAt: new Date().toISOString() })
+      .where(eq(schema.productoTipos.id, id));
+    revalidatePath(PRODUCTOS_PATH);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: mensajeTipoConflicto(e) };
+  }
+}
+
+/** Activa/desactiva un tipo (inactivo = no ofrecible al crear productos). */
+export async function toggleProductoTipoActivo(
+  id: string,
+  activo: boolean,
+): Promise<ActionResult> {
+  await assertPerm("productos", "edit");
+  try {
+    await db
+      .update(schema.productoTipos)
+      .set({ activo, updatedAt: new Date().toISOString() })
+      .where(eq(schema.productoTipos.id, id));
+    revalidatePath(PRODUCTOS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo cambiar el estado del tipo." };
+  }
+}
+
+/** Borra un tipo solo si no tiene productos asociados (si los tiene, desactivar). */
+export async function eliminarProductoTipo(id: string): Promise<ActionResult> {
+  await assertPerm("productos", "edit");
+  try {
+    const [{ enUso }] = await db
+      .select({
+        enUso: sql<number>`(SELECT count(*) FROM productos WHERE producto_tipo_id = ${id})::int`,
+      })
+      .from(sql`(select 1) as x`);
+
+    if (Number(enUso) > 0) {
+      return {
+        ok: false,
+        error: "No se puede eliminar: el tipo tiene productos. Desactívalo en su lugar.",
+      };
+    }
+
+    await db.delete(schema.productoTipos).where(eq(schema.productoTipos.id, id));
+    revalidatePath(PRODUCTOS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo eliminar el tipo de producto." };
+  }
+}
+
+// ── Productos ────────────────────────────────────────────────────────────────
+
+const productoSchema = z.object({
+  productoTipoId: z.string().uuid("Selecciona un tipo de producto válido."),
+  sku: z.string().trim().max(80, "El SKU es demasiado largo.").nullable().optional(),
+  nombre: z
+    .string()
+    .trim()
+    .min(1, "El nombre es obligatorio.")
+    .max(200, "El nombre es demasiado largo."),
+  marca: z.string().trim().max(120).nullable().optional(),
+  modelo: z.string().trim().max(120).nullable().optional(),
+  descripcion: z.string().trim().max(1000).nullable().optional(),
+  unidad: z.string().trim().min(1).max(40).optional(),
+  precioCompra: z
+    .number()
+    .nonnegative("El precio de compra no puede ser negativo.")
+    .nullable()
+    .optional(),
+  precioVenta: z
+    .number()
+    .nonnegative("El precio de venta no puede ser negativo.")
+    .nullable()
+    .optional(),
+  moneda: z
+    .string()
+    .trim()
+    .length(3, "La moneda debe ser un código de 3 letras (ej. MXN).")
+    .optional(),
+  stock: z
+    .number()
+    .int("El stock debe ser un entero.")
+    .nonnegative("El stock no puede ser negativo.")
+    .nullable()
+    .optional(),
+  activo: z.boolean().optional(),
+  atributos: z.record(z.string(), z.unknown()).optional(),
+});
+
+function productoValues(data: z.output<typeof productoSchema>) {
+  return {
+    productoTipoId: data.productoTipoId,
+    sku: txtOrNull(data.sku),
+    nombre: data.nombre,
+    marca: txtOrNull(data.marca),
+    modelo: txtOrNull(data.modelo),
+    descripcion: txtOrNull(data.descripcion),
+    unidad: data.unidad?.trim() || "pieza",
+    precioCompra: numParaDb(data.precioCompra),
+    precioVenta: numParaDb(data.precioVenta),
+    moneda: (data.moneda ?? "MXN").toUpperCase(),
+    stock: data.stock ?? null,
+    activo: data.activo ?? true,
+    atributos: data.atributos ?? {},
+  };
+}
+
+function mensajeProductoConflicto(e: unknown): string {
+  const msg = e instanceof Error ? e.message : "";
+  if (msg.includes("productos_sku_key")) return "Ya existe un producto con ese SKU.";
+  if (msg.includes("productos_producto_tipo_id_fkey")) return "El tipo de producto no existe.";
+  return "No se pudo guardar el producto.";
+}
+
+export async function crearProducto(
+  data: z.input<typeof productoSchema>,
+): Promise<ActionResult & { id?: string }> {
+  await assertPerm("productos", "edit");
+  const parsed = productoSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  try {
+    const [row] = await db
+      .insert(schema.productos)
+      .values(productoValues(parsed.data))
+      .returning({ id: schema.productos.id });
+    revalidatePath(PRODUCTOS_PATH);
+    return { ok: true, id: row.id };
+  } catch (e) {
+    return { ok: false, error: mensajeProductoConflicto(e) };
+  }
+}
+
+export async function actualizarProducto(
+  id: string,
+  data: z.input<typeof productoSchema>,
+): Promise<ActionResult> {
+  await assertPerm("productos", "edit");
+  const parsed = productoSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  try {
+    await db
+      .update(schema.productos)
+      .set({ ...productoValues(parsed.data), updatedAt: new Date().toISOString() })
+      .where(eq(schema.productos.id, id));
+    revalidatePath(PRODUCTOS_PATH);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: mensajeProductoConflicto(e) };
+  }
+}
+
+/** Activa/desactiva un producto (desactivado = no disponible para cotizar). */
+export async function toggleProductoActivo(
+  id: string,
+  activo: boolean,
+): Promise<ActionResult> {
+  await assertPerm("productos", "edit");
+  try {
+    await db
+      .update(schema.productos)
+      .set({ activo, updatedAt: new Date().toISOString() })
+      .where(eq(schema.productos.id, id));
+    revalidatePath(PRODUCTOS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo cambiar el estado del producto." };
+  }
+}
+
+/**
+ * Borra un producto. Solo admin, y solo si no está referenciado por partidas de
+ * cotización o materiales de proyecto (en ese caso, desactivar). Comparte id con
+ * catalogo_equipos tras el backfill, por lo que se comprueban ambas relaciones.
+ */
+export async function eliminarProducto(id: string): Promise<ActionResult> {
+  const user = await assertPerm("productos", "edit");
+  if (user.rol !== "admin") {
+    return { ok: false, error: "Solo un administrador puede eliminar productos." };
+  }
+  try {
+    const [{ enUso }] = await db
+      .select({
+        enUso: sql<number>`(
+            (SELECT count(*) FROM cotizacion_items WHERE equipo_id = ${id})
+          + (SELECT count(*) FROM proyecto_materiales WHERE equipo_id = ${id})
+          )::int`,
+      })
+      .from(sql`(select 1) as x`);
+
+    if (Number(enUso) > 0) {
+      return {
+        ok: false,
+        error: "No se puede eliminar: el producto está en uso. Desactívalo en su lugar.",
+      };
+    }
+
+    await db.delete(schema.productos).where(eq(schema.productos.id, id));
+    revalidatePath(PRODUCTOS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo eliminar el producto." };
+  }
+}
