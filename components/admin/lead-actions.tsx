@@ -16,6 +16,7 @@ type LeadEstado = (typeof leadEstado.enumValues)[number];
 type CambioPendiente =
   | { tipo: "estado"; valor: LeadEstado; etiqueta: string }
   | { tipo: "vendedor"; valor: string | null; etiqueta: string }
+  | { tipo: "convertir" }
   | null;
 
 const ESTADOS = leadEstado.enumValues;
@@ -59,6 +60,12 @@ export function LeadActions({
     const valor = e.target.value as LeadEstado;
     e.currentTarget.value = estado;
     if (valor === estado) return;
+    // "convertido" no es un estado que se ponga a mano: dispara la conversión
+    // real (crea cliente + oportunidad), igual que el botón verde.
+    if (valor === "convertido") {
+      setCambio({ tipo: "convertir" });
+      return;
+    }
     setCambio({ tipo: "estado", valor, etiqueta: labelFor(valor) });
   }
 
@@ -81,8 +88,10 @@ export function LeadActions({
     if (!ch) return;
     if (ch.tipo === "estado") {
       run(() => updateLeadEstado(leadId, ch.valor));
-    } else {
+    } else if (ch.tipo === "vendedor") {
       run(() => asignarLead(leadId, ch.valor));
+    } else {
+      run(() => convertLead(leadId));
     }
   }
 
@@ -165,9 +174,22 @@ export function LeadActions({
         onOpenChange={(open) => {
           if (!open) setCambio(null);
         }}
-        title={cambio?.tipo === "estado" ? "Cambiar estado" : "Cambiar asignación"}
+        title={
+          cambio?.tipo === "convertir"
+            ? "Convertir lead"
+            : cambio?.tipo === "estado"
+              ? "Cambiar estado"
+              : "Cambiar asignación"
+        }
         description={
-          cambio?.tipo === "estado" ? (
+          cambio?.tipo === "convertir" ? (
+            <>
+              Se creará un <strong>cliente</strong> y una{" "}
+              <strong>oportunidad</strong> a partir de este lead, y el lead
+              quedará marcado como <strong>«convertido»</strong>. Esta acción no
+              se puede deshacer. ¿Continuar?
+            </>
+          ) : cambio?.tipo === "estado" ? (
             <>
               El estado del lead cambiará a{" "}
               <strong>{cambio.etiqueta}</strong>. ¿Continuar?
@@ -179,7 +201,7 @@ export function LeadActions({
             </>
           ) : null
         }
-        confirmLabel="Confirmar"
+        confirmLabel={cambio?.tipo === "convertir" ? "Convertir" : "Confirmar"}
         onConfirm={confirmarCambio}
       />
     </div>
