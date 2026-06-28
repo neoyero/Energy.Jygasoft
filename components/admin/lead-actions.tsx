@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import { updateLeadEstado, convertLead, asignarLead } from "@/lib/admin/actions";
 import { ConfirmButton } from "@/components/admin/ui/confirm-button";
@@ -49,6 +50,7 @@ export function LeadActions({
   vendedorId,
   vendedores,
 }: LeadActionsProps) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [cambio, setCambio] = useState<CambioPendiente>(null);
@@ -105,6 +107,9 @@ export function LeadActions({
     startTransition(async () => {
       try {
         await action();
+        // Refresca el RSC para que estado/asesor (y el bloqueo del botón
+        // "Convertir" cuando ya está convertido) se reflejen de inmediato.
+        router.refresh();
       } catch (err: unknown) {
         setError(getErrorMessage(err));
       }
