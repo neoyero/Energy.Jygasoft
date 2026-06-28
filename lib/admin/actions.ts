@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { eq, and, ne, sql, type SQL } from "drizzle-orm";
+import { eq, and, ne, desc, notInArray, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { assertPerm, actorOf, type SessionUser } from "@/lib/admin/guard";
@@ -1429,6 +1429,81 @@ async function siguienteFolio(
   return `COT-${anio}-${String(consecutivo).padStart(4, "0")}`;
 }
 
+type CotizacionTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Si la cotización no tiene oportunidad enlazada, la enlaza a la oportunidad
+ * ABIERTA más reciente de su cliente (las cotizaciones representan el deal vivo).
+ * No hace nada si ya está enlazada o si el cliente no tiene oportunidad abierta.
+ */
+async function autoEnlazarOportunidad(
+  tx: CotizacionTx,
+  cotizacionId: string,
+): Promise<void> {
+  const [cot] = await tx
+    .select({
+      oportunidadId: schema.cotizaciones.oportunidadId,
+      clienteId: schema.cotizaciones.clienteId,
+    })
+    .from(schema.cotizaciones)
+    .where(eq(schema.cotizaciones.id, cotizacionId))
+    .limit(1);
+  if (!cot || cot.oportunidadId || !cot.clienteId) return;
+
+  const [abierta] = await tx
+    .select({ id: schema.oportunidades.id })
+    .from(schema.oportunidades)
+    .where(
+      and(
+        eq(schema.oportunidades.clienteId, cot.clienteId),
+        notInArray(schema.oportunidades.etapa, [...ETAPAS_CERRADAS] as OportEtapa[]),
+      ),
+    )
+    .orderBy(desc(schema.oportunidades.createdAt))
+    .limit(1);
+  if (!abierta) return;
+
+  await tx
+    .update(schema.cotizaciones)
+    .set({ oportunidadId: abierta.id })
+    .where(eq(schema.cotizaciones.id, cotizacionId));
+}
+
+/**
+ * Refleja el total de la cotización en el monto_estimado de su oportunidad
+ * enlazada (el pipeline muestra el valor del deal). Solo si la oportunidad sigue
+ * ABIERTA y el total es > 0 (no pisa un monto con 0 de una cotización vacía).
+ */
+async function sincronizarMontoOportunidad(
+  tx: CotizacionTx,
+  cotizacionId: string,
+): Promise<void> {
+  const [cot] = await tx
+    .select({
+      oportunidadId: schema.cotizaciones.oportunidadId,
+      total: schema.cotizaciones.total,
+    })
+    .from(schema.cotizaciones)
+    .where(eq(schema.cotizaciones.id, cotizacionId))
+    .limit(1);
+  if (!cot?.oportunidadId) return;
+
+  const totalNum = Number(cot.total);
+  if (!Number.isFinite(totalNum) || totalNum <= 0) return;
+
+  const [op] = await tx
+    .select({ etapa: schema.oportunidades.etapa })
+    .from(schema.oportunidades)
+    .where(eq(schema.oportunidades.id, cot.oportunidadId))
+    .limit(1);
+  if (!op || ETAPAS_CERRADAS.has(op.etapa)) return;
+
+  await tx
+    .update(schema.oportunidades)
+    .set({ montoEstimado: cot.total })
+    .where(eq(schema.oportunidades.id, cot.oportunidadId));
+}
+
 /**
  * Crea una cotización borrador (version 1, totales en 0). Hereda el vendedor:
  * si el actor es un rol acotado usa su userId; si no, toma el del cliente.
@@ -1502,12 +1577,16 @@ export async function crearCotizacion(
           actor,
         });
 
+        // Enlaza a la oportunidad abierta del cliente si no se indicó una.
+        if (!d.oportunidadId) await autoEnlazarOportunidad(tx, cot.id);
+
         return cot.id;
       });
 
       revalidatePath("/je-admin/cotizaciones");
       revalidatePath(`/je-admin/cotizaciones/${id}`);
       revalidatePath(`/je-admin/clientes/${d.clienteId}`);
+      revalidatePath("/je-admin/oportunidades");
       return { ok: true, id };
     } catch (error: unknown) {
       if (isUniqueFolioViolation(error) && intento < MAX_RETRIES - 1) {
@@ -1603,10 +1682,15 @@ export async function actualizarCotizacionItems(
         actor,
       });
 
+      // Enlaza (si falta) y refleja el total en el monto de la oportunidad.
+      await autoEnlazarOportunidad(tx, cotizacionId);
+      await sincronizarMontoOportunidad(tx, cotizacionId);
+
       return t;
     });
 
     revalidatePath(`/je-admin/cotizaciones/${cotizacionId}`);
+    revalidatePath("/je-admin/oportunidades");
     return { ok: true, ...totales };
   } catch {
     return { ok: false, error: "No se pudieron actualizar las partidas." };
@@ -2214,15 +2298,86 @@ export async function aplicarDimensionamiento(
         actor,
       });
 
+      // Enlaza (si falta) y refleja el total en el monto de la oportunidad.
+      await autoEnlazarOportunidad(tx, cotizacionId);
+      await sincronizarMontoOportunidad(tx, cotizacionId);
+
       return { ok: true as const, ...t };
     });
 
     if (resultado.ok) {
       revalidatePath(`/je-admin/cotizaciones/${cotizacionId}`);
+      revalidatePath("/je-admin/oportunidades");
     }
     return resultado;
   } catch {
     return { ok: false, error: "No se pudo aplicar el dimensionamiento." };
+  }
+}
+
+/**
+ * Enlaza (o desenlaza, con null) una cotización a una oportunidad del mismo
+ * cliente y refleja su total en el monto de la oportunidad. Para corregir
+ * cotizaciones huérfanas o reasignar el deal desde el detalle.
+ */
+export async function enlazarCotizacionConOportunidad(
+  cotizacionId: string,
+  oportunidadId: string | null,
+): Promise<ActionResult> {
+  const user = await assertPerm("cotizaciones", "edit");
+  if (!(await puedeAccederCotizacion(user, cotizacionId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  const actor = actorOf(user);
+
+  try {
+    const res = await db.transaction(async (tx) => {
+      const [cot] = await tx
+        .select({ clienteId: schema.cotizaciones.clienteId })
+        .from(schema.cotizaciones)
+        .where(eq(schema.cotizaciones.id, cotizacionId))
+        .limit(1);
+      if (!cot) throw new Error("Cotización no encontrada");
+
+      if (oportunidadId) {
+        const [op] = await tx
+          .select({ clienteId: schema.oportunidades.clienteId })
+          .from(schema.oportunidades)
+          .where(eq(schema.oportunidades.id, oportunidadId))
+          .limit(1);
+        if (!op) return { ok: false as const, error: "La oportunidad no existe." };
+        if (op.clienteId !== cot.clienteId) {
+          return { ok: false as const, error: "La oportunidad es de otro cliente." };
+        }
+      }
+
+      await tx
+        .update(schema.cotizaciones)
+        .set({ oportunidadId })
+        .where(eq(schema.cotizaciones.id, cotizacionId));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "cotizacion",
+        entidadId: cotizacionId,
+        tipo: "oportunidad_enlazada",
+        descripcion: oportunidadId
+          ? "Oportunidad enlazada a la cotización"
+          : "Oportunidad desenlazada de la cotización",
+        payload: { oportunidadId },
+        actor,
+      });
+
+      if (oportunidadId) await sincronizarMontoOportunidad(tx, cotizacionId);
+      return { ok: true as const };
+    });
+
+    if (res.ok) {
+      revalidatePath(`/je-admin/cotizaciones/${cotizacionId}`);
+      revalidatePath("/je-admin/oportunidades");
+    }
+    return res;
+  } catch {
+    return { ok: false, error: "No se pudo enlazar la oportunidad." };
   }
 }
 

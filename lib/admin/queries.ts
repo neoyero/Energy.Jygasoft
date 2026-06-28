@@ -1525,6 +1525,28 @@ async function getContactosDeCliente(
   }));
 }
 
+/** Opción de oportunidad de un cliente (para el selector de enlace en cotización). */
+export interface OportunidadOpcion {
+  id: string;
+  nombre: string;
+  etapa: string;
+}
+
+/** Oportunidades del cliente como opciones (id/nombre/etapa), recientes primero. */
+export async function getOportunidadesDeClienteOpciones(
+  clienteId: string,
+): Promise<OportunidadOpcion[]> {
+  return db
+    .select({
+      id: schema.oportunidades.id,
+      nombre: schema.oportunidades.nombre,
+      etapa: schema.oportunidades.etapa,
+    })
+    .from(schema.oportunidades)
+    .where(eq(schema.oportunidades.clienteId, clienteId))
+    .orderBy(desc(schema.oportunidades.createdAt));
+}
+
 async function getOportunidadesDeCliente(
   clienteId: string,
 ): Promise<ClienteOportunidadRow[]> {
