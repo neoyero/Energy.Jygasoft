@@ -103,6 +103,21 @@ export async function convertLead(id: string) {
       .limit(1);
     if (!lead) throw new Error("Lead no encontrado");
 
+    // Candado de idempotencia: no reconvertir. Se valida tanto por el estado
+    // como por la existencia real de un cliente generado desde este lead (cubre
+    // estados inconsistentes o una segunda llamada concurrente).
+    if (lead.estado === "convertido") {
+      throw new Error("Este lead ya fue convertido.");
+    }
+    const [clienteExistente] = await tx
+      .select({ id: schema.clientes.id })
+      .from(schema.clientes)
+      .where(eq(schema.clientes.leadOrigenId, id))
+      .limit(1);
+    if (clienteExistente) {
+      throw new Error("Este lead ya tiene un cliente generado.");
+    }
+
     const tipoPersona =
       lead.segmento === "negocio" ? "pm_comercial" : "pf_residencial";
 
