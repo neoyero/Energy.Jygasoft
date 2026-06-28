@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { Calculator, Sparkles } from "lucide-react"
 
 import { esquemaCfe } from "@/db/schema"
+import { TARIFAS_CFE } from "@/lib/cfe/tarifas"
 import {
   calcularDimensionamiento,
   aplicarDimensionamiento,
@@ -29,13 +30,10 @@ const ESQUEMAS = esquemaCfe.enumValues
 
 const MONEDA_DEFAULT = "MXN"
 
-/** Tarifas CFE frecuentes (value alineado con resolveCalcConfig). */
+/** Tarifas CFE: opción vacía + catálogo compartido (lib/cfe/tarifas). */
 const TARIFAS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "", label: "Sin especificar" },
-  { value: "1", label: "Doméstica (1, 1A…1F)" },
-  { value: "DAC", label: "DAC (doméstica alto consumo)" },
-  { value: "PDBT", label: "PDBT (negocio baja tensión)" },
-  { value: "GDMTO", label: "GDMTO (media tensión)" },
+  ...TARIFAS_CFE,
 ]
 
 /** Capacidad (kWp) por encima de la cual avisamos posible error de captura. */

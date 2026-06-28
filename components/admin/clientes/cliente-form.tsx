@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 
 import { tipoPersona, nivelTension } from "@/db/schema"
 import { regimenesPara } from "@/lib/sat/regimen-fiscal"
+import { TARIFAS_CFE, TARIFA_VALUES } from "@/lib/cfe/tarifas"
 import { crearCliente, actualizarCliente } from "@/lib/admin/actions"
 import type {
   ClienteDetalle,
@@ -418,12 +419,24 @@ export function ClienteForm({
 
         <div className="space-y-1.5">
           <Label htmlFor="cliente-tarifa">Tarifa</Label>
-          <Input
+          <select
             id="cliente-tarifa"
             value={form.tarifa}
             onChange={(e) => set("tarifa", e.target.value)}
             disabled={pending}
-          />
+            className={SELECT_CLASS}
+          >
+            <option value="">Sin especificar</option>
+            {TARIFAS_CFE.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+            {/* Preserva un valor legado (texto libre antiguo) fuera del catálogo. */}
+            {form.tarifa && !TARIFA_VALUES.includes(form.tarifa) ? (
+              <option value={form.tarifa}>{form.tarifa} (actual)</option>
+            ) : null}
+          </select>
         </div>
 
         <div className="space-y-1.5">
