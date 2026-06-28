@@ -5,9 +5,10 @@ import {
   getLead,
   getLeadTimeline,
   getAsesoresAsignables,
+  type DashboardScope,
 } from "@/lib/admin/queries";
 import { requirePerm } from "@/lib/admin/guard";
-import { can } from "@/lib/admin/rbac";
+import { can, type Rol } from "@/lib/admin/rbac";
 import { formatMXN, fmtFechaRel } from "@/lib/admin/format";
 import { LeadActions } from "@/components/admin/lead-actions";
 import { LeadEditPanel } from "@/components/admin/leads/lead-edit-panel";
@@ -61,13 +62,20 @@ export default async function LeadDetail({ params }: Params) {
   const user = await requirePerm("leads", "view");
   const puedeEditar = can(user.rol, "leads", "edit");
 
-  const [lead, timeline, vendedores] = await Promise.all([
-    getLead(id),
+  const scope: DashboardScope = {
+    rol: (user.rol ?? "lectura") as Rol,
+    userId: user.id,
+  };
+
+  // Se resuelve el lead PRIMERO (con scope): si no existe o el rol scoped no es
+  // su responsable, notFound() antes de consultar timeline/asesores de un lead ajeno.
+  const lead = await getLead(scope, id);
+  if (!lead) notFound();
+
+  const [timeline, vendedores] = await Promise.all([
     getLeadTimeline(id),
     getAsesoresAsignables(),
   ]);
-
-  if (!lead) notFound();
 
   const descripcion = [lead.telefono, lead.email].filter(Boolean).join(" · ");
   const vendedorNombre =

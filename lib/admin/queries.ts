@@ -81,13 +81,19 @@ export async function getLeads(limit = 200): Promise<LeadRecord[]> {
     .limit(limit);
 }
 
-export async function getLead(id: string) {
+/**
+ * Lead por id. Compartimentado: un rol scoped (vendedor/preventa) solo accede a
+ * su propio lead; cualquier otro id devuelve null (la página hace notFound()).
+ */
+export async function getLead(scope: DashboardScope, id: string) {
   const [lead] = await db
     .select()
     .from(schema.leads)
     .where(eq(schema.leads.id, id))
     .limit(1);
-  return lead ?? null;
+  if (!lead) return null;
+  if (isScoped(scope.rol) && lead.vendedorId !== scope.userId) return null;
+  return lead;
 }
 
 export async function getLeadTimeline(id: string) {

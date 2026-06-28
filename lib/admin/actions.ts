@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { eq, and, ne, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
-import { assertPerm, actorOf } from "@/lib/admin/guard";
+import { assertPerm, actorOf, type SessionUser } from "@/lib/admin/guard";
 import {
   isScoped,
   getLeadsPage,
@@ -41,7 +41,9 @@ type LeadEstado = (typeof schema.leadEstado.enumValues)[number];
 type OportEtapa = (typeof schema.oportunidadEtapa.enumValues)[number];
 
 export async function updateLeadEstado(id: string, estado: LeadEstado) {
-  const actor = actorOf(await assertPerm("leads", "edit"));
+  const user = await assertPerm("leads", "edit");
+  if (!(await puedeAccederLead(user, id))) throw new Error(SIN_ACCESO);
+  const actor = actorOf(user);
   await db.transaction(async (tx) => {
     await tx.update(schema.leads).set({ estado }).where(eq(schema.leads.id, id));
     await tx.insert(schema.eventos).values({
@@ -58,7 +60,9 @@ export async function updateLeadEstado(id: string, estado: LeadEstado) {
 }
 
 export async function updateOportunidadEtapa(id: string, etapa: OportEtapa) {
-  const actor = actorOf(await assertPerm("oportunidades", "edit"));
+  const user = await assertPerm("oportunidades", "edit");
+  if (!(await puedeAccederOportunidad(user, id))) throw new Error(SIN_ACCESO);
+  const actor = actorOf(user);
 
   // La probabilidad la define la etapa (modelo de embudo). Las etapas cerradas
   // sellan la fecha de cierre; reabrir la limpia.
@@ -87,7 +91,9 @@ export async function updateOportunidadEtapa(id: string, etapa: OportEtapa) {
 
 /** Convierte un lead en cliente + oportunidad (deal). */
 export async function convertLead(id: string) {
-  const actor = actorOf(await assertPerm("leads", "edit"));
+  const user = await assertPerm("leads", "edit");
+  if (!(await puedeAccederLead(user, id))) throw new Error(SIN_ACCESO);
+  const actor = actorOf(user);
 
   await db.transaction(async (tx) => {
     const [lead] = await tx
@@ -168,6 +174,85 @@ export async function convertLead(id: string) {
 /* ──────────────────────────── Usuarios / Equipo ──────────────────────────── */
 
 type ActionResult = { ok: true } | { ok: false; error: string };
+
+/* ─────────────────────────── Compartimentación ─────────────────────────────
+ * Defensa en profundidad: los roles "scoped" (vendedor/preventa) solo pueden
+ * tocar SUS propios registros. Las listas/detalle ya filtran por scope; estas
+ * comprobaciones evitan además que una acción directa (por id) mute el registro
+ * de otro asesor. Los roles no scoped (admin, gerente, etc.) pasan siempre.
+ * ──────────────────────────────────────────────────────────────────────────*/
+
+const SIN_ACCESO = "No tienes acceso a este registro.";
+
+/** true si `user` puede acceder al lead (no scoped, o es su responsable). */
+async function puedeAccederLead(user: SessionUser, leadId: string): Promise<boolean> {
+  if (!isScoped((user.rol ?? "lectura") as Rol)) return true;
+  const [row] = await db
+    .select({ vendedorId: schema.leads.vendedorId })
+    .from(schema.leads)
+    .where(eq(schema.leads.id, leadId))
+    .limit(1);
+  return !!row && row.vendedorId === user.id;
+}
+
+/** true si `user` puede acceder al cliente (no scoped, o es su vendedor). */
+async function puedeAccederCliente(user: SessionUser, clienteId: string): Promise<boolean> {
+  if (!isScoped((user.rol ?? "lectura") as Rol)) return true;
+  const [row] = await db
+    .select({ vendedorId: schema.clientes.vendedorId })
+    .from(schema.clientes)
+    .where(eq(schema.clientes.id, clienteId))
+    .limit(1);
+  return !!row && row.vendedorId === user.id;
+}
+
+/** true si `user` puede acceder a la oportunidad (no scoped, o es su vendedor). */
+async function puedeAccederOportunidad(user: SessionUser, oportunidadId: string): Promise<boolean> {
+  if (!isScoped((user.rol ?? "lectura") as Rol)) return true;
+  const [row] = await db
+    .select({ vendedorId: schema.oportunidades.vendedorId })
+    .from(schema.oportunidades)
+    .where(eq(schema.oportunidades.id, oportunidadId))
+    .limit(1);
+  return !!row && row.vendedorId === user.id;
+}
+
+/** true si `user` puede acceder a la cotización (no scoped, o es su vendedor). */
+async function puedeAccederCotizacion(user: SessionUser, cotizacionId: string): Promise<boolean> {
+  if (!isScoped((user.rol ?? "lectura") as Rol)) return true;
+  const [row] = await db
+    .select({ vendedorId: schema.cotizaciones.vendedorId })
+    .from(schema.cotizaciones)
+    .where(eq(schema.cotizaciones.id, cotizacionId))
+    .limit(1);
+  return !!row && row.vendedorId === user.id;
+}
+
+/**
+ * Comprobación de propiedad por tipo de entidad (documentos/actividades, que
+ * referencian leads/clientes/oportunidades/cotizaciones). Para tipos sin
+ * vendedorId propio (proyecto/instalacion/contacto) los roles scoped no tienen
+ * permiso de edición en esos módulos, así que se delega al RBAC (return true).
+ */
+async function puedeAccederEntidad(
+  user: SessionUser,
+  tipo: string,
+  id: string,
+): Promise<boolean> {
+  if (!isScoped((user.rol ?? "lectura") as Rol)) return true;
+  switch (tipo) {
+    case "lead":
+      return puedeAccederLead(user, id);
+    case "cliente":
+      return puedeAccederCliente(user, id);
+    case "oportunidad":
+      return puedeAccederOportunidad(user, id);
+    case "cotizacion":
+      return puedeAccederCotizacion(user, id);
+    default:
+      return true;
+  }
+}
 
 const rolSchema = z.enum(schema.usuarioRol.enumValues);
 
@@ -333,13 +418,17 @@ export async function asignarLead(
   leadId: string,
   vendedorId: string | null,
 ): Promise<void> {
-  const actor = actorOf(await assertPerm("leads", "edit"));
+  const user = await assertPerm("leads", "edit");
+  const actor = actorOf(user);
 
   const parsed = asignarLeadSchema.safeParse({ leadId, vendedorId });
   if (!parsed.success) {
     throw new Error(parsed.error.issues[0]?.message ?? "Datos no válidos.");
   }
   const { leadId: id, vendedorId: vid } = parsed.data;
+
+  // Un asesor scoped solo puede (re)asignar leads que ya son suyos.
+  if (!(await puedeAccederLead(user, id))) throw new Error(SIN_ACCESO);
 
   await db.transaction(async (tx) => {
     if (vid !== null) {
@@ -509,7 +598,8 @@ function leadValues(d: z.output<typeof leadFormSchema>) {
 export async function crearLead(
   data: z.input<typeof leadFormSchema>,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("leads", "edit"));
+  const user = await assertPerm("leads", "edit");
+  const actor = actorOf(user);
 
   const parsed = leadFormSchema.safeParse(data);
   if (!parsed.success) {
@@ -519,6 +609,12 @@ export async function crearLead(
     };
   }
   const d = parsed.data;
+
+  // Un rol scoped (vendedor/preventa) solo puede crear leads a su propio nombre
+  // (si no, podría "regalar" un lead a otro asesor o crear uno que no vería).
+  if (isScoped((user.rol ?? "lectura") as Rol)) {
+    d.vendedorId = user.id;
+  }
 
   if (!d.nombre && !d.telefono && !d.email) {
     return {
@@ -566,7 +662,11 @@ export async function actualizarLead(
   id: string,
   data: z.input<typeof leadFormSchema>,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("leads", "edit"));
+  const user = await assertPerm("leads", "edit");
+  if (!(await puedeAccederLead(user, id))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  const actor = actorOf(user);
 
   const parsed = leadFormSchema.safeParse(data);
   if (!parsed.success) {
@@ -795,7 +895,11 @@ export async function actualizarOportunidad(
   id: string,
   data: ActualizarOportunidadInput,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("oportunidades", "edit"));
+  const user = await assertPerm("oportunidades", "edit");
+  if (!(await puedeAccederOportunidad(user, id))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  const actor = actorOf(user);
 
   const parsed = actualizarOportunidadSchema.safeParse(data);
   if (!parsed.success) {
@@ -972,7 +1076,8 @@ function clienteValuesOf(d: z.output<typeof clienteSchema>): {
 export async function crearCliente(
   data: ClienteInput,
 ): Promise<ActionResult & { id?: string }> {
-  const actor = actorOf(await assertPerm("clientes", "edit"));
+  const user = await assertPerm("clientes", "edit");
+  const actor = actorOf(user);
 
   const parsed = clienteSchema.safeParse(data);
   if (!parsed.success) {
@@ -980,6 +1085,12 @@ export async function crearCliente(
       ok: false,
       error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
     };
+  }
+
+  // Un rol scoped solo crea clientes a su propio nombre (si no, crearía uno que
+  // luego no vería, ya que la lista filtra por vendedorId).
+  if (isScoped((user.rol ?? "lectura") as Rol)) {
+    parsed.data.vendedorId = user.id;
   }
 
   try {
@@ -1014,7 +1125,11 @@ export async function actualizarCliente(
   id: string,
   data: ClienteInput,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("clientes", "edit"));
+  const user = await assertPerm("clientes", "edit");
+  if (!(await puedeAccederCliente(user, id))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  const actor = actorOf(user);
 
   const parsed = clienteSchema.safeParse(data);
   if (!parsed.success) {
@@ -1091,7 +1206,11 @@ export async function agregarContacto(
   clienteId: string,
   data: ContactoInput,
 ): Promise<ActionResult & { id?: string }> {
-  const actor = actorOf(await assertPerm("clientes", "edit"));
+  const user = await assertPerm("clientes", "edit");
+  if (!(await puedeAccederCliente(user, clienteId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  const actor = actorOf(user);
 
   const parsed = contactoSchema.safeParse(data);
   if (!parsed.success) {
@@ -1142,7 +1261,8 @@ export async function actualizarContacto(
   id: string,
   data: ContactoInput,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("clientes", "edit"));
+  const user = await assertPerm("clientes", "edit");
+  const actor = actorOf(user);
 
   const parsed = contactoSchema.safeParse(data);
   if (!parsed.success) {
@@ -1153,6 +1273,15 @@ export async function actualizarContacto(
   }
   const d = parsed.data;
   const contactoId = id; // contactos.id es uuid (string)
+
+  const [c] = await db
+    .select({ clienteId: schema.contactos.clienteId })
+    .from(schema.contactos)
+    .where(eq(schema.contactos.id, contactoId))
+    .limit(1);
+  if (!c || !(await puedeAccederCliente(user, c.clienteId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
 
   try {
     const clienteId = await db.transaction(async (tx) => {
@@ -1199,9 +1328,19 @@ export async function actualizarContacto(
 
 /** Elimina un contacto. Resuelve el cliente para revalidar su detalle. */
 export async function eliminarContacto(id: string): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("clientes", "edit"));
+  const user = await assertPerm("clientes", "edit");
+  const actor = actorOf(user);
 
   const contactoId = id; // contactos.id es uuid (string)
+
+  const [c] = await db
+    .select({ clienteId: schema.contactos.clienteId })
+    .from(schema.contactos)
+    .where(eq(schema.contactos.id, contactoId))
+    .limit(1);
+  if (!c || !(await puedeAccederCliente(user, c.clienteId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
 
   try {
     const clienteId = await db.transaction(async (tx) => {
@@ -1294,6 +1433,11 @@ export async function crearCotizacion(
     };
   }
   const d = parsed.data;
+
+  if (!(await puedeAccederCliente(user, d.clienteId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+
   const anio = new Date().getFullYear();
   const MAX_RETRIES = 5;
 
@@ -1385,7 +1529,11 @@ export async function actualizarCotizacionItems(
   cotizacionId: string,
   items: CotizacionItemInput[],
 ): Promise<ActionResult & { subtotal?: number; iva?: number; total?: number }> {
-  const actor = actorOf(await assertPerm("cotizaciones", "edit"));
+  const user = await assertPerm("cotizaciones", "edit");
+  if (!(await puedeAccederCotizacion(user, cotizacionId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  const actor = actorOf(user);
 
   const parsed = cotizacionItemsSchema.safeParse(items);
   if (!parsed.success) {
@@ -1482,7 +1630,11 @@ export async function cambiarEstadoCotizacion(
   id: string,
   estado: CotizacionEstadoEnum,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("cotizaciones", "edit"));
+  const user = await assertPerm("cotizaciones", "edit");
+  if (!(await puedeAccederCotizacion(user, id))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  const actor = actorOf(user);
 
   try {
     const resultado = await db.transaction(async (tx) => {
@@ -1550,7 +1702,11 @@ export async function cambiarEstadoCotizacion(
 export async function nuevaVersionCotizacion(
   id: string,
 ): Promise<ActionResult & { id?: string }> {
-  const actor = actorOf(await assertPerm("cotizaciones", "edit"));
+  const user = await assertPerm("cotizaciones", "edit");
+  if (!(await puedeAccederCotizacion(user, id))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  const actor = actorOf(user);
 
   try {
     const nuevaId = await db.transaction(async (tx) => {
@@ -1666,7 +1822,11 @@ export async function actualizarCotizacionDatos(
   id: string,
   data: CotizacionDatosInput,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("cotizaciones", "edit"));
+  const user = await assertPerm("cotizaciones", "edit");
+  if (!(await puedeAccederCotizacion(user, id))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  const actor = actorOf(user);
 
   const parsed = cotizacionDatosSchema.safeParse(data);
   if (!parsed.success) {
@@ -1927,7 +2087,8 @@ type AplicarDimensionamientoInput = z.input<typeof aplicarDimensionamientoSchema
 export async function aplicarDimensionamiento(
   input: AplicarDimensionamientoInput,
 ): Promise<ActionResult & { subtotal?: number; iva?: number; total?: number }> {
-  const actor = actorOf(await assertPerm("cotizaciones", "edit"));
+  const user = await assertPerm("cotizaciones", "edit");
+  const actor = actorOf(user);
 
   const parsed = aplicarDimensionamientoSchema.safeParse(input);
   if (!parsed.success) {
@@ -1937,6 +2098,10 @@ export async function aplicarDimensionamiento(
     };
   }
   const { cotizacionId, sistema, partidas, modo } = parsed.data;
+
+  if (!(await puedeAccederCotizacion(user, cotizacionId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
 
   try {
     const resultado = await db.transaction(async (tx) => {
@@ -2058,7 +2223,11 @@ const SCOPE_ADMIN: DashboardScope = { rol: "admin", userId: "" };
 export async function enviarCotizacionPorCorreo(
   id: string,
 ): Promise<ActionResult & { skipped?: boolean }> {
-  const actor = actorOf(await assertPerm("cotizaciones", "edit"));
+  const user = await assertPerm("cotizaciones", "edit");
+  if (!(await puedeAccederCotizacion(user, id))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  const actor = actorOf(user);
 
   const detalle = await getCotizacion(SCOPE_ADMIN, id);
   if (!detalle) {
@@ -3176,6 +3345,9 @@ export async function crearOportunidadDeCliente(
   data: CrearOportunidadDeClienteInput,
 ): Promise<ActionResult & { id?: string }> {
   const user = await assertPerm("oportunidades", "edit");
+  if (!(await puedeAccederCliente(user, clienteId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
   const actor = actorOf(user);
 
   const parsed = crearOportunidadDeClienteSchema.safeParse(data);
@@ -3281,6 +3453,10 @@ export async function registrarDocumento(
   }
   const d = parsed.data;
 
+  if (!(await puedeAccederEntidad(user, d.entidadTipo, d.entidadId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+
   try {
     const id = await db.transaction(async (tx) => {
       const [doc] = await tx
@@ -3317,9 +3493,22 @@ export async function registrarDocumento(
 
 /** Elimina un documento. Resuelve su entidad para revalidar + traza. */
 export async function eliminarDocumento(id: string): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("documentos", "edit"));
+  const user = await assertPerm("documentos", "edit");
+  const actor = actorOf(user);
 
   const documentoId = id; // documentos.id es uuid (string)
+
+  const [d] = await db
+    .select({
+      t: schema.documentos.entidadTipo,
+      e: schema.documentos.entidadId,
+    })
+    .from(schema.documentos)
+    .where(eq(schema.documentos.id, documentoId))
+    .limit(1);
+  if (!d || !(await puedeAccederEntidad(user, d.t, d.e))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
 
   try {
     const entidad = await db.transaction(async (tx) => {
@@ -3416,6 +3605,10 @@ export async function crearActividad(
   }
   const d = parsed.data;
 
+  if (!(await puedeAccederEntidad(user, d.entidadTipo, d.entidadId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+
   try {
     const id = await db.transaction(async (tx) => {
       const [actividad] = await tx
@@ -3459,9 +3652,29 @@ export async function completarActividad(
   id: string,
   completada: boolean,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("actividades", "edit"));
+  const user = await assertPerm("actividades", "edit");
+  const actor = actorOf(user);
 
   const actividadId = Number(id); // actividades.id es bigint
+
+  const [a] = await db
+    .select({
+      entidadTipo: schema.actividades.entidadTipo,
+      entidadId: schema.actividades.entidadId,
+    })
+    .from(schema.actividades)
+    .where(eq(schema.actividades.id, actividadId))
+    .limit(1);
+  if (!a) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  if (
+    a.entidadTipo &&
+    a.entidadId &&
+    !(await puedeAccederEntidad(user, a.entidadTipo, a.entidadId))
+  ) {
+    return { ok: false, error: SIN_ACCESO };
+  }
 
   try {
     const entidadId = await db.transaction(async (tx) => {
