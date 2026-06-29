@@ -3207,6 +3207,42 @@ export async function getProducto(id: string): Promise<ProductoRecord | null> {
   return rows[0] ? mapProductoRow(rows[0]) : null;
 }
 
+/** Opción de catálogo para el editor de líneas de paquete. */
+export interface ProductoCatalogoOpcion {
+  id: string;
+  nombre: string;
+  tipoNombre: string;
+  naturaleza: string;
+  precioVenta: number | null;
+  unidad: string;
+}
+
+/** Productos activos como opciones (para elegir líneas de un paquete). */
+export async function getProductosCatalogo(): Promise<ProductoCatalogoOpcion[]> {
+  const rows = await db
+    .select({
+      id: schema.productos.id,
+      nombre: schema.productos.nombre,
+      tipoNombre: schema.productoTipos.nombre,
+      naturaleza: schema.productos.naturaleza,
+      precioVenta: schema.productos.precioVenta,
+      unidad: schema.productos.unidad,
+    })
+    .from(schema.productos)
+    .innerJoin(schema.productoTipos, eq(schema.productos.productoTipoId, schema.productoTipos.id))
+    .where(eq(schema.productos.activo, true))
+    .orderBy(asc(schema.productoTipos.nombre), asc(schema.productos.nombre));
+
+  return rows.map((r) => ({
+    id: r.id,
+    nombre: r.nombre,
+    tipoNombre: r.tipoNombre,
+    naturaleza: r.naturaleza,
+    precioVenta: numOrNull(r.precioVenta),
+    unidad: r.unidad,
+  }));
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
  * PAQUETES (bundles para cotizaciones) — capa de datos
  *
@@ -3221,6 +3257,7 @@ export interface PaqueteRow {
   id: string;
   nombre: string;
   clave: string;
+  descripcion: string | null;
   segmento: PaqueteSegmento;
   capacidadKwp: number | null;
   activo: boolean;
@@ -3323,6 +3360,7 @@ function mapPaqueteRow(row: {
   id: string;
   nombre: string;
   clave: string;
+  descripcion: string | null;
   segmento: PaqueteSegmento;
   capacidadKwp: string | null;
   activo: boolean;
@@ -3337,6 +3375,7 @@ function mapPaqueteRow(row: {
     id: row.id,
     nombre: row.nombre,
     clave: row.clave,
+    descripcion: row.descripcion,
     segmento: row.segmento,
     capacidadKwp: numOrNull(row.capacidadKwp),
     activo: row.activo,
@@ -3353,6 +3392,7 @@ const paqueteSelect = {
   id: schema.paquetes.id,
   nombre: schema.paquetes.nombre,
   clave: schema.paquetes.clave,
+  descripcion: schema.paquetes.descripcion,
   segmento: schema.paquetes.segmento,
   capacidadKwp: schema.paquetes.capacidadKwp,
   activo: schema.paquetes.activo,
