@@ -26,6 +26,8 @@ export interface PaqueteLineasEditorProps {
   lineasIniciales: ReadonlyArray<PaqueteLineaRow>
   catalogo: ReadonlyArray<ProductoCatalogoOpcion>
   moneda: string
+  /** Descuento general del paquete (0–100), para mostrar el total con descuento. */
+  descuentoPct: number
   puedeEditar: boolean
 }
 
@@ -49,6 +51,7 @@ export function PaqueteLineasEditor({
   lineasIniciales,
   catalogo,
   moneda,
+  descuentoPct,
   puedeEditar,
 }: PaqueteLineasEditorProps) {
   const router = useRouter()
@@ -78,6 +81,7 @@ export function PaqueteLineasEditor({
   }, [catalogo, lineasIniciales])
 
   const total = lineas.reduce((acc, l) => acc + num(l.cantidad) * num(l.precioFijo), 0)
+  const totalConDescuento = descuentoPct > 0 ? total * (1 - descuentoPct / 100) : total
 
   function set(key: string, patch: Partial<LineaEdit>): void {
     setLineas((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)))
@@ -178,7 +182,15 @@ export function PaqueteLineasEditor({
               </tbody>
             </table>
           </div>
-          <p className="mt-3 text-right text-sm font-medium">Total: {fmtMxn(total)} {moneda}</p>
+          <div className="mt-3 space-y-0.5 text-right text-sm">
+            {descuentoPct > 0 ? (
+              <>
+                <p className="text-muted-foreground">Subtotal: {fmtMxn(total)}</p>
+                <p className="text-muted-foreground">Descuento ({descuentoPct}%): −{fmtMxn(total - totalConDescuento)}</p>
+              </>
+            ) : null}
+            <p className="font-medium">Total: {fmtMxn(totalConDescuento)} {moneda}</p>
+          </div>
         </CardContent>
       </Card>
     )
@@ -296,7 +308,15 @@ export function PaqueteLineasEditor({
           <Button type="button" size="sm" variant="outline" onClick={agregar} disabled={pending}>
             <Plus className="size-4" aria-hidden /> Agregar línea
           </Button>
-          <p className="text-sm font-medium tabular-nums">Total: {fmtMxn(total)} {moneda}</p>
+          <div className="space-y-0.5 text-right text-sm tabular-nums">
+            {descuentoPct > 0 ? (
+              <>
+                <p className="text-muted-foreground">Subtotal: {fmtMxn(total)}</p>
+                <p className="text-muted-foreground">Descuento ({descuentoPct}%): −{fmtMxn(total - totalConDescuento)}</p>
+              </>
+            ) : null}
+            <p className="font-medium">Total: {fmtMxn(totalConDescuento)} {moneda}</p>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">

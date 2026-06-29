@@ -12,6 +12,16 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0011 — Descuento general del paquete · 2026-06-29
+
+**Migración:** `db/migrations/0011_paquete_descuento.sql`
+
+- `paquetes.descuento_pct` (numeric, 0–100, default 0). Al aplicar el paquete a
+  una cotización, se descuenta de CADA línea: `precio_unitario = precio_fijo *
+  (1 - descuento_pct/100)`. El total mostrado del paquete ya refleja el descuento.
+
+---
+
 ## 0010 — Imagen de producto (M365 SharePoint/OneDrive) · 2026-06-29
 
 **Migración:** `db/migrations/0010_producto_imagen.sql`

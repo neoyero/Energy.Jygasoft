@@ -150,6 +150,7 @@ export const paquetes = pgTable("paquetes", {
 	descripcion: text(),
 	segmento: paqueteSegmento().notNull(),
 	capacidadKwp: numeric("capacidad_kwp", { precision: 10, scale: 2 }),
+	descuentoPct: numeric("descuento_pct", { precision: 5, scale: 2 }).default('0').notNull(),
 	activo: boolean().default(true).notNull(),
 	moneda: text().default('MXN').notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),

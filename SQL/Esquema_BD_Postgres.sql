@@ -127,6 +127,7 @@ CREATE TABLE paquetes (
   descripcion        text,
   segmento           paquete_segmento NOT NULL,
   capacidad_kwp      numeric(10,2),                  -- nominal, para "mejor ajuste"
+  descuento_pct      numeric(5,2) NOT NULL DEFAULT 0 CHECK (descuento_pct >= 0 AND descuento_pct <= 100),
   activo             boolean NOT NULL DEFAULT true,
   moneda             text NOT NULL DEFAULT 'MXN',
   created_at         timestamptz NOT NULL DEFAULT now(),

@@ -115,6 +115,7 @@ export function PaquetesTable({ filtros, puedeEditar, onEdit, reloadToken }: Paq
           <span className="text-xs text-stone-500 dark:text-muted-foreground">
             {SEGMENTO_LABEL[r.segmento] ?? r.segmento}
             {r.capacidadKwp != null ? ` · ${r.capacidadKwp} kWp` : ""}
+            {r.descuentoPct > 0 ? ` · -${r.descuentoPct}%` : ""}
           </span>
         </div>
       ),

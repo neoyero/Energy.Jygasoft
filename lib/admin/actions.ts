@@ -4463,6 +4463,11 @@ const paqueteSchema = z.object({
     .nonnegative("La capacidad no puede ser negativa.")
     .nullable()
     .optional(),
+  descuentoPct: z
+    .number()
+    .min(0, "El descuento no puede ser negativo.")
+    .max(100, "El descuento no puede superar 100%.")
+    .optional(),
   activo: z.boolean().optional(),
 });
 
@@ -4502,6 +4507,7 @@ export async function crearPaquete(
         descripcion: txtOrNull(d.descripcion),
         segmento: d.segmento,
         capacidadKwp: numParaDb(d.capacidadKwp),
+        descuentoPct: String(d.descuentoPct ?? 0),
         activo: d.activo ?? true,
       })
       .returning({ id: schema.paquetes.id });
@@ -4532,6 +4538,7 @@ export async function actualizarPaquete(
         descripcion: txtOrNull(d.descripcion),
         segmento: d.segmento,
         capacidadKwp: numParaDb(d.capacidadKwp),
+        descuentoPct: String(d.descuentoPct ?? 0),
         activo: d.activo ?? true,
         updatedAt: new Date().toISOString(),
       })
@@ -4705,6 +4712,16 @@ export async function aplicarPaqueteACotizacion(
         return { ok: false as const, error: "El paquete no tiene líneas." };
       }
 
+      // Descuento general del paquete: se aplica a CADA línea (precio_unitario).
+      const [paq] = await tx
+        .select({ descuentoPct: schema.paquetes.descuentoPct })
+        .from(schema.paquetes)
+        .where(eq(schema.paquetes.id, paqueteId))
+        .limit(1);
+      const factor = 1 - Number(paq?.descuentoPct ?? 0) / 100;
+      const precioConDescuento = (precioFijo: string): number =>
+        Math.round(Number(precioFijo) * factor * 100) / 100;
+
       await tx
         .delete(schema.cotizacionItems)
         .where(eq(schema.cotizacionItems.cotizacionId, cotizacionId));
@@ -4715,14 +4732,14 @@ export async function aplicarPaqueteACotizacion(
           equipoId: l.productoId,
           descripcion: l.descripcion ?? l.productoNombre,
           cantidad: l.cantidad,
-          precioUnitario: l.precioFijo,
+          precioUnitario: String(precioConDescuento(l.precioFijo)),
         })),
       );
 
       const t = calcularTotales(
         lineas.map((l) => ({
           cantidad: Number(l.cantidad),
-          precioUnitario: Number(l.precioFijo),
+          precioUnitario: precioConDescuento(l.precioFijo),
         })),
       );
 

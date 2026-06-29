@@ -32,6 +32,7 @@ interface FormState {
   nombre: string
   segmento: "residencial" | "comercial" | "industrial"
   capacidadKwp: string
+  descuentoPct: string
   descripcion: string
   activo: boolean
 }
@@ -53,6 +54,7 @@ function estadoInicial(p?: PaqueteRow): FormState {
     nombre: p?.nombre ?? "",
     segmento: p?.segmento ?? "residencial",
     capacidadKwp: p?.capacidadKwp != null ? String(p.capacidadKwp) : "",
+    descuentoPct: p?.descuentoPct != null ? String(p.descuentoPct) : "0",
     descripcion: p?.descripcion ?? "",
     activo: p?.activo ?? true,
   }
@@ -84,6 +86,7 @@ export function PaqueteForm({ modo, paquete, onSuccess, onCancel, onSavingChange
       nombre: form.nombre.trim(),
       segmento: form.segmento,
       capacidadKwp: numOrNull(form.capacidadKwp),
+      descuentoPct: numOrNull(form.descuentoPct) ?? 0,
       descripcion: nullable(form.descripcion),
       activo: form.activo,
     }
@@ -143,6 +146,21 @@ export function PaqueteForm({ modo, paquete, onSuccess, onCancel, onSavingChange
           inputMode="decimal"
           placeholder="Para el «mejor ajuste»"
         />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="paq-descuento">Descuento (%)</Label>
+        <Input
+          id="paq-descuento"
+          value={form.descuentoPct}
+          onChange={(e) => set("descuentoPct", e.target.value)}
+          disabled={pending}
+          inputMode="decimal"
+          placeholder="0"
+        />
+        <p className="text-xs text-muted-foreground">
+          Se aplica a cada línea al armar la cotización.
+        </p>
       </div>
 
       <div className="space-y-1.5 sm:col-span-2">

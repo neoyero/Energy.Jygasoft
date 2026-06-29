@@ -3268,11 +3268,15 @@ export interface PaqueteRow {
   descripcion: string | null;
   segmento: PaqueteSegmento;
   capacidadKwp: number | null;
+  /** Descuento general del paquete (0–100), aplicado a cada línea al cotizar. */
+  descuentoPct: number;
   activo: boolean;
   moneda: string;
   /** Nº de líneas. */
   lineas: number;
-  /** Total = Σ cantidad·precio_fijo. */
+  /** Σ cantidad·precio_fijo (sin descuento). */
+  subtotal: number;
+  /** Total con el descuento general aplicado. */
   total: number;
   /** Nº de líneas con precio_fijo distinto del precio_venta vivo del producto. */
   desactualizadas: number;
@@ -3306,7 +3310,10 @@ export interface PaqueteOpcion {
   nombre: string;
   segmento: PaqueteSegmento;
   capacidadKwp: number | null;
+  /** Total con descuento aplicado. */
   total: number;
+  /** Descuento general del paquete (0–100). */
+  descuentoPct: number;
   /** Nº de líneas con precio desactualizado (para avisar al aplicar). */
   desactualizadas: number;
 }
@@ -3340,13 +3347,21 @@ export function segmentoDeTipoPersona(
  * renderiza la columna sin calificar ("id"), lo que sería ambiguo/incorrecto.
  */
 const PAQUETE_ID = sql.raw("paquetes.id");
+const PAQUETE_DESC = sql.raw("paquetes.descuento_pct");
 const paqueteAggregates = {
   lineas: sql<number>`(
     SELECT count(*) FROM paquete_lineas pl WHERE pl.paquete_id = ${PAQUETE_ID}
   )::int`,
-  total: sql<number>`(
+  /** Suma de líneas SIN descuento. */
+  subtotal: sql<number>`(
     SELECT COALESCE(sum(pl.cantidad * pl.precio_fijo), 0)
     FROM paquete_lineas pl WHERE pl.paquete_id = ${PAQUETE_ID}
+  )::float8`,
+  /** Total CON el descuento general del paquete aplicado. */
+  total: sql<number>`(
+    (SELECT COALESCE(sum(pl.cantidad * pl.precio_fijo), 0)
+     FROM paquete_lineas pl WHERE pl.paquete_id = ${PAQUETE_ID})
+    * (1 - COALESCE(${PAQUETE_DESC}, 0) / 100)
   )::float8`,
   desactualizadas: sql<number>`(
     SELECT count(*) FROM paquete_lineas pl
@@ -3379,9 +3394,11 @@ function mapPaqueteRow(row: {
   descripcion: string | null;
   segmento: PaqueteSegmento;
   capacidadKwp: string | null;
+  descuentoPct: string | null;
   activo: boolean;
   moneda: string;
   lineas: number;
+  subtotal: number;
   total: number;
   desactualizadas: number;
   createdAt: string;
@@ -3394,9 +3411,11 @@ function mapPaqueteRow(row: {
     descripcion: row.descripcion,
     segmento: row.segmento,
     capacidadKwp: numOrNull(row.capacidadKwp),
+    descuentoPct: numOrZero(row.descuentoPct),
     activo: row.activo,
     moneda: row.moneda,
     lineas: Number(row.lineas),
+    subtotal: Number(row.subtotal),
     total: Number(row.total),
     desactualizadas: Number(row.desactualizadas),
     createdAt: row.createdAt,
@@ -3411,9 +3430,11 @@ const paqueteSelect = {
   descripcion: schema.paquetes.descripcion,
   segmento: schema.paquetes.segmento,
   capacidadKwp: schema.paquetes.capacidadKwp,
+  descuentoPct: schema.paquetes.descuentoPct,
   activo: schema.paquetes.activo,
   moneda: schema.paquetes.moneda,
   lineas: paqueteAggregates.lineas,
+  subtotal: paqueteAggregates.subtotal,
   total: paqueteAggregates.total,
   desactualizadas: paqueteAggregates.desactualizadas,
   createdAt: schema.paquetes.createdAt,
@@ -3506,6 +3527,7 @@ export async function getPaquetesActivos(
       nombre: schema.paquetes.nombre,
       segmento: schema.paquetes.segmento,
       capacidadKwp: schema.paquetes.capacidadKwp,
+      descuentoPct: schema.paquetes.descuentoPct,
       total: paqueteAggregates.total,
       desactualizadas: paqueteAggregates.desactualizadas,
     })
@@ -3518,6 +3540,7 @@ export async function getPaquetesActivos(
     nombre: r.nombre,
     segmento: r.segmento,
     capacidadKwp: numOrNull(r.capacidadKwp),
+    descuentoPct: numOrZero(r.descuentoPct),
     total: Number(r.total),
     desactualizadas: Number(r.desactualizadas),
   }));
