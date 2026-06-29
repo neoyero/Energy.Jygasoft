@@ -32,6 +32,7 @@ export type Modulo =
   | "pagos"
   | "productos"
   | "paquetes"
+  | "marcas"
   | "campanas"
   | "actividades"
   | "documentos"
@@ -73,6 +74,7 @@ const MATRIX: Record<Modulo, { view: Rol[]; edit: Rol[] }> = {
   productos: { view: [...ALL], edit: OPS },
   // Paquetes: todos los ven/seleccionan; solo admin/gerente crean/editan.
   paquetes: { view: [...ALL], edit: MANAGERS },
+  marcas: { view: [...ALL], edit: OPS },
   campanas: { view: [...MKT, "finanzas", "lectura"], edit: MKT },
   actividades: {
     view: [...COMERCIAL, ...OPS, ...FIELD, "lectura"],
@@ -103,6 +105,7 @@ export const NAV_GROUPS = [
   "General",
   "Comercial",
   "Operaciones",
+  "Catálogos",
   "Finanzas",
   "Marketing",
   "Sistema",
@@ -127,6 +130,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/je-admin/documentos", label: "Documentos", modulo: "documentos", grupo: "Operaciones" },
   { href: "/je-admin/productos", label: "Productos", modulo: "productos", grupo: "Operaciones" },
   { href: "/je-admin/paquetes", label: "Paquetes", modulo: "paquetes", grupo: "Operaciones" },
+  { href: "/je-admin/marcas", label: "Marcas", modulo: "marcas", grupo: "Catálogos" },
   { href: "/je-admin/pagos", label: "Pagos", modulo: "pagos", grupo: "Finanzas" },
   { href: "/je-admin/metricas", label: "Métricas", modulo: "metricas", grupo: "Finanzas" },
   { href: "/je-admin/campanas", label: "Campañas", modulo: "campanas", grupo: "Marketing" },

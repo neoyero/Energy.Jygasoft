@@ -188,6 +188,20 @@ export const paqueteLineas = pgTable("paquete_lineas", {
 		}),
 ]);
 
+// Catálogo de Marcas (grupo "Catálogos"). Anti-duplicados por nombre_normalizado.
+export const marcas = pgTable("marcas", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	nombre: text().notNull(),
+	nombreNormalizado: text("nombre_normalizado").notNull(),
+	descripcion: text(),
+	activo: boolean().default(true).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("ix_marcas_activo").using("btree", table.activo.asc().nullsLast().op("bool_ops")),
+	unique("marcas_nombre_normalizado_key").on(table.nombreNormalizado),
+]);
+
 export const hspZonas = pgTable("hsp_zonas", {
 	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
 	id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity({ name: "hsp_zonas_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),

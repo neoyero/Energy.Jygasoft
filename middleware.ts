@@ -24,6 +24,7 @@ const SECTION_TO_MODULO: Record<string, Modulo> = {
   pagos: "pagos",
   productos: "productos",
   paquetes: "paquetes",
+  marcas: "marcas",
   campanas: "campanas",
   actividades: "actividades",
   documentos: "documentos",

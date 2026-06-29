@@ -3625,3 +3625,69 @@ export async function getDesviacionesPaquetes(
     precioVentaActual: numOrZero(r.precioVentaActual),
   }));
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * CATÁLOGOS · MARCAS — capa de datos
+ * ───────────────────────────────────────────────────────────────────────── */
+
+export interface MarcaRow {
+  id: string;
+  nombre: string;
+  descripcion: string | null;
+  activo: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MarcasFiltros {
+  busqueda?: string;
+  soloActivas?: boolean;
+}
+
+export interface MarcasPage {
+  rows: MarcaRow[];
+  total: number;
+}
+
+/** Página de marcas (server-side) con filtros por búsqueda/estado. */
+export async function getMarcasPage(
+  filtros: MarcasFiltros,
+  opts: { limit: number; offset: number },
+): Promise<MarcasPage> {
+  const conds: SQL[] = [];
+  if (filtros.soloActivas) conds.push(eq(schema.marcas.activo, true));
+  const q = filtros.busqueda?.trim();
+  if (q) conds.push(ilike(schema.marcas.nombre, `%${q}%`));
+  const where = conds.length ? and(...conds) : undefined;
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(schema.marcas)
+    .where(where);
+
+  const rows = await db
+    .select({
+      id: schema.marcas.id,
+      nombre: schema.marcas.nombre,
+      descripcion: schema.marcas.descripcion,
+      activo: schema.marcas.activo,
+      createdAt: schema.marcas.createdAt,
+      updatedAt: schema.marcas.updatedAt,
+    })
+    .from(schema.marcas)
+    .where(where)
+    .orderBy(asc(schema.marcas.nombre))
+    .limit(opts.limit)
+    .offset(opts.offset);
+
+  return { rows, total: Number(total) };
+}
+
+/** Marcas activas como opciones (id/nombre), orden alfabético. */
+export async function getMarcasActivas(): Promise<{ id: string; nombre: string }[]> {
+  return db
+    .select({ id: schema.marcas.id, nombre: schema.marcas.nombre })
+    .from(schema.marcas)
+    .where(eq(schema.marcas.activo, true))
+    .orderBy(asc(schema.marcas.nombre));
+}

@@ -16,6 +16,9 @@ import {
   getMejorPaquete,
   segmentoDeTipoPersona,
   getDesviacionesPaquetes,
+  getMarcasPage,
+  type MarcasPage,
+  type MarcasFiltros,
   type DashboardScope,
   type LeadsFiltros,
   type LeadsPage,
@@ -4901,4 +4904,113 @@ export async function notificarDesviacionesPaquetes(): Promise<{
     .where(inArray(schema.paqueteLineas.id, lineaIds));
 
   return { ok: true, notificadas: desviaciones.length, skipped };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * CATÁLOGOS · MARCAS — mutaciones (RBAC: módulo "marcas", edit = OPS)
+ * ───────────────────────────────────────────────────────────────────────── */
+
+const MARCAS_PATH = "/je-admin/marcas";
+
+const marcaSchema = z.object({
+  nombre: z.string().trim().min(1, "El nombre es obligatorio.").max(120),
+  descripcion: z.string().trim().max(500).nullable().optional(),
+  activo: z.boolean().optional(),
+});
+
+function mensajeMarcaConflicto(e: unknown): string {
+  const msg = e instanceof Error ? e.message : "";
+  if (msg.includes("marcas_nombre_normalizado_key")) return "Ya existe una marca con ese nombre.";
+  return "No se pudo guardar la marca.";
+}
+
+export async function fetchMarcas(input: {
+  filtros?: MarcasFiltros;
+  limit: number;
+  offset: number;
+}): Promise<MarcasPage> {
+  await assertPerm("marcas", "view");
+  const f = input.filtros ?? {};
+  const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
+  const offset = Math.max(0, Math.trunc(input.offset));
+  return getMarcasPage({ busqueda: f.busqueda, soloActivas: f.soloActivas }, { limit, offset });
+}
+
+export async function crearMarca(
+  data: z.input<typeof marcaSchema>,
+): Promise<ActionResult & { id?: string }> {
+  await assertPerm("marcas", "edit");
+  const parsed = marcaSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  const d = parsed.data;
+  try {
+    const [row] = await db
+      .insert(schema.marcas)
+      .values({
+        nombre: d.nombre,
+        nombreNormalizado: normalizarNombre(d.nombre),
+        descripcion: txtOrNull(d.descripcion),
+        activo: d.activo ?? true,
+      })
+      .returning({ id: schema.marcas.id });
+    revalidatePath(MARCAS_PATH);
+    return { ok: true, id: row.id };
+  } catch (e) {
+    return { ok: false, error: mensajeMarcaConflicto(e) };
+  }
+}
+
+export async function actualizarMarca(
+  id: string,
+  data: z.input<typeof marcaSchema>,
+): Promise<ActionResult> {
+  await assertPerm("marcas", "edit");
+  const parsed = marcaSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  const d = parsed.data;
+  try {
+    await db
+      .update(schema.marcas)
+      .set({
+        nombre: d.nombre,
+        nombreNormalizado: normalizarNombre(d.nombre),
+        descripcion: txtOrNull(d.descripcion),
+        activo: d.activo ?? true,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.marcas.id, id));
+    revalidatePath(MARCAS_PATH);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: mensajeMarcaConflicto(e) };
+  }
+}
+
+export async function toggleMarcaActiva(id: string, activo: boolean): Promise<ActionResult> {
+  await assertPerm("marcas", "edit");
+  try {
+    await db
+      .update(schema.marcas)
+      .set({ activo, updatedAt: new Date().toISOString() })
+      .where(eq(schema.marcas.id, id));
+    revalidatePath(MARCAS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo cambiar el estado de la marca." };
+  }
+}
+
+export async function eliminarMarca(id: string): Promise<ActionResult> {
+  await assertPerm("marcas", "edit");
+  try {
+    await db.delete(schema.marcas).where(eq(schema.marcas.id, id));
+    revalidatePath(MARCAS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo eliminar la marca." };
+  }
 }

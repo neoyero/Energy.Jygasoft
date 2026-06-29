@@ -166,6 +166,19 @@ CREATE TRIGGER trg_productos_precio_reset_notif
   AFTER UPDATE OF precio_venta ON productos
   FOR EACH ROW EXECUTE FUNCTION reset_paquete_linea_notificacion();
 
+-- CATÁLOGOS · Marcas (anti-duplicados por nombre_normalizado).
+CREATE TABLE marcas (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre             text NOT NULL,
+  nombre_normalizado text NOT NULL UNIQUE,
+  descripcion        text,
+  activo             boolean NOT NULL DEFAULT true,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_marcas_activo ON marcas (activo);
+CREATE TRIGGER trg_marcas_upd BEFORE UPDATE ON marcas FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 CREATE TABLE hsp_zonas (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   municipio text NOT NULL, estado_mx text NOT NULL DEFAULT 'Aguascalientes',

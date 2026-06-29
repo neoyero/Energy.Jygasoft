@@ -12,6 +12,16 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0012 — Catálogo de Marcas · 2026-06-29
+
+**Migración:** `db/migrations/0012_marcas.sql`
+
+- Nueva tabla `marcas` (grupo "Catálogos"): `nombre`, `nombre_normalizado`
+  (único, anti-duplicados), `descripcion`, `activo`, timestamps. Primer catálogo
+  del nuevo módulo. Backfill de las marcas ya usadas en `productos` (texto libre).
+
+---
+
 ## 0011 — Descuento general del paquete · 2026-06-29
 
 **Migración:** `db/migrations/0011_paquete_descuento.sql`
