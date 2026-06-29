@@ -23,6 +23,7 @@ const SECTION_TO_MODULO: Record<string, Modulo> = {
   proyectos: "proyectos",
   pagos: "pagos",
   productos: "productos",
+  paquetes: "paquetes",
   campanas: "campanas",
   actividades: "actividades",
   documentos: "documentos",

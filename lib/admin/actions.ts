@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { eq, and, ne, desc, notInArray, sql, type SQL } from "drizzle-orm";
+import { eq, and, ne, asc, desc, inArray, notInArray, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { assertPerm, actorOf, type SessionUser } from "@/lib/admin/guard";
@@ -12,12 +12,17 @@ import {
   getCotizacionCalcContext,
   getCatalogoDisponible,
   getProductosPage,
+  getPaquetesPage,
+  getDesviacionesPaquetes,
   type DashboardScope,
   type LeadsFiltros,
   type LeadsPage,
   type FetchLeadsInput,
   type ProductosPage,
   type ProductosFiltros,
+  type PaquetesPage,
+  type PaquetesFiltros,
+  type DesviacionLinea,
 } from "@/lib/admin/queries";
 import type { Rol } from "@/lib/admin/rbac";
 import { ETAPAS_CERRADAS, PROBABILIDAD_POR_ETAPA } from "@/lib/admin/pipeline";
@@ -32,6 +37,7 @@ import {
   type DimensionarResult,
 } from "@/lib/admin/cotizacion-dimensionado";
 import { sendMail } from "@/lib/email";
+import { serverEnv, clientEnv } from "@/lib/env";
 import {
   renderCotizacionPdf,
   type CotizacionPdfData,
@@ -4341,4 +4347,421 @@ export async function eliminarProducto(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar el producto." };
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * PAQUETES (bundles) — mutaciones
+ *
+ * CRUD de paquetes y sus líneas (referencian productos del catálogo). Aplicar un
+ * paquete COPIA sus líneas a cotizacion_items con precio_fijo (snapshot), sin
+ * tocar el paso Sistema. RBAC: módulo "paquetes" (edit = admin/gerente); aplicar
+ * vive bajo cotizaciones:edit.
+ * ──────────────────────────────────────────────────────────────────────────*/
+
+const PAQUETES_PATH = "/je-admin/paquetes";
+
+/** Normaliza un nombre para el anti-duplicados (minúsculas, sin acentos, 1 espacio). */
+function normalizarNombre(nombre: string): string {
+  return nombre
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Slug estable (a-z, 0-9, _) a partir del nombre. */
+function slugPaquete(nombre: string): string {
+  return nombre
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function mensajePaqueteConflicto(e: unknown): string {
+  const msg = e instanceof Error ? e.message : "";
+  if (msg.includes("paquetes_clave_key")) return "Ya existe un paquete con esa clave.";
+  if (msg.includes("paquetes_nombre_normalizado_key")) return "Ya existe un paquete con ese nombre.";
+  return "No se pudo guardar el paquete.";
+}
+
+const paqueteSchema = z.object({
+  nombre: z.string().trim().min(1, "El nombre es obligatorio.").max(160),
+  clave: z.string().trim().max(80).optional(),
+  descripcion: z.string().trim().max(1000).nullable().optional(),
+  segmento: z.enum(schema.paqueteSegmento.enumValues),
+  capacidadKwp: z
+    .number()
+    .nonnegative("La capacidad no puede ser negativa.")
+    .nullable()
+    .optional(),
+  activo: z.boolean().optional(),
+});
+
+export async function fetchPaquetes(input: {
+  filtros?: PaquetesFiltros;
+  limit: number;
+  offset: number;
+}): Promise<PaquetesPage> {
+  await assertPerm("paquetes", "view");
+  const f = input.filtros ?? {};
+  const filtros: PaquetesFiltros = {
+    segmento: f.segmento ?? undefined,
+    soloActivos: f.soloActivos,
+    busqueda: f.busqueda,
+  };
+  const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
+  const offset = Math.max(0, Math.trunc(input.offset));
+  return getPaquetesPage(filtros, { limit, offset });
+}
+
+export async function crearPaquete(
+  data: z.input<typeof paqueteSchema>,
+): Promise<ActionResult & { id?: string }> {
+  await assertPerm("paquetes", "edit");
+  const parsed = paqueteSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  const d = parsed.data;
+  try {
+    const [row] = await db
+      .insert(schema.paquetes)
+      .values({
+        nombre: d.nombre,
+        nombreNormalizado: normalizarNombre(d.nombre),
+        clave: (d.clave?.trim() || slugPaquete(d.nombre)).toLowerCase(),
+        descripcion: txtOrNull(d.descripcion),
+        segmento: d.segmento,
+        capacidadKwp: numParaDb(d.capacidadKwp),
+        activo: d.activo ?? true,
+      })
+      .returning({ id: schema.paquetes.id });
+    revalidatePath(PAQUETES_PATH);
+    return { ok: true, id: row.id };
+  } catch (e) {
+    return { ok: false, error: mensajePaqueteConflicto(e) };
+  }
+}
+
+export async function actualizarPaquete(
+  id: string,
+  data: z.input<typeof paqueteSchema>,
+): Promise<ActionResult> {
+  await assertPerm("paquetes", "edit");
+  const parsed = paqueteSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  const d = parsed.data;
+  try {
+    await db
+      .update(schema.paquetes)
+      .set({
+        nombre: d.nombre,
+        nombreNormalizado: normalizarNombre(d.nombre),
+        clave: (d.clave?.trim() || slugPaquete(d.nombre)).toLowerCase(),
+        descripcion: txtOrNull(d.descripcion),
+        segmento: d.segmento,
+        capacidadKwp: numParaDb(d.capacidadKwp),
+        activo: d.activo ?? true,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.paquetes.id, id));
+    revalidatePath(PAQUETES_PATH);
+    revalidatePath(`${PAQUETES_PATH}/${id}`);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: mensajePaqueteConflicto(e) };
+  }
+}
+
+export async function togglePaqueteActivo(
+  id: string,
+  activo: boolean,
+): Promise<ActionResult> {
+  await assertPerm("paquetes", "edit");
+  try {
+    await db
+      .update(schema.paquetes)
+      .set({ activo, updatedAt: new Date().toISOString() })
+      .where(eq(schema.paquetes.id, id));
+    revalidatePath(PAQUETES_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo cambiar el estado del paquete." };
+  }
+}
+
+/** Borra un paquete (sus líneas caen por cascade). No hay FK desde cotización. */
+export async function eliminarPaquete(id: string): Promise<ActionResult> {
+  await assertPerm("paquetes", "edit");
+  try {
+    await db.delete(schema.paquetes).where(eq(schema.paquetes.id, id));
+    revalidatePath(PAQUETES_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo eliminar el paquete." };
+  }
+}
+
+const paqueteLineaSchema = z.object({
+  productoId: z.string().uuid("Producto no válido."),
+  descripcion: z.string().trim().max(400).nullable().optional(),
+  cantidad: z.number().positive("La cantidad debe ser mayor a 0."),
+  /** Si es null, se toma snapshot del precio_venta actual del producto. */
+  precioFijo: z.number().nonnegative("El precio no puede ser negativo.").nullable().optional(),
+});
+const paqueteLineasSchema = z
+  .array(paqueteLineaSchema)
+  .max(200, "Máximo 200 líneas por paquete.");
+
+/** Reemplaza por completo las líneas de un paquete (snapshot de precio_fijo). */
+export async function guardarPaqueteLineas(
+  paqueteId: string,
+  lineas: z.input<typeof paqueteLineaSchema>[],
+): Promise<ActionResult> {
+  await assertPerm("paquetes", "edit");
+  const parsed = paqueteLineasSchema.safeParse(lineas);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Líneas no válidas." };
+  }
+  const filas = parsed.data;
+  try {
+    await db.transaction(async (tx) => {
+      // Resuelve precios de venta para las líneas que no traen precio_fijo.
+      const ids = [...new Set(filas.map((l) => l.productoId))];
+      const precios = ids.length
+        ? await tx
+            .select({ id: schema.productos.id, pv: schema.productos.precioVenta })
+            .from(schema.productos)
+            .where(inArray(schema.productos.id, ids))
+        : [];
+      const precioMap = new Map(precios.map((p) => [p.id, p.pv]));
+
+      await tx
+        .delete(schema.paqueteLineas)
+        .where(eq(schema.paqueteLineas.paqueteId, paqueteId));
+
+      if (filas.length > 0) {
+        await tx.insert(schema.paqueteLineas).values(
+          filas.map((l, i) => ({
+            paqueteId,
+            productoId: l.productoId,
+            descripcion: txtOrNull(l.descripcion),
+            cantidad: String(l.cantidad),
+            precioFijo:
+              l.precioFijo != null
+                ? String(l.precioFijo)
+                : (precioMap.get(l.productoId) ?? "0"),
+            orden: i,
+          })),
+        );
+      }
+
+      await tx
+        .update(schema.paquetes)
+        .set({ updatedAt: new Date().toISOString() })
+        .where(eq(schema.paquetes.id, paqueteId));
+    });
+    revalidatePath(PAQUETES_PATH);
+    revalidatePath(`${PAQUETES_PATH}/${paqueteId}`);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudieron guardar las líneas del paquete." };
+  }
+}
+
+const aplicarPaqueteSchema = z.object({
+  cotizacionId: z.string().uuid(),
+  paqueteId: z.string().uuid(),
+  modo: z.enum(["reemplazar", "solo_vacio"]).default("reemplazar"),
+});
+
+/**
+ * Aplica un paquete a una cotización: COPIA sus líneas a cotizacion_items con su
+ * precio_fijo, recalcula totales y sincroniza el monto de la oportunidad. NO toca
+ * el paso Sistema (capacidad/paneles/esquema). Modo reemplazar / solo_vacio.
+ */
+export async function aplicarPaqueteACotizacion(
+  input: z.input<typeof aplicarPaqueteSchema>,
+): Promise<ActionResult & { total?: number }> {
+  const user = await assertPerm("cotizaciones", "edit");
+  const parsed = aplicarPaqueteSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  const { cotizacionId, paqueteId, modo } = parsed.data;
+  if (!(await puedeAccederCotizacion(user, cotizacionId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+  const actor = actorOf(user);
+
+  try {
+    const resultado = await db.transaction(async (tx) => {
+      const [cot] = await tx
+        .select({ estado: schema.cotizaciones.estado })
+        .from(schema.cotizaciones)
+        .where(eq(schema.cotizaciones.id, cotizacionId))
+        .limit(1);
+      if (!cot) throw new Error("Cotización no encontrada");
+      if (COTIZACION_ESTADOS_NO_EDITABLES.has(cot.estado)) {
+        return {
+          ok: false as const,
+          error: `No se puede editar una cotización en estado ${cot.estado}.`,
+        };
+      }
+
+      const [{ n }] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(schema.cotizacionItems)
+        .where(eq(schema.cotizacionItems.cotizacionId, cotizacionId));
+      if (modo === "solo_vacio" && Number(n) > 0) {
+        return { ok: true as const, total: undefined };
+      }
+
+      const lineas = await tx
+        .select({
+          productoId: schema.paqueteLineas.productoId,
+          descripcion: schema.paqueteLineas.descripcion,
+          cantidad: schema.paqueteLineas.cantidad,
+          precioFijo: schema.paqueteLineas.precioFijo,
+          productoNombre: schema.productos.nombre,
+        })
+        .from(schema.paqueteLineas)
+        .innerJoin(schema.productos, eq(schema.paqueteLineas.productoId, schema.productos.id))
+        .where(eq(schema.paqueteLineas.paqueteId, paqueteId))
+        .orderBy(asc(schema.paqueteLineas.orden), asc(schema.paqueteLineas.id));
+
+      if (lineas.length === 0) {
+        return { ok: false as const, error: "El paquete no tiene líneas." };
+      }
+
+      await tx
+        .delete(schema.cotizacionItems)
+        .where(eq(schema.cotizacionItems.cotizacionId, cotizacionId));
+
+      await tx.insert(schema.cotizacionItems).values(
+        lineas.map((l) => ({
+          cotizacionId,
+          equipoId: l.productoId,
+          descripcion: l.descripcion ?? l.productoNombre,
+          cantidad: l.cantidad,
+          precioUnitario: l.precioFijo,
+        })),
+      );
+
+      const t = calcularTotales(
+        lineas.map((l) => ({
+          cantidad: Number(l.cantidad),
+          precioUnitario: Number(l.precioFijo),
+        })),
+      );
+
+      await tx
+        .update(schema.cotizaciones)
+        .set({
+          subtotal: String(t.subtotal),
+          iva: String(t.iva),
+          total: String(t.total),
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.cotizaciones.id, cotizacionId));
+
+      await tx.insert(schema.eventos).values({
+        entidadTipo: "cotizacion",
+        entidadId: cotizacionId,
+        tipo: "paquete_aplicado",
+        descripcion: `Paquete aplicado (${lineas.length} partidas)`,
+        payload: { paqueteId, partidas: lineas.length, ...t, modo },
+        actor,
+      });
+
+      await autoEnlazarOportunidad(tx, cotizacionId);
+      await sincronizarMontoOportunidad(tx, cotizacionId);
+
+      return { ok: true as const, ...t };
+    });
+
+    if (resultado.ok) {
+      revalidatePath(`/je-admin/cotizaciones/${cotizacionId}`);
+      revalidatePath("/je-admin/oportunidades");
+    }
+    return resultado;
+  } catch {
+    return { ok: false, error: "No se pudo aplicar el paquete." };
+  }
+}
+
+/**
+ * Resumen de desviaciones de precio NUEVAS (no notificadas) + correo a vendedores
+ * y administradores; marca las líneas como notificadas. Pensada para invocarse
+ * desde el endpoint que dispara n8n (no usa sesión). Devuelve cuántas notificó.
+ */
+export async function notificarDesviacionesPaquetes(): Promise<{
+  ok: boolean;
+  notificadas: number;
+  skipped?: boolean;
+}> {
+  const desviaciones = await getDesviacionesPaquetes(true);
+  if (desviaciones.length === 0) return { ok: true, notificadas: 0 };
+
+  // Destinatarios: vendedores y administradores activos con correo.
+  const destinatarios = await db
+    .select({ email: schema.usuarios.email })
+    .from(schema.usuarios)
+    .where(
+      and(
+        eq(schema.usuarios.activo, true),
+        inArray(schema.usuarios.rol, ["vendedor", "admin"]),
+      ),
+    );
+  const to = destinatarios.map((d) => d.email).filter(Boolean).join(",");
+
+  // Agrupa por paquete para un resumen legible.
+  const porPaquete = new Map<string, { nombre: string; lineas: DesviacionLinea[] }>();
+  for (const d of desviaciones) {
+    const g = porPaquete.get(d.paqueteId) ?? { nombre: d.paqueteNombre, lineas: [] };
+    g.lineas.push(d);
+    porPaquete.set(d.paqueteId, g);
+  }
+
+  const filasHtml = [...porPaquete.values()]
+    .map((g) => {
+      const lis = g.lineas
+        .map(
+          (l) =>
+            `<li>${l.productoNombre}: fijo $${l.precioFijo.toLocaleString("es-MX")} → actual $${l.precioVentaActual.toLocaleString("es-MX")} (Δ $${(l.precioVentaActual - l.precioFijo).toLocaleString("es-MX")})</li>`,
+        )
+        .join("");
+      const appUrl = serverEnv.AUTH_URL ?? clientEnv.NEXT_PUBLIC_SITE_URL;
+      const url = `${appUrl}/je-admin/paquetes/${g.lineas[0]?.paqueteId ?? ""}`;
+      return `<p><strong><a href="${url}">${g.nombre}</a></strong></p><ul>${lis}</ul>`;
+    })
+    .join("");
+
+  const html = `<p>Se detectaron precios desactualizados en líneas de paquetes (precio fijo ≠ precio de venta actual):</p>${filasHtml}<p>Revisa cada paquete y actualiza los precios si corresponde.</p>`;
+
+  let skipped = false;
+  if (to) {
+    const res = await sendMail({
+      to,
+      subject: "Paquetes con precios desactualizados",
+      html,
+      text: "Hay líneas de paquete con precio fijo distinto al precio de venta actual. Revisa el panel.",
+    });
+    skipped = Boolean(res.skipped);
+  }
+
+  // Marca como notificadas las líneas incluidas (aunque el correo se haya saltado
+  // por falta de config, para no reintentar en cada corrida en dev).
+  const lineaIds = desviaciones.map((d) => d.lineaId);
+  await db
+    .update(schema.paqueteLineas)
+    .set({ yaNotificado: true })
+    .where(inArray(schema.paqueteLineas.id, lineaIds));
+
+  return { ok: true, notificadas: desviaciones.length, skipped };
 }

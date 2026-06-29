@@ -3206,3 +3206,341 @@ export async function getProducto(id: string): Promise<ProductoRecord | null> {
 
   return rows[0] ? mapProductoRow(rows[0]) : null;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * PAQUETES (bundles para cotizaciones) — capa de datos
+ *
+ * Un paquete agrupa líneas que referencian productos del catálogo (servicios
+ * incluidos). El precio_fijo de la línea es snapshot; el badge de "desviación"
+ * se calcula EN VIVO comparando contra productos.precio_venta.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+export type PaqueteSegmento = (typeof schema.paqueteSegmento.enumValues)[number];
+
+export interface PaqueteRow {
+  id: string;
+  nombre: string;
+  clave: string;
+  segmento: PaqueteSegmento;
+  capacidadKwp: number | null;
+  activo: boolean;
+  moneda: string;
+  /** Nº de líneas. */
+  lineas: number;
+  /** Total = Σ cantidad·precio_fijo. */
+  total: number;
+  /** Nº de líneas con precio_fijo distinto del precio_venta vivo del producto. */
+  desactualizadas: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaqueteLineaRow {
+  id: string;
+  productoId: string;
+  productoNombre: string;
+  tipoNombre: string;
+  naturaleza: string;
+  descripcion: string | null;
+  cantidad: number;
+  precioFijo: number;
+  /** Precio de venta vivo del producto (para comparar). */
+  precioVentaActual: number | null;
+  /** true si precio_fijo ≠ precio_venta actual. */
+  desactualizado: boolean;
+  orden: number;
+}
+
+export interface PaqueteDetalle {
+  paquete: PaqueteRow;
+  lineas: PaqueteLineaRow[];
+}
+
+export interface PaqueteOpcion {
+  id: string;
+  nombre: string;
+  segmento: PaqueteSegmento;
+  capacidadKwp: number | null;
+  total: number;
+}
+
+export interface PaquetesFiltros {
+  segmento?: PaqueteSegmento | null;
+  soloActivos?: boolean;
+  busqueda?: string;
+}
+
+export interface PaquetesPage {
+  rows: PaqueteRow[];
+  total: number;
+}
+
+/** Mapea tipo_persona del cliente al segmento del paquete. */
+export function segmentoDeTipoPersona(
+  tipoPersona: string | null | undefined,
+): PaqueteSegmento {
+  if (tipoPersona === "pm_industrial") return "industrial";
+  if (tipoPersona === "pm_comercial" || tipoPersona === "pf_actividad_empresarial") {
+    return "comercial";
+  }
+  return "residencial";
+}
+
+/** Subconsultas de agregados por paquete (líneas, total, desactualizadas). */
+const paqueteAggregates = {
+  lineas: sql<number>`(
+    SELECT count(*) FROM paquete_lineas pl WHERE pl.paquete_id = ${schema.paquetes.id}
+  )::int`,
+  total: sql<number>`(
+    SELECT COALESCE(sum(pl.cantidad * pl.precio_fijo), 0)
+    FROM paquete_lineas pl WHERE pl.paquete_id = ${schema.paquetes.id}
+  )::float8`,
+  desactualizadas: sql<number>`(
+    SELECT count(*) FROM paquete_lineas pl
+    JOIN productos pr ON pr.id = pl.producto_id
+    WHERE pl.paquete_id = ${schema.paquetes.id}
+      AND pl.precio_fijo IS DISTINCT FROM pr.precio_venta
+  )::int`,
+} as const;
+
+function paquetesWhereConds(filtros: PaquetesFiltros): SQL[] {
+  const conds: SQL[] = [];
+  if (filtros.segmento) conds.push(eq(schema.paquetes.segmento, filtros.segmento));
+  if (filtros.soloActivos) conds.push(eq(schema.paquetes.activo, true));
+  const q = filtros.busqueda?.trim();
+  if (q) {
+    const term = `%${q}%`;
+    const busc = or(
+      ilike(schema.paquetes.nombre, term),
+      ilike(schema.paquetes.clave, term),
+    );
+    if (busc) conds.push(busc);
+  }
+  return conds;
+}
+
+function mapPaqueteRow(row: {
+  id: string;
+  nombre: string;
+  clave: string;
+  segmento: PaqueteSegmento;
+  capacidadKwp: string | null;
+  activo: boolean;
+  moneda: string;
+  lineas: number;
+  total: number;
+  desactualizadas: number;
+  createdAt: string;
+  updatedAt: string;
+}): PaqueteRow {
+  return {
+    id: row.id,
+    nombre: row.nombre,
+    clave: row.clave,
+    segmento: row.segmento,
+    capacidadKwp: numOrNull(row.capacidadKwp),
+    activo: row.activo,
+    moneda: row.moneda,
+    lineas: Number(row.lineas),
+    total: Number(row.total),
+    desactualizadas: Number(row.desactualizadas),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+const paqueteSelect = {
+  id: schema.paquetes.id,
+  nombre: schema.paquetes.nombre,
+  clave: schema.paquetes.clave,
+  segmento: schema.paquetes.segmento,
+  capacidadKwp: schema.paquetes.capacidadKwp,
+  activo: schema.paquetes.activo,
+  moneda: schema.paquetes.moneda,
+  lineas: paqueteAggregates.lineas,
+  total: paqueteAggregates.total,
+  desactualizadas: paqueteAggregates.desactualizadas,
+  createdAt: schema.paquetes.createdAt,
+  updatedAt: schema.paquetes.updatedAt,
+} as const;
+
+/** Página de paquetes (server-side) con filtros por segmento/estado/búsqueda. */
+export async function getPaquetesPage(
+  filtros: PaquetesFiltros,
+  opts: { limit: number; offset: number },
+): Promise<PaquetesPage> {
+  const conds = paquetesWhereConds(filtros);
+  const where = conds.length ? and(...conds) : undefined;
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(schema.paquetes)
+    .where(where);
+
+  const rows = await db
+    .select(paqueteSelect)
+    .from(schema.paquetes)
+    .where(where)
+    .orderBy(asc(schema.paquetes.nombre))
+    .limit(opts.limit)
+    .offset(opts.offset);
+
+  return { rows: rows.map(mapPaqueteRow), total: Number(total) };
+}
+
+/** Detalle de un paquete con sus líneas resueltas (precio vivo + desviación). */
+export async function getPaquete(id: string): Promise<PaqueteDetalle | null> {
+  const [cab] = await db
+    .select(paqueteSelect)
+    .from(schema.paquetes)
+    .where(eq(schema.paquetes.id, id))
+    .limit(1);
+  if (!cab) return null;
+
+  const rows = await db
+    .select({
+      id: schema.paqueteLineas.id,
+      productoId: schema.paqueteLineas.productoId,
+      productoNombre: schema.productos.nombre,
+      tipoNombre: schema.productoTipos.nombre,
+      naturaleza: schema.productos.naturaleza,
+      descripcion: schema.paqueteLineas.descripcion,
+      cantidad: schema.paqueteLineas.cantidad,
+      precioFijo: schema.paqueteLineas.precioFijo,
+      precioVentaActual: schema.productos.precioVenta,
+      orden: schema.paqueteLineas.orden,
+    })
+    .from(schema.paqueteLineas)
+    .innerJoin(schema.productos, eq(schema.paqueteLineas.productoId, schema.productos.id))
+    .innerJoin(schema.productoTipos, eq(schema.productos.productoTipoId, schema.productoTipos.id))
+    .where(eq(schema.paqueteLineas.paqueteId, id))
+    .orderBy(asc(schema.paqueteLineas.orden), asc(schema.paqueteLineas.id));
+
+  const lineas: PaqueteLineaRow[] = rows.map((r) => {
+    const precioFijo = numOrZero(r.precioFijo);
+    const precioVentaActual = numOrNull(r.precioVentaActual);
+    return {
+      id: r.id,
+      productoId: r.productoId,
+      productoNombre: r.productoNombre,
+      tipoNombre: r.tipoNombre,
+      naturaleza: r.naturaleza,
+      descripcion: r.descripcion,
+      cantidad: numOrZero(r.cantidad),
+      precioFijo,
+      precioVentaActual,
+      desactualizado: precioVentaActual !== null && precioVentaActual !== precioFijo,
+      orden: r.orden,
+    };
+  });
+
+  return { paquete: mapPaqueteRow(cab), lineas };
+}
+
+/** Paquetes activos como opciones ligeras (para selectores). */
+export async function getPaquetesActivos(
+  segmento?: PaqueteSegmento,
+): Promise<PaqueteOpcion[]> {
+  const conds: SQL[] = [eq(schema.paquetes.activo, true)];
+  if (segmento) conds.push(eq(schema.paquetes.segmento, segmento));
+
+  const rows = await db
+    .select({
+      id: schema.paquetes.id,
+      nombre: schema.paquetes.nombre,
+      segmento: schema.paquetes.segmento,
+      capacidadKwp: schema.paquetes.capacidadKwp,
+      total: paqueteAggregates.total,
+    })
+    .from(schema.paquetes)
+    .where(and(...conds))
+    .orderBy(asc(schema.paquetes.capacidadKwp));
+
+  return rows.map((r) => ({
+    id: r.id,
+    nombre: r.nombre,
+    segmento: r.segmento,
+    capacidadKwp: numOrNull(r.capacidadKwp),
+    total: Number(r.total),
+  }));
+}
+
+export interface MejorPaqueteResult {
+  /** Paquete elegido (el más pequeño que cubre; o el mayor si ninguno cubre). */
+  mejor: PaqueteOpcion | null;
+  /** true si `mejor` cubre la capacidad objetivo. */
+  cubre: boolean;
+  /** Candidatos activos del segmento, ordenados por capacidad ascendente. */
+  candidatos: PaqueteOpcion[];
+}
+
+/**
+ * "Paquete que mejor se ajusta": el más PEQUEÑO (por capacidad_kwp) que IGUALA o
+ * SUPERA la capacidad objetivo, dentro del segmento. Si ninguno cubre, devuelve
+ * el de MAYOR capacidad y marca cubre=false. Devuelve también los candidatos.
+ */
+export async function getMejorPaquete(args: {
+  capacidadKwp: number;
+  segmento: PaqueteSegmento;
+}): Promise<MejorPaqueteResult> {
+  const candidatos = await getPaquetesActivos(args.segmento);
+  if (candidatos.length === 0) return { mejor: null, cubre: false, candidatos };
+
+  // candidatos ya viene ordenado por capacidad asc (nulls al final).
+  const cubre = candidatos.find(
+    (p) => (p.capacidadKwp ?? -Infinity) >= args.capacidadKwp,
+  );
+  if (cubre) return { mejor: cubre, cubre: true, candidatos };
+
+  // Ninguno cubre: el de mayor capacidad.
+  const mayor = candidatos.reduce((a, b) =>
+    (b.capacidadKwp ?? 0) > (a.capacidadKwp ?? 0) ? b : a,
+  );
+  return { mejor: mayor, cubre: false, candidatos };
+}
+
+export interface DesviacionLinea {
+  paqueteId: string;
+  paqueteNombre: string;
+  lineaId: string;
+  productoNombre: string;
+  precioFijo: number;
+  precioVentaActual: number;
+}
+
+/**
+ * Líneas de paquete con desviación de precio (precio_fijo ≠ precio_venta vivo).
+ * `soloNuevas`: solo las aún no notificadas (ya_notificado=false) — para el correo.
+ */
+export async function getDesviacionesPaquetes(
+  soloNuevas = false,
+): Promise<DesviacionLinea[]> {
+  const conds: SQL[] = [
+    sql`${schema.paqueteLineas.precioFijo} IS DISTINCT FROM ${schema.productos.precioVenta}`,
+  ];
+  if (soloNuevas) conds.push(eq(schema.paqueteLineas.yaNotificado, false));
+
+  const rows = await db
+    .select({
+      paqueteId: schema.paquetes.id,
+      paqueteNombre: schema.paquetes.nombre,
+      lineaId: schema.paqueteLineas.id,
+      productoNombre: schema.productos.nombre,
+      precioFijo: schema.paqueteLineas.precioFijo,
+      precioVentaActual: schema.productos.precioVenta,
+    })
+    .from(schema.paqueteLineas)
+    .innerJoin(schema.productos, eq(schema.paqueteLineas.productoId, schema.productos.id))
+    .innerJoin(schema.paquetes, eq(schema.paqueteLineas.paqueteId, schema.paquetes.id))
+    .where(and(...conds))
+    .orderBy(asc(schema.paquetes.nombre));
+
+  return rows.map((r) => ({
+    paqueteId: r.paqueteId,
+    paqueteNombre: r.paqueteNombre,
+    lineaId: r.lineaId,
+    productoNombre: r.productoNombre,
+    precioFijo: numOrZero(r.precioFijo),
+    precioVentaActual: numOrZero(r.precioVentaActual),
+  }));
+}
