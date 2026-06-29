@@ -115,6 +115,7 @@ export const productos = pgTable("productos", {
 	modelo: text(),
 	descripcion: text(),
 	unidad: text().default('pieza').notNull(),
+	naturaleza: text().default('producto').notNull(), // 'producto' | 'servicio'
 	precioCompra: numeric("precio_compra", { precision: 14, scale: 2 }),
 	precioVenta: numeric("precio_venta", { precision: 14, scale: 2 }),
 	moneda: text().default('MXN').notNull(),
@@ -131,6 +132,56 @@ export const productos = pgTable("productos", {
 			columns: [table.productoTipoId],
 			foreignColumns: [productoTipos.id],
 			name: "productos_producto_tipo_id_fkey"
+		}),
+	check("productos_naturaleza_check", sql`naturaleza IN ('producto', 'servicio')`),
+]);
+
+// Paquetes (bundles): agrupan líneas que referencian productos del catálogo.
+// Aplicar un paquete copia sus líneas a cotizacion_items con su precio_fijo.
+export const paqueteSegmento = pgEnum("paquete_segmento", ['residencial', 'comercial', 'industrial']);
+
+export const paquetes = pgTable("paquetes", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	nombre: text().notNull(),
+	nombreNormalizado: text("nombre_normalizado").notNull(),
+	clave: text().notNull(),
+	descripcion: text(),
+	segmento: paqueteSegmento().notNull(),
+	capacidadKwp: numeric("capacidad_kwp", { precision: 10, scale: 2 }),
+	activo: boolean().default(true).notNull(),
+	moneda: text().default('MXN').notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("ix_paquetes_segmento").using("btree", table.segmento.asc().nullsLast().op("enum_ops")),
+	index("ix_paquetes_activo").using("btree", table.activo.asc().nullsLast().op("bool_ops")),
+	unique("paquetes_clave_key").on(table.clave),
+	unique("paquetes_nombre_normalizado_key").on(table.nombreNormalizado),
+]);
+
+export const paqueteLineas = pgTable("paquete_lineas", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	paqueteId: uuid("paquete_id").notNull(),
+	productoId: uuid("producto_id").notNull(),
+	descripcion: text(),
+	cantidad: numeric({ precision: 12, scale: 2 }).default('1').notNull(),
+	precioFijo: numeric("precio_fijo", { precision: 14, scale: 2 }).default('0').notNull(),
+	yaNotificado: boolean("ya_notificado").default(false).notNull(),
+	orden: integer().default(0).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("ix_paquete_lineas_paquete").using("btree", table.paqueteId.asc().nullsLast().op("uuid_ops")),
+	index("ix_paquete_lineas_producto").using("btree", table.productoId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.paqueteId],
+			foreignColumns: [paquetes.id],
+			name: "paquete_lineas_paquete_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.productoId],
+			foreignColumns: [productos.id],
+			name: "paquete_lineas_producto_id_fkey"
 		}),
 ]);
 

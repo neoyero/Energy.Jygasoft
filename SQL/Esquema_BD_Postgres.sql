@@ -98,6 +98,7 @@ CREATE TABLE productos (
   nombre           text NOT NULL,
   marca            text, modelo text, descripcion text,
   unidad           text NOT NULL DEFAULT 'pieza',
+  naturaleza       text NOT NULL DEFAULT 'producto' CHECK (naturaleza IN ('producto','servicio')),
   precio_compra    numeric(14,2), precio_venta numeric(14,2),
   moneda           text NOT NULL DEFAULT 'MXN',
   stock            integer,
@@ -109,6 +110,58 @@ CREATE TABLE productos (
 CREATE INDEX ix_productos_tipo   ON productos (producto_tipo_id);
 CREATE INDEX ix_productos_activo ON productos (activo);
 CREATE TRIGGER trg_productos_upd BEFORE UPDATE ON productos FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- PAQUETES (bundles para cotizaciones): líneas que referencian productos del
+-- catálogo (servicios incluidos). Aplicar un paquete copia sus líneas a
+-- cotizacion_items con su precio_fijo (snapshot). Alerta de desviación de precio
+-- (precio_fijo vs precio_venta vivo) con anti-spam por ya_notificado.
+CREATE TYPE paquete_segmento AS ENUM ('residencial','comercial','industrial');
+
+CREATE TABLE paquetes (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre             text NOT NULL,
+  nombre_normalizado text NOT NULL UNIQUE,           -- anti-duplicados
+  clave              text NOT NULL UNIQUE,
+  descripcion        text,
+  segmento           paquete_segmento NOT NULL,
+  capacidad_kwp      numeric(10,2),                  -- nominal, para "mejor ajuste"
+  activo             boolean NOT NULL DEFAULT true,
+  moneda             text NOT NULL DEFAULT 'MXN',
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_paquetes_segmento ON paquetes (segmento);
+CREATE INDEX ix_paquetes_activo   ON paquetes (activo);
+CREATE TRIGGER trg_paquetes_upd BEFORE UPDATE ON paquetes FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE paquete_lineas (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  paquete_id    uuid NOT NULL REFERENCES paquetes(id) ON DELETE CASCADE,
+  producto_id   uuid NOT NULL REFERENCES productos(id),
+  descripcion   text,
+  cantidad      numeric(12,2) NOT NULL DEFAULT 1,
+  precio_fijo   numeric(14,2) NOT NULL DEFAULT 0,    -- snapshot; manda al cotizar
+  ya_notificado boolean NOT NULL DEFAULT false,      -- anti-spam del correo de desviación
+  orden         integer NOT NULL DEFAULT 0,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_paquete_lineas_paquete  ON paquete_lineas (paquete_id);
+CREATE INDEX ix_paquete_lineas_producto ON paquete_lineas (producto_id);
+CREATE TRIGGER trg_paquete_lineas_upd BEFORE UPDATE ON paquete_lineas FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Reset anti-spam: al cambiar el precio_venta de un producto, las líneas de
+-- paquete con precio_fijo distinto quedan "no notificadas" para re-alertar.
+CREATE OR REPLACE FUNCTION reset_paquete_linea_notificacion() RETURNS trigger AS $$
+BEGIN
+  UPDATE paquete_lineas SET ya_notificado = false
+   WHERE producto_id = NEW.id AND precio_fijo IS DISTINCT FROM NEW.precio_venta;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_productos_precio_reset_notif
+  AFTER UPDATE OF precio_venta ON productos
+  FOR EACH ROW EXECUTE FUNCTION reset_paquete_linea_notificacion();
 
 CREATE TABLE hsp_zonas (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

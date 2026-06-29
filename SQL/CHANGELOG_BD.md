@@ -12,6 +12,27 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0009 — Módulo Paquetes (bundles para cotizaciones) · 2026-06-29
+
+**Migración:** `db/migrations/0009_paquetes.sql`
+
+- **`productos.naturaleza`** (`'producto' | 'servicio'`, default `'producto'`): un
+  servicio/mano de obra es un producto con `naturaleza='servicio'`. Se siembran
+  tipos *Servicio / Instalación / Trámite CFE / Mano de obra*.
+- **`paquetes`**: bundle con `segmento` (enum `paquete_segmento`:
+  residencial/comercial/industrial), `capacidad_kwp` nominal (para el "mejor
+  ajuste"), `activo`, y anti-duplicados (`clave` única + `nombre_normalizado` única).
+- **`paquete_lineas`**: líneas que referencian un `producto_id`, con `precio_fijo`
+  (snapshot que manda al cotizar), `ya_notificado` (anti-spam del correo de
+  desviación) y `orden`. `ON DELETE CASCADE` desde el paquete.
+- **Trigger** `trg_productos_precio_reset_notif`: al cambiar `precio_venta` de un
+  producto, resetea `ya_notificado` en las líneas de paquete con `precio_fijo`
+  distinto (para volver a alertar). Sin lógica de correo en la BD.
+- Aplicar un paquete **copia** sus líneas a `cotizacion_items` (no hay FK; la
+  cotización queda independiente).
+
+---
+
 ## 0008 — Backfill cotización → oportunidad (monto en pipeline) · 2026-06-28
 
 **Migración:** `db/migrations/0008_cotizaciones_oportunidad_backfill.sql`
