@@ -104,6 +104,8 @@ CREATE TABLE productos (
   stock            integer,
   activo           boolean NOT NULL DEFAULT true,
   atributos        jsonb NOT NULL DEFAULT '{}'::jsonb,
+  imagen_url       text,                           -- webUrl en M365 (SharePoint/OneDrive)
+  imagen_item_id   text,                           -- id de Graph (reemplazar/borrar)
   created_at       timestamptz NOT NULL DEFAULT now(),
   updated_at       timestamptz NOT NULL DEFAULT now()
 );

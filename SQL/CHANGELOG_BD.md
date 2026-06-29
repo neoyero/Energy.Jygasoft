@@ -12,6 +12,16 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0010 — Imagen de producto (M365 SharePoint/OneDrive) · 2026-06-29
+
+**Migración:** `db/migrations/0010_producto_imagen.sql`
+
+- `productos.imagen_url` (webUrl de SharePoint/OneDrive para mostrar) +
+  `productos.imagen_item_id` (id de Graph, para reemplazar/borrar). La subida
+  reutiliza `lib/m365/sharepoint.ts` (configurable por env M365_DOCS_*; nada local).
+
+---
+
 ## 0009 — Módulo Paquetes (bundles para cotizaciones) · 2026-06-29
 
 **Migración:** `db/migrations/0009_paquetes.sql`

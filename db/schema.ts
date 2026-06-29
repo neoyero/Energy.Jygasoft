@@ -122,6 +122,8 @@ export const productos = pgTable("productos", {
 	stock: integer(),
 	activo: boolean().default(true).notNull(),
 	atributos: jsonb().default({}).notNull(),
+	imagenUrl: text("imagen_url"),
+	imagenItemId: text("imagen_item_id"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
