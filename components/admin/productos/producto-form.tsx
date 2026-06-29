@@ -60,10 +60,33 @@ interface FormState {
   descripcion: string
   unidad: string
   precioCompra: string
-  precioVenta: string
+  /** Margen sobre el PRECIO (precio = costo / (1 - margen/100)). */
+  margenPct: string
+  /** Precio de venta cargado (fallback cuando no hay costo para recalcular). */
+  precioVentaOriginal: string
   moneda: string
   stock: string
   activo: boolean
+}
+
+/** Margen por defecto al dar de alta (sobre el precio). */
+const MARGEN_DEFAULT = 30
+
+/**
+ * Precio de venta derivado del costo y el margen: precio = costo / (1 - m/100).
+ * Si no hay costo o margen válido, cae al precio cargado (no pisa datos legados).
+ */
+function calcularPrecio(
+  costoStr: string,
+  margenStr: string,
+  originalStr: string,
+): number | null {
+  const costo = numOrNull(costoStr)
+  const margen = numOrNull(margenStr)
+  if (costo != null && costo > 0 && margen != null && margen >= 0 && margen < 100) {
+    return Math.round((costo / (1 - margen / 100)) * 100) / 100
+  }
+  return numOrNull(originalStr)
 }
 
 /**
@@ -93,7 +116,15 @@ function estadoInicial(p?: ProductoRecord, tipos?: ReadonlyArray<ProductoTipoOpt
     descripcion: p?.descripcion ?? "",
     unidad: p?.unidad ?? "pieza",
     precioCompra: p?.precioCompra != null ? String(p.precioCompra) : "",
-    precioVenta: p?.precioVenta != null ? String(p.precioVenta) : "",
+    // Margen derivado de costo/precio si ambos existen; si no, el default.
+    margenPct:
+      p?.precioCompra != null &&
+      p.precioCompra > 0 &&
+      p?.precioVenta != null &&
+      p.precioVenta > 0
+        ? String(Math.round((1 - p.precioCompra / p.precioVenta) * 100 * 100) / 100)
+        : String(MARGEN_DEFAULT),
+    precioVentaOriginal: p?.precioVenta != null ? String(p.precioVenta) : "",
     moneda: p?.moneda ?? "MXN",
     stock: p?.stock != null ? String(p.stock) : "",
     activo: p?.activo ?? true,
@@ -129,6 +160,9 @@ export function ProductoForm({ modo, producto, tipos, onSuccess, onCancel, onSav
   const tipoSel = tipos.find((t) => t.id === form.productoTipoId)
   const campos = atributosDeTipo(tipoSel?.clave)
 
+  // Precio de venta derivado (costo + margen); se muestra deshabilitado.
+  const precioCalc = calcularPrecio(form.precioCompra, form.margenPct, form.precioVentaOriginal)
+
   function set<K extends keyof FormState>(key: K, value: FormState[K]): void {
     setForm((prev) => ({ ...prev, [key]: value }))
   }
@@ -148,6 +182,22 @@ export function ProductoForm({ modo, producto, tipos, onSuccess, onCancel, onSav
       atributosFinal[k] = coerceAtributo(raw)
     }
 
+    const costo = numOrNull(form.precioCompra)
+    const margen = numOrNull(form.margenPct)
+    // Validación del margen (sobre el precio; <100 para no dividir entre 0).
+    if (costo != null && costo > 0) {
+      if (margen == null || margen < 0 || margen >= 100) {
+        setError("El margen debe estar entre 0 y 99.99 %.")
+        return
+      }
+    }
+    const precioVenta = calcularPrecio(form.precioCompra, form.margenPct, form.precioVentaOriginal)
+    // Regla: el precio nunca puede ser menor que el costo.
+    if (costo != null && precioVenta != null && precioVenta < costo) {
+      setError("El precio de venta no puede ser menor que el costo.")
+      return
+    }
+
     const payload: ProductoInput = {
       productoTipoId: form.productoTipoId,
       sku: nullable(form.sku),
@@ -156,8 +206,8 @@ export function ProductoForm({ modo, producto, tipos, onSuccess, onCancel, onSav
       modelo: nullable(form.modelo),
       descripcion: nullable(form.descripcion),
       unidad: form.unidad.trim() || "pieza",
-      precioCompra: numOrNull(form.precioCompra),
-      precioVenta: numOrNull(form.precioVenta),
+      precioCompra: costo,
+      precioVenta,
       moneda: form.moneda.trim().toUpperCase() || "MXN",
       stock: numOrNull(form.stock),
       activo: form.activo,
@@ -247,9 +297,10 @@ export function ProductoForm({ modo, producto, tipos, onSuccess, onCancel, onSav
         />
       </div>
 
-      {/* Precios y stock */}
+      {/* Precios y stock. El costo es la base; el margen define el precio:
+          precio = costo / (1 - margen/100). El precio se deriva (deshabilitado). */}
       <div className="space-y-1.5">
-        <Label htmlFor="prod-precio-compra">Precio compra</Label>
+        <Label htmlFor="prod-precio-compra">Costo (base)</Label>
         <Input
           id="prod-precio-compra"
           value={form.precioCompra}
@@ -261,15 +312,29 @@ export function ProductoForm({ modo, producto, tipos, onSuccess, onCancel, onSav
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="prod-precio-venta">Precio venta</Label>
+        <Label htmlFor="prod-margen">Margen (%)</Label>
         <Input
-          id="prod-precio-venta"
-          value={form.precioVenta}
-          onChange={(e) => set("precioVenta", e.target.value)}
+          id="prod-margen"
+          value={form.margenPct}
+          onChange={(e) => set("margenPct", e.target.value)}
           disabled={pending}
           inputMode="decimal"
-          placeholder="0.00"
+          placeholder="30"
         />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="prod-precio-venta">Precio venta (calculado)</Label>
+        <Input
+          id="prod-precio-venta"
+          value={precioCalc != null ? precioCalc.toFixed(2) : ""}
+          disabled
+          readOnly
+          placeholder="—"
+        />
+        <p className="text-xs text-muted-foreground">
+          Se calcula del costo y el margen. Edita el costo o el %.
+        </p>
       </div>
 
       <div className="space-y-1.5">

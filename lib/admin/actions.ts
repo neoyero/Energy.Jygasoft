@@ -4228,7 +4228,13 @@ const productoSchema = z.object({
     .optional(),
   activo: z.boolean().optional(),
   atributos: z.record(z.string(), z.unknown()).optional(),
-});
+}).refine(
+  (d) =>
+    d.precioCompra == null ||
+    d.precioVenta == null ||
+    d.precioVenta >= d.precioCompra,
+  { message: "El precio de venta no puede ser menor que el costo.", path: ["precioVenta"] },
+);
 
 function productoValues(data: z.output<typeof productoSchema>) {
   return {
