@@ -1490,8 +1490,9 @@ async function autoEnlazarOportunidad(
 
 /**
  * Refleja el total de la cotización en el monto_estimado de su oportunidad
- * enlazada (el pipeline muestra el valor del deal). Solo si la oportunidad sigue
- * ABIERTA y el total es > 0 (no pisa un monto con 0 de una cotización vacía).
+ * enlazada (el pipeline muestra el valor del deal). Solo requiere total > 0 (no
+ * pisa con 0 una cotización vacía). Aplica también a oportunidades ganadas: el
+ * monto del deal cerrado debe reflejar el valor de su cotización.
  */
 async function sincronizarMontoOportunidad(
   tx: CotizacionTx,
@@ -1509,13 +1510,6 @@ async function sincronizarMontoOportunidad(
 
   const totalNum = Number(cot.total);
   if (!Number.isFinite(totalNum) || totalNum <= 0) return;
-
-  const [op] = await tx
-    .select({ etapa: schema.oportunidades.etapa })
-    .from(schema.oportunidades)
-    .where(eq(schema.oportunidades.id, cot.oportunidadId))
-    .limit(1);
-  if (!op || ETAPAS_CERRADAS.has(op.etapa)) return;
 
   await tx
     .update(schema.oportunidades)

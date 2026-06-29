@@ -26,19 +26,18 @@ export const TABS_BLOQUEABLES: ReadonlySet<WizardTab["id"]> = new Set([
 ]);
 
 /**
- * El paso Sistema está completo cuando hay capacidad, paneles, esquema CFE y
- * moneda. Esto habilita el resto de pestañas del wizard.
+ * El paso Sistema está completo cuando hay capacidad, paneles y moneda. Esto
+ * habilita el resto de pestañas del wizard. El esquema CFE es opcional (no
+ * bloquea la navegación): se puede definir luego sin frenar las partidas.
  */
 export function isSistemaCompleto(c: {
   capacidadKwp: number | null;
   paneles: number | null;
-  esquema: string | null;
   moneda: string | null;
 }): boolean {
   return (
     (c.capacidadKwp ?? 0) > 0 &&
     (c.paneles ?? 0) >= 1 &&
-    Boolean(c.esquema) &&
     Boolean(c.moneda && c.moneda.trim().length > 0)
   );
 }
