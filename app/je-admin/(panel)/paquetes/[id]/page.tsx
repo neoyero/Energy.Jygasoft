@@ -58,6 +58,7 @@ export default async function PaqueteDetailPage({ params }: Params) {
         lineasIniciales={lineas}
         catalogo={catalogo}
         moneda={paquete.moneda}
+        descuentoPct={paquete.descuentoPct}
         puedeEditar={puedeEditar}
       />
     </div>
