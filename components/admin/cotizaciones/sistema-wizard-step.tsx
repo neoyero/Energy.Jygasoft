@@ -138,6 +138,7 @@ export function SistemaWizardStep({
   const [paqueteSug, setPaqueteSug] = useState<SugerenciaPaquetes | null>(null)
   const [paqueteSelId, setPaqueteSelId] = useState<string>("")
   const [fallbackManual, setFallbackManual] = useState(false)
+  const [paqueteOk, setPaqueteOk] = useState<string | null>(null)
   const [aplicandoPaquete, startAplicandoPaquete] = useTransition()
 
   // Parche inmutable de un campo del form.
@@ -158,6 +159,7 @@ export function SistemaWizardStep({
   function onCalcular(e: React.FormEvent<HTMLFormElement>): void {
     e.preventDefault()
     setError(null)
+    setPaqueteOk(null)
 
     const usarCapacidad = form.usarCapacidad
 
@@ -233,6 +235,7 @@ export function SistemaWizardStep({
   function onAplicarPaquete(): void {
     if (!paqueteSelId) return
     setAplicarError(null)
+    setPaqueteOk(null)
     startAplicandoPaquete(async () => {
       const res = await aplicarPaqueteACotizacion({
         cotizacionId,
@@ -243,6 +246,9 @@ export function SistemaWizardStep({
         setAplicarError(res.error)
         return
       }
+      setPaqueteOk(
+        `Paquete aplicado${res.total != null ? ` · Total $${res.total.toLocaleString("es-MX")}` : ""}. Revisa la pestaña «Partidas».`,
+      )
       router.refresh()
     })
   }
@@ -322,6 +328,8 @@ export function SistemaWizardStep({
               setPreview(null)
               setPaqueteSug(null)
               setFallbackManual(false)
+              setPaqueteOk(null)
+              setAplicarError(null)
             }}
             disabled={busy}
             className={SELECT_CLASS}
@@ -578,6 +586,11 @@ export function SistemaWizardStep({
           ) : null}
           {aplicarError ? (
             <span className="text-sm text-destructive">{aplicarError}</span>
+          ) : null}
+          {paqueteOk ? (
+            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-600 dark:text-emerald-400">
+              <Check className="size-4" aria-hidden /> {paqueteOk}
+            </span>
           ) : null}
         </div>
       ) : null}
