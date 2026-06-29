@@ -45,7 +45,7 @@ export function ProductosView({ tipos, puedeEditar, puedeEliminar }: ProductosVi
   const [editando, setEditando] = useState<ProductoRecord | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
   const [saving, setSaving] = useState(false)
-  const [vista, setVista] = useState<"tabla" | "galeria">("tabla")
+  const [vista, setVista] = useState<"tabla" | "galeria">("galeria")
 
   // Debounce de la búsqueda (250 ms).
   useEffect(() => {
