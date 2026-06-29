@@ -13,6 +13,8 @@ import {
   getCatalogoDisponible,
   getProductosPage,
   getPaquetesPage,
+  getMejorPaquete,
+  segmentoDeTipoPersona,
   getDesviacionesPaquetes,
   type DashboardScope,
   type LeadsFiltros,
@@ -23,6 +25,8 @@ import {
   type PaquetesPage,
   type PaquetesFiltros,
   type DesviacionLinea,
+  type PaqueteOpcion,
+  type PaqueteSegmento,
 } from "@/lib/admin/queries";
 import type { Rol } from "@/lib/admin/rbac";
 import { ETAPAS_CERRADAS, PROBABILIDAD_POR_ETAPA } from "@/lib/admin/pipeline";
@@ -4755,6 +4759,55 @@ export async function aplicarPaqueteACotizacion(
   } catch {
     return { ok: false, error: "No se pudo aplicar el paquete." };
   }
+}
+
+export interface SugerenciaPaquetes {
+  ok: boolean
+  error?: string
+  capacidadKwp: number | null
+  segmento?: PaqueteSegmento
+  mejor?: PaqueteOpcion | null
+  cubre?: boolean
+  candidatos?: PaqueteOpcion[]
+}
+
+/**
+ * Sugiere paquetes para una cotización: deriva el segmento del cliente
+ * (tipo_persona) y usa la capacidad del paso Sistema para el "mejor ajuste".
+ * Devuelve el sugerido + candidatos (con conteo de precios desactualizados).
+ */
+export async function sugerirPaquetesParaCotizacion(
+  cotizacionId: string,
+): Promise<SugerenciaPaquetes> {
+  const user = await assertPerm("cotizaciones", "edit");
+  if (!(await puedeAccederCotizacion(user, cotizacionId))) {
+    return { ok: false, error: SIN_ACCESO, capacidadKwp: null };
+  }
+
+  const [cot] = await db
+    .select({
+      capacidadKwp: schema.cotizaciones.capacidadKwp,
+      clienteId: schema.cotizaciones.clienteId,
+    })
+    .from(schema.cotizaciones)
+    .where(eq(schema.cotizaciones.id, cotizacionId))
+    .limit(1);
+  if (!cot) return { ok: false, error: "Cotización no encontrada", capacidadKwp: null };
+
+  let tipoPersona: string | null = null;
+  if (cot.clienteId) {
+    const [cl] = await db
+      .select({ tipoPersona: schema.clientes.tipoPersona })
+      .from(schema.clientes)
+      .where(eq(schema.clientes.id, cot.clienteId))
+      .limit(1);
+    tipoPersona = cl?.tipoPersona ?? null;
+  }
+
+  const segmento = segmentoDeTipoPersona(tipoPersona);
+  const cap = cot.capacidadKwp != null ? Number(cot.capacidadKwp) : null;
+  const result = await getMejorPaquete({ capacidadKwp: cap ?? 0, segmento });
+  return { ok: true, capacidadKwp: cap, segmento, ...result };
 }
 
 /**

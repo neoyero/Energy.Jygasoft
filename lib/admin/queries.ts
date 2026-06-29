@@ -3307,6 +3307,8 @@ export interface PaqueteOpcion {
   segmento: PaqueteSegmento;
   capacidadKwp: number | null;
   total: number;
+  /** Nº de líneas con precio desactualizado (para avisar al aplicar). */
+  desactualizadas: number;
 }
 
 export interface PaquetesFiltros {
@@ -3505,6 +3507,7 @@ export async function getPaquetesActivos(
       segmento: schema.paquetes.segmento,
       capacidadKwp: schema.paquetes.capacidadKwp,
       total: paqueteAggregates.total,
+      desactualizadas: paqueteAggregates.desactualizadas,
     })
     .from(schema.paquetes)
     .where(and(...conds))
@@ -3516,6 +3519,7 @@ export async function getPaquetesActivos(
     segmento: r.segmento,
     capacidadKwp: numOrNull(r.capacidadKwp),
     total: Number(r.total),
+    desactualizadas: Number(r.desactualizadas),
   }));
 }
 

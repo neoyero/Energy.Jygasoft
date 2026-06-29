@@ -22,6 +22,7 @@ import { TotalesPanel } from "@/components/admin/cotizaciones/totales-panel";
 import { SistemaFields } from "@/components/admin/cotizaciones/sistema-fields";
 import { SistemaForm } from "@/components/admin/cotizaciones/sistema-form";
 import { SistemaWizardStep } from "@/components/admin/cotizaciones/sistema-wizard-step";
+import { CotizacionPaquetePanel } from "@/components/admin/cotizaciones/cotizacion-paquete-panel";
 import { RelacionesCard } from "@/components/admin/cotizaciones/relaciones-card";
 import { CotizacionDocumentosPanel } from "@/components/admin/cotizaciones/cotizacion-documentos-panel";
 import { CotizacionHistorial } from "@/components/admin/cotizaciones/cotizacion-historial";
@@ -362,6 +363,11 @@ export function CotizacionBuilder({
                 <SistemaForm
                   cotizacionId={cotizacion.id}
                   datos={cotizacion}
+                  puedeEditar={puedeEditar}
+                />
+                <CotizacionPaquetePanel
+                  cotizacionId={cotizacion.id}
+                  capacidadKwp={cotizacion.capacidadKwp}
                   puedeEditar={puedeEditar}
                 />
               </CardContent>
