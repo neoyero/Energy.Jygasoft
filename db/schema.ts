@@ -195,6 +195,8 @@ export const marcas = pgTable("marcas", {
 	nombreNormalizado: text("nombre_normalizado").notNull(),
 	descripcion: text(),
 	activo: boolean().default(true).notNull(),
+	imagenUrl: text("imagen_url"),
+	imagenItemId: text("imagen_item_id"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [

@@ -110,11 +110,28 @@ export function MarcasView({ puedeEditar }: MarcasViewProps) {
       header: "Marca",
       accessor: (r) => r.nombre,
       render: (r) => (
-        <div className="flex flex-col">
-          <span className="font-medium text-stone-800 dark:text-foreground">{r.nombre}</span>
-          {r.descripcion ? (
-            <span className="text-xs text-stone-500 dark:text-muted-foreground">{r.descripcion}</span>
-          ) : null}
+        <div className="flex items-center gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted/40">
+            {r.imagenUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`/api/je-admin/marcas/imagen/${r.id}`}
+                alt={r.nombre}
+                className="size-full object-contain"
+                loading="lazy"
+              />
+            ) : (
+              <span className="text-xs font-semibold text-muted-foreground">
+                {r.nombre.charAt(0).toUpperCase()}
+              </span>
+            )}
+          </div>
+          <div className="flex flex-col">
+            <span className="font-medium text-stone-800 dark:text-foreground">{r.nombre}</span>
+            {r.descripcion ? (
+              <span className="text-xs text-stone-500 dark:text-muted-foreground">{r.descripcion}</span>
+            ) : null}
+          </div>
         </div>
       ),
     },

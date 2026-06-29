@@ -173,6 +173,8 @@ CREATE TABLE marcas (
   nombre_normalizado text NOT NULL UNIQUE,
   descripcion        text,
   activo             boolean NOT NULL DEFAULT true,
+  imagen_url         text,                           -- logo en M365
+  imagen_item_id     text,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );

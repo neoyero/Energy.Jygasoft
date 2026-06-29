@@ -12,6 +12,15 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0013 — Imagen (logo) de marca · 2026-06-29
+
+**Migración:** `db/migrations/0013_marca_imagen.sql`
+
+- `marcas.imagen_url` + `marcas.imagen_item_id` (logo en M365 SharePoint/OneDrive,
+  mismo patrón que `productos`). Subida vía `lib/m365/sharepoint.ts`.
+
+---
+
 ## 0012 — Catálogo de Marcas · 2026-06-29
 
 **Migración:** `db/migrations/0012_marcas.sql`

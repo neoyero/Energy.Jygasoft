@@ -3635,6 +3635,7 @@ export interface MarcaRow {
   nombre: string;
   descripcion: string | null;
   activo: boolean;
+  imagenUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -3671,6 +3672,7 @@ export async function getMarcasPage(
       nombre: schema.marcas.nombre,
       descripcion: schema.marcas.descripcion,
       activo: schema.marcas.activo,
+      imagenUrl: schema.marcas.imagenUrl,
       createdAt: schema.marcas.createdAt,
       updatedAt: schema.marcas.updatedAt,
     })

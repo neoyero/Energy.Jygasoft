@@ -8,6 +8,7 @@ import type { MarcaRow } from "@/lib/admin/queries"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { MarcaImagenField } from "@/components/admin/marcas/marca-imagen-field"
 
 type MarcaInput = Parameters<typeof crearMarca>[0]
 
@@ -84,6 +85,15 @@ export function MarcaForm({ modo, marca, onSuccess, onCancel, onSavingChange }: 
           className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
         />
       </div>
+
+      {/* Logo: solo al editar (la marca debe existir para subirlo). */}
+      {modo === "editar" && marca ? (
+        <MarcaImagenField marcaId={marca.id} tieneImagen={marca.imagenUrl != null} />
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Guarda la marca para poder subir su logo.
+        </p>
+      )}
 
       <label className="flex items-center gap-2 text-sm text-foreground">
         <input

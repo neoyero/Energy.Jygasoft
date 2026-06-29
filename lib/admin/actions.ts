@@ -5014,3 +5014,53 @@ export async function eliminarMarca(id: string): Promise<ActionResult> {
     return { ok: false, error: "No se pudo eliminar la marca." };
   }
 }
+
+/** Guarda el logo de una marca (tras subirlo a SharePoint). Borra el anterior. */
+export async function guardarImagenMarca(
+  id: string,
+  url: string,
+  itemId: string | null,
+): Promise<ActionResult> {
+  await assertPerm("marcas", "edit");
+  try {
+    const [prev] = await db
+      .select({ itemId: schema.marcas.imagenItemId })
+      .from(schema.marcas)
+      .where(eq(schema.marcas.id, id))
+      .limit(1);
+
+    await db
+      .update(schema.marcas)
+      .set({ imagenUrl: url, imagenItemId: itemId, updatedAt: new Date().toISOString() })
+      .where(eq(schema.marcas.id, id));
+
+    if (prev?.itemId && prev.itemId !== itemId) await deleteDriveItem(prev.itemId);
+    revalidatePath(MARCAS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo guardar el logo." };
+  }
+}
+
+/** Quita el logo de una marca (limpia columnas y borra el item en Graph). */
+export async function quitarImagenMarca(id: string): Promise<ActionResult> {
+  await assertPerm("marcas", "edit");
+  try {
+    const [prev] = await db
+      .select({ itemId: schema.marcas.imagenItemId })
+      .from(schema.marcas)
+      .where(eq(schema.marcas.id, id))
+      .limit(1);
+
+    await db
+      .update(schema.marcas)
+      .set({ imagenUrl: null, imagenItemId: null, updatedAt: new Date().toISOString() })
+      .where(eq(schema.marcas.id, id));
+
+    if (prev?.itemId) await deleteDriveItem(prev.itemId);
+    revalidatePath(MARCAS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo quitar el logo." };
+  }
+}
