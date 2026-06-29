@@ -8,6 +8,7 @@ import type { ProductoRecord, ProductoTipoOption } from "@/lib/admin/queries"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { ProductoImagenField } from "@/components/admin/productos/producto-imagen-field"
 import { atributosDeTipo } from "@/components/admin/productos/producto-atributos"
 
 const SELECT_CLASS =
@@ -413,6 +414,15 @@ export function ProductoForm({ modo, producto, tipos, onSuccess, onCancel, onSav
           className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
         />
       </div>
+
+      {/* Imagen: solo al editar (el producto debe existir para subirla). */}
+      {modo === "editar" && producto ? (
+        <ProductoImagenField productoId={producto.id} tieneImagen={producto.imagenUrl != null} />
+      ) : (
+        <p className="text-xs text-muted-foreground sm:col-span-2 lg:col-span-3">
+          Guarda el producto para poder agregar una imagen.
+        </p>
+      )}
 
       <label className="flex items-center gap-2 text-sm text-foreground sm:col-span-2 lg:col-span-3">
         <input

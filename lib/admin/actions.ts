@@ -37,6 +37,7 @@ import {
   type DimensionarResult,
 } from "@/lib/admin/cotizacion-dimensionado";
 import { sendMail } from "@/lib/email";
+import { deleteDriveItem } from "@/lib/m365/sharepoint";
 import { serverEnv, clientEnv } from "@/lib/env";
 import {
   renderCotizacionPdf,
@@ -4352,6 +4353,61 @@ export async function eliminarProducto(id: string): Promise<ActionResult> {
     return { ok: true };
   } catch {
     return { ok: false, error: "No se pudo eliminar el producto." };
+  }
+}
+
+/**
+ * Guarda la imagen de un producto (tras subirla a SharePoint en el route).
+ * Borra el item anterior en Graph si cambió (best-effort).
+ */
+export async function guardarImagenProducto(
+  id: string,
+  url: string,
+  itemId: string | null,
+): Promise<ActionResult> {
+  await assertPerm("productos", "edit");
+  try {
+    const [prev] = await db
+      .select({ itemId: schema.productos.imagenItemId })
+      .from(schema.productos)
+      .where(eq(schema.productos.id, id))
+      .limit(1);
+
+    await db
+      .update(schema.productos)
+      .set({ imagenUrl: url, imagenItemId: itemId, updatedAt: new Date().toISOString() })
+      .where(eq(schema.productos.id, id));
+
+    if (prev?.itemId && prev.itemId !== itemId) {
+      await deleteDriveItem(prev.itemId);
+    }
+    revalidatePath(PRODUCTOS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo guardar la imagen." };
+  }
+}
+
+/** Quita la imagen de un producto (limpia columnas y borra el item en Graph). */
+export async function quitarImagenProducto(id: string): Promise<ActionResult> {
+  await assertPerm("productos", "edit");
+  try {
+    const [prev] = await db
+      .select({ itemId: schema.productos.imagenItemId })
+      .from(schema.productos)
+      .where(eq(schema.productos.id, id))
+      .limit(1);
+
+    await db
+      .update(schema.productos)
+      .set({ imagenUrl: null, imagenItemId: null, updatedAt: new Date().toISOString() })
+      .where(eq(schema.productos.id, id));
+
+    if (prev?.itemId) await deleteDriveItem(prev.itemId);
+    revalidatePath(PRODUCTOS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo quitar la imagen." };
   }
 }
 

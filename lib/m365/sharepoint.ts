@@ -152,3 +152,44 @@ export async function uploadDocumentoSharePoint(params: {
     return { ok: false, error: "upload_failed" };
   }
 }
+
+/**
+ * Devuelve la respuesta de Graph con el CONTENIDO de un item (para hacer proxy
+ * y mostrar imágenes con `<img>`, ya que el webUrl es una página, no el binario).
+ * Sigue el redirect a la downloadUrl. Devuelve null si no está disponible.
+ */
+export async function fetchDriveItemContent(itemId: string): Promise<Response | null> {
+  const base = driveBase();
+  if (!base || !sharePointConfigurado() || !itemId) return null;
+  try {
+    const token = await getGraphToken();
+    const res = await fetch(`${base}/items/${itemId}/content`, {
+      headers: { Authorization: `Bearer ${token}` },
+      redirect: "follow",
+    });
+    return res.ok ? res : null;
+  } catch (error) {
+    console.error("[sharepoint] content error", error);
+    return null;
+  }
+}
+
+/**
+ * Borra un item del drive por su id de Graph (best-effort; usado al reemplazar o
+ * quitar la imagen de un producto). No lanza: devuelve true/false.
+ */
+export async function deleteDriveItem(itemId: string): Promise<boolean> {
+  const base = driveBase();
+  if (!base || !sharePointConfigurado() || !itemId) return false;
+  try {
+    const token = await getGraphToken();
+    const res = await fetch(`${base}/items/${itemId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return res.ok || res.status === 404;
+  } catch (error) {
+    console.error("[sharepoint] delete error", error);
+    return false;
+  }
+}

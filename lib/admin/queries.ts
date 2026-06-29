@@ -3016,12 +3016,14 @@ export interface ProductoRecord {
   modelo: string | null;
   descripcion: string | null;
   unidad: string;
+  naturaleza: string;
   precioCompra: number | null;
   precioVenta: number | null;
   moneda: string;
   stock: number | null;
   activo: boolean;
   atributos: Record<string, unknown>;
+  imagenUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -3108,12 +3110,14 @@ function mapProductoRow(row: {
   modelo: string | null;
   descripcion: string | null;
   unidad: string;
+  naturaleza: string;
   precioCompra: string | null;
   precioVenta: string | null;
   moneda: string;
   stock: number | null;
   activo: boolean;
   atributos: unknown;
+  imagenUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }): ProductoRecord {
@@ -3128,12 +3132,14 @@ function mapProductoRow(row: {
     modelo: row.modelo,
     descripcion: row.descripcion,
     unidad: row.unidad,
+    naturaleza: row.naturaleza,
     precioCompra: numOrNull(row.precioCompra),
     precioVenta: numOrNull(row.precioVenta),
     moneda: row.moneda,
     stock: row.stock,
     activo: row.activo,
     atributos: (row.atributos ?? {}) as Record<string, unknown>,
+    imagenUrl: row.imagenUrl,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -3150,12 +3156,14 @@ const productoSelect = {
   modelo: schema.productos.modelo,
   descripcion: schema.productos.descripcion,
   unidad: schema.productos.unidad,
+  naturaleza: schema.productos.naturaleza,
   precioCompra: schema.productos.precioCompra,
   precioVenta: schema.productos.precioVenta,
   moneda: schema.productos.moneda,
   stock: schema.productos.stock,
   activo: schema.productos.activo,
   atributos: schema.productos.atributos,
+  imagenUrl: schema.productos.imagenUrl,
   createdAt: schema.productos.createdAt,
   updatedAt: schema.productos.updatedAt,
 } as const;

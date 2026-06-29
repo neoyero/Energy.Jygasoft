@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Plus, Search, Tags } from "lucide-react"
+import { Plus, Search, Tags, Table2, LayoutGrid } from "lucide-react"
 
 import type {
   ProductoRecord,
@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Modal } from "@/components/admin/ui/modal"
 import { cn } from "@/lib/utils"
 import { ProductosTable } from "@/components/admin/productos/productos-table"
+import { ProductosGallery } from "@/components/admin/productos/productos-gallery"
 import { ProductoForm } from "@/components/admin/productos/producto-form"
 import { ProductoTiposPanel } from "@/components/admin/productos/producto-tipos-panel"
 
@@ -44,6 +45,7 @@ export function ProductosView({ tipos, puedeEditar, puedeEliminar }: ProductosVi
   const [editando, setEditando] = useState<ProductoRecord | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
   const [saving, setSaving] = useState(false)
+  const [vista, setVista] = useState<"tabla" | "galeria">("tabla")
 
   // Debounce de la búsqueda (250 ms).
   useEffect(() => {
@@ -132,32 +134,56 @@ export function ProductosView({ tipos, puedeEditar, puedeEliminar }: ProductosVi
               </div>
             </div>
 
-            {puedeEditar ? (
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  setEditando(null)
-                  setCreando(true)
-                }}
-                disabled={tiposActivos.length === 0}
-                title={tiposActivos.length === 0 ? "Crea un tipo activo primero" : undefined}
-              >
-                <Plus className="size-4" aria-hidden /> Nuevo producto
-              </Button>
-            ) : null}
+            <div className="flex items-center gap-2">
+              {/* Toggle Tabla / Galería */}
+              <div className="inline-flex rounded-lg border border-stone-200 p-0.5 dark:border-border" role="group" aria-label="Cambiar vista">
+                <BotonVista activo={vista === "tabla"} onClick={() => setVista("tabla")} label="Tabla">
+                  <Table2 className="size-4" aria-hidden />
+                </BotonVista>
+                <BotonVista activo={vista === "galeria"} onClick={() => setVista("galeria")} label="Galería">
+                  <LayoutGrid className="size-4" aria-hidden />
+                </BotonVista>
+              </div>
+
+              {puedeEditar ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    setEditando(null)
+                    setCreando(true)
+                  }}
+                  disabled={tiposActivos.length === 0}
+                  title={tiposActivos.length === 0 ? "Crea un tipo activo primero" : undefined}
+                >
+                  <Plus className="size-4" aria-hidden /> Nuevo producto
+                </Button>
+              ) : null}
+            </div>
           </div>
 
-          <ProductosTable
-            filtros={filtros}
-            puedeEditar={puedeEditar}
-            puedeEliminar={puedeEliminar}
-            onEdit={(p) => {
-              setCreando(false)
-              setEditando(p)
-            }}
-            reloadToken={reloadToken}
-          />
+          {vista === "tabla" ? (
+            <ProductosTable
+              filtros={filtros}
+              puedeEditar={puedeEditar}
+              puedeEliminar={puedeEliminar}
+              onEdit={(p) => {
+                setCreando(false)
+                setEditando(p)
+              }}
+              reloadToken={reloadToken}
+            />
+          ) : (
+            <ProductosGallery
+              filtros={filtros}
+              puedeEditar={puedeEditar}
+              onEdit={(p) => {
+                setCreando(false)
+                setEditando(p)
+              }}
+              reloadToken={reloadToken}
+            />
+          )}
 
           {/* Alta / edición en modal (responsive). */}
           {puedeEditar ? (
@@ -191,6 +217,37 @@ export function ProductosView({ tipos, puedeEditar, puedeEliminar }: ProductosVi
         <ProductoTiposPanel tipos={tipos} puedeEditar={puedeEditar} />
       )}
     </div>
+  )
+}
+
+function BotonVista({
+  activo,
+  onClick,
+  label,
+  children,
+}: {
+  activo: boolean
+  onClick: () => void
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={activo}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={cn(
+        "inline-flex size-8 items-center justify-center rounded-md transition-colors",
+        "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+        activo
+          ? "bg-brand text-white dark:bg-primary dark:text-primary-foreground"
+          : "text-stone-500 hover:bg-stone-100 dark:text-muted-foreground dark:hover:bg-muted",
+      )}
+    >
+      {children}
+    </button>
   )
 }
 
