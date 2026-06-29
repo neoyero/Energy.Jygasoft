@@ -340,7 +340,8 @@ export function CotizacionBuilder({
               <CardHeader>
                 <CardTitle>Sistema</CardTitle>
                 <CardDescription>
-                  Dimensionamiento y metricas energeticas.
+                  Arma las partidas de dos formas: <strong>calcula</strong> el sistema con el
+                  dimensionamiento inteligente, o <strong>aplica un paquete</strong> pre-armado.
                 </CardDescription>
               </CardHeader>
               <CardContent className="mt-4 space-y-4">
@@ -349,6 +350,11 @@ export function CotizacionBuilder({
                   cabecera={cotizacion}
                   calcContext={detalle.calcContext}
                   itemsCount={itemsCount}
+                  puedeEditar={puedeEditar}
+                />
+                <CotizacionPaquetePanel
+                  cotizacionId={cotizacion.id}
+                  capacidadKwp={cotizacion.capacidadKwp}
                   puedeEditar={puedeEditar}
                 />
                 <SistemaFields
@@ -363,11 +369,6 @@ export function CotizacionBuilder({
                 <SistemaForm
                   cotizacionId={cotizacion.id}
                   datos={cotizacion}
-                  puedeEditar={puedeEditar}
-                />
-                <CotizacionPaquetePanel
-                  cotizacionId={cotizacion.id}
-                  capacidadKwp={cotizacion.capacidadKwp}
                   puedeEditar={puedeEditar}
                 />
               </CardContent>
