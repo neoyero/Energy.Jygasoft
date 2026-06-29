@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState, useTransition } from "react"
+import { useEffect, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
+import { ImagePlus, X } from "lucide-react"
 
 import { crearMarca, actualizarMarca } from "@/lib/admin/actions"
 import type { MarcaRow } from "@/lib/admin/queries"
@@ -33,10 +34,38 @@ export function MarcaForm({ modo, marca, onSuccess, onCancel, onSavingChange }: 
   const [nombre, setNombre] = useState(marca?.nombre ?? "")
   const [descripcion, setDescripcion] = useState(marca?.descripcion ?? "")
   const [activo, setActivo] = useState(marca?.activo ?? true)
+  // Solo en alta: imagen "en espera" que se sube tras crear la marca.
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [archivo, setArchivo] = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  // Si en el alta la marca ya quedó creada (p. ej. falló solo el logo),
+  // guardamos su id para reintentar sin volver a crearla (evita duplicados).
+  const [creadaId, setCreadaId] = useState<string | null>(null)
 
   useEffect(() => {
     onSavingChange?.(pending)
   }, [pending, onSavingChange])
+
+  // Libera el object URL del preview al cambiar/desmontar.
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+    }
+  }, [previewUrl])
+
+  function elegirArchivo(e: React.ChangeEvent<HTMLInputElement>): void {
+    const f = e.target.files?.[0] ?? null
+    e.target.value = ""
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    setArchivo(f)
+    setPreviewUrl(f ? URL.createObjectURL(f) : null)
+  }
+
+  function quitarArchivo(): void {
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    setArchivo(null)
+    setPreviewUrl(null)
+  }
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>): void {
     e.preventDefault()
@@ -47,13 +76,50 @@ export function MarcaForm({ modo, marca, onSuccess, onCancel, onSavingChange }: 
       activo,
     }
     startTransition(async () => {
-      const res =
-        modo === "editar" && marca
-          ? await actualizarMarca(marca.id, payload)
-          : await crearMarca(payload)
-      if (!res.ok) {
-        setError(res.error)
+      if (modo === "editar" && marca) {
+        const res = await actualizarMarca(marca.id, payload)
+        if (!res.ok) {
+          setError(res.error)
+          return
+        }
+        router.refresh()
+        onSuccess?.()
         return
+      }
+
+      // Alta: crea la marca (o actualiza si ya se creó en un intento previo),
+      // y si se eligió imagen la sube a su carpeta.
+      let id = creadaId
+      if (!id) {
+        const res = await crearMarca(payload)
+        if (!res.ok) {
+          setError(res.error)
+          return
+        }
+        id = res.id ?? null
+        setCreadaId(id)
+      } else {
+        await actualizarMarca(id, payload)
+      }
+
+      if (archivo && id) {
+        try {
+          const fd = new FormData()
+          fd.append("file", archivo)
+          fd.append("marcaId", id)
+          const up = await fetch("/api/je-admin/marcas/imagen", { method: "POST", body: fd })
+          if (!up.ok) {
+            const j = (await up.json().catch(() => ({}))) as { error?: string }
+            // La marca quedó creada; solo falló el logo. Modal abierto para reintentar.
+            setError(`Marca creada; el logo no se subió (${j.error ?? "error"}). Reintenta.`)
+            router.refresh()
+            return
+          }
+        } catch {
+          setError("Marca creada; el logo no se subió. Reintenta.")
+          router.refresh()
+          return
+        }
       }
       router.refresh()
       onSuccess?.()
@@ -86,13 +152,53 @@ export function MarcaForm({ modo, marca, onSuccess, onCancel, onSavingChange }: 
         />
       </div>
 
-      {/* Logo: solo al editar (la marca debe existir para subirlo). */}
+      {/* Logo: al editar usa subida inmediata; al crear se deja "en espera". */}
       {modo === "editar" && marca ? (
         <MarcaImagenField marcaId={marca.id} tieneImagen={marca.imagenUrl != null} />
       ) : (
-        <p className="text-xs text-muted-foreground">
-          Guarda la marca para poder subir su logo.
-        </p>
+        <div className="space-y-1.5">
+          <Label>Logo (opcional)</Label>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/avif,image/svg+xml"
+            onChange={elegirArchivo}
+            disabled={pending}
+            className="hidden"
+          />
+          {previewUrl ? (
+            <div className="flex items-center gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewUrl}
+                alt="Vista previa del logo"
+                className="size-16 rounded-md border border-border object-contain bg-white"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={pending}
+                onClick={quitarArchivo}
+              >
+                <X className="size-4" aria-hidden /> Quitar
+              </Button>
+            </div>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => inputRef.current?.click()}
+            >
+              <ImagePlus className="size-4" aria-hidden /> Elegir logo
+            </Button>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Se subirá al guardar la marca. PNG, JPG, WebP, AVIF o SVG (máx. 8 MB).
+          </p>
+        </div>
       )}
 
       <label className="flex items-center gap-2 text-sm text-foreground">
