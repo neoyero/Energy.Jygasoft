@@ -12,6 +12,19 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0008 — Backfill cotización → oportunidad (monto en pipeline) · 2026-06-28
+
+**Migración:** `db/migrations/0008_cotizaciones_oportunidad_backfill.sql`
+
+- Enlaza las cotizaciones **huérfanas** (creadas antes de la sincronización
+  automática) a la oportunidad **abierta** más reciente de su cliente.
+- Refleja el `total` de la cotización enlazada en `oportunidades.monto_estimado`
+  (solo oportunidades abiertas y total > 0; ante varias, gana la de mayor total).
+- Idempotente. Reconcilia datos existentes; el flujo nuevo ya enlaza/sincroniza
+  al crear/editar partidas/dimensionar (ver acciones en `lib/admin/actions.ts`).
+
+---
+
 ## 0007 — Productos: re-cableado de FK + retiro de catalogo_equipos · 2026-06-26
 
 **Migración:** `db/migrations/0007_productos_recableado.sql`
