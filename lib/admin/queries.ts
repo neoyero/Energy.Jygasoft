@@ -3053,7 +3053,7 @@ export async function getProductoTipos(): Promise<ProductoTipoRecord[]> {
       createdAt: schema.productoTipos.createdAt,
       updatedAt: schema.productoTipos.updatedAt,
       productos: sql<number>`(
-        SELECT count(*) FROM productos p WHERE p.producto_tipo_id = ${schema.productoTipos.id}
+        SELECT count(*) FROM productos p WHERE p.producto_tipo_id = ${sql.raw("producto_tipos.id")}
       )::int`,
     })
     .from(schema.productoTipos)
@@ -3323,19 +3323,25 @@ export function segmentoDeTipoPersona(
   return "residencial";
 }
 
-/** Subconsultas de agregados por paquete (líneas, total, desactualizadas). */
+/**
+ * Subconsultas de agregados por paquete (líneas, total, desactualizadas).
+ * Nota: la referencia a la PK externa se escribe con sql.raw("paquetes.id")
+ * porque Drizzle, dentro de un sql template sobre la tabla principal sin alias,
+ * renderiza la columna sin calificar ("id"), lo que sería ambiguo/incorrecto.
+ */
+const PAQUETE_ID = sql.raw("paquetes.id");
 const paqueteAggregates = {
   lineas: sql<number>`(
-    SELECT count(*) FROM paquete_lineas pl WHERE pl.paquete_id = ${schema.paquetes.id}
+    SELECT count(*) FROM paquete_lineas pl WHERE pl.paquete_id = ${PAQUETE_ID}
   )::int`,
   total: sql<number>`(
     SELECT COALESCE(sum(pl.cantidad * pl.precio_fijo), 0)
-    FROM paquete_lineas pl WHERE pl.paquete_id = ${schema.paquetes.id}
+    FROM paquete_lineas pl WHERE pl.paquete_id = ${PAQUETE_ID}
   )::float8`,
   desactualizadas: sql<number>`(
     SELECT count(*) FROM paquete_lineas pl
     JOIN productos pr ON pr.id = pl.producto_id
-    WHERE pl.paquete_id = ${schema.paquetes.id}
+    WHERE pl.paquete_id = ${PAQUETE_ID}
       AND pl.precio_fijo IS DISTINCT FROM pr.precio_venta
   )::int`,
 } as const;
