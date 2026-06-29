@@ -22,6 +22,13 @@ type CambioPendiente =
 
 const ESTADOS = leadEstado.enumValues;
 
+/** Estados permitidos cuando el lead ya está convertido (terminal). */
+const ESTADOS_DESDE_CONVERTIDO: ReadonlyArray<LeadEstado> = [
+  "convertido",
+  "perdido",
+  "descartado",
+];
+
 export interface LeadActionsProps {
   leadId: string;
   estado: string;
@@ -128,7 +135,7 @@ export function LeadActions({
             onChange={pedirCambioEstado}
             className={selectClasses}
           >
-            {ESTADOS.map((value) => (
+            {(convertido ? ESTADOS_DESDE_CONVERTIDO : ESTADOS).map((value) => (
               <option key={value} value={value}>
                 {labelFor(value)}
               </option>

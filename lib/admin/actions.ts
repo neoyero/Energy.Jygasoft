@@ -45,6 +45,25 @@ export async function updateLeadEstado(id: string, estado: LeadEstado) {
   if (!(await puedeAccederLead(user, id))) throw new Error(SIN_ACCESO);
   const actor = actorOf(user);
   await db.transaction(async (tx) => {
+    const [actual] = await tx
+      .select({ estado: schema.leads.estado })
+      .from(schema.leads)
+      .where(eq(schema.leads.id, id))
+      .limit(1);
+    if (!actual) throw new Error("Lead no encontrado");
+
+    // Un lead convertido es terminal: solo puede cerrarse como perdido o
+    // descartado (no regresa a estados activos; la conversión ya creó el deal).
+    if (
+      actual.estado === "convertido" &&
+      estado !== "perdido" &&
+      estado !== "descartado"
+    ) {
+      throw new Error(
+        "Un lead convertido solo puede pasar a perdido o descartado.",
+      );
+    }
+
     await tx.update(schema.leads).set({ estado }).where(eq(schema.leads.id, id));
     await tx.insert(schema.eventos).values({
       entidadTipo: "lead",
