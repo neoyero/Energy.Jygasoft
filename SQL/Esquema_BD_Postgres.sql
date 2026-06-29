@@ -96,7 +96,9 @@ CREATE TABLE productos (
   producto_tipo_id uuid NOT NULL REFERENCES producto_tipos(id),
   sku              text UNIQUE,
   nombre           text NOT NULL,
-  marca            text, modelo text, descripcion text,
+  marca            text,                            -- espejo del nombre de la marca
+  marca_id         uuid,                            -- FK -> marcas(id); el ALTER va tras crear marcas
+  modelo text, descripcion text,
   unidad           text NOT NULL DEFAULT 'pieza',
   naturaleza       text NOT NULL DEFAULT 'producto' CHECK (naturaleza IN ('producto','servicio')),
   precio_compra    numeric(14,2), precio_venta numeric(14,2),
@@ -180,6 +182,11 @@ CREATE TABLE marcas (
 );
 CREATE INDEX ix_marcas_activo ON marcas (activo);
 CREATE TRIGGER trg_marcas_upd BEFORE UPDATE ON marcas FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- FK de productos.marca_id (la columna se declara arriba; marcas se crea aquí).
+ALTER TABLE productos ADD CONSTRAINT productos_marca_id_fkey
+  FOREIGN KEY (marca_id) REFERENCES marcas(id) ON DELETE SET NULL;
+CREATE INDEX ix_productos_marca ON productos (marca_id);
 
 CREATE TABLE hsp_zonas (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

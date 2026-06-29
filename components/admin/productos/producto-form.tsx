@@ -23,6 +23,8 @@ export interface ProductoFormProps {
   producto?: ProductoRecord
   /** Tipos activos para el select. */
   tipos: ReadonlyArray<ProductoTipoOption>
+  /** Marcas activas del catálogo (para el select de marca). */
+  marcas: ReadonlyArray<{ id: string; nombre: string }>
   /** Callback tras guardar con éxito (cierra el modal y recarga). */
   onSuccess?: () => void
   /** Callback al cancelar (cierra el modal sin recargar). */
@@ -57,6 +59,7 @@ interface FormState {
   sku: string
   nombre: string
   marca: string
+  marcaId: string
   modelo: string
   descripcion: string
   unidad: string
@@ -113,6 +116,7 @@ function estadoInicial(p?: ProductoRecord, tipos?: ReadonlyArray<ProductoTipoOpt
     sku: p?.sku ?? "",
     nombre: p?.nombre ?? "",
     marca: p?.marca ?? "",
+    marcaId: p?.marcaId ?? "",
     modelo: p?.modelo ?? "",
     descripcion: p?.descripcion ?? "",
     unidad: p?.unidad ?? "pieza",
@@ -138,7 +142,7 @@ function estadoInicial(p?: ProductoRecord, tipos?: ReadonlyArray<ProductoTipoOpt
  * Los atributos heredados no editables se preservan. Llama a crearProducto /
  * actualizarProducto en useTransition y, al éxito, refresca la ruta.
  */
-export function ProductoForm({ modo, producto, tipos, onSuccess, onCancel, onSavingChange }: ProductoFormProps) {
+export function ProductoForm({ modo, producto, tipos, marcas, onSuccess, onCancel, onSavingChange }: ProductoFormProps) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
 
@@ -204,6 +208,7 @@ export function ProductoForm({ modo, producto, tipos, onSuccess, onCancel, onSav
       sku: nullable(form.sku),
       nombre: form.nombre.trim(),
       marca: nullable(form.marca),
+      marcaId: form.marcaId || null,
       modelo: nullable(form.modelo),
       descripcion: nullable(form.descripcion),
       unidad: form.unidad.trim() || "pieza",
@@ -280,12 +285,29 @@ export function ProductoForm({ modo, producto, tipos, onSuccess, onCancel, onSav
 
       <div className="space-y-1.5">
         <Label htmlFor="prod-marca">Marca</Label>
-        <Input
+        <select
           id="prod-marca"
-          value={form.marca}
-          onChange={(e) => set("marca", e.target.value)}
+          value={form.marcaId}
+          onChange={(e) => {
+            const id = e.target.value
+            const m = marcas.find((x) => x.id === id)
+            setForm((prev) => ({ ...prev, marcaId: id, marca: m?.nombre ?? "" }))
+          }}
           disabled={pending}
-        />
+          className={SELECT_CLASS}
+        >
+          <option value="">Sin marca</option>
+          {marcas.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.nombre}
+            </option>
+          ))}
+        </select>
+        {form.marcaId === "" && form.marca.trim() !== "" ? (
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Marca actual “{form.marca}” no está en el catálogo. Elige una o créala en Catálogos › Marcas.
+          </p>
+        ) : null}
       </div>
 
       <div className="space-y-1.5">

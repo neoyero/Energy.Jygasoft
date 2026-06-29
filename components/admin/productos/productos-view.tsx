@@ -24,6 +24,8 @@ type Pestania = "productos" | "tipos"
 
 export interface ProductosViewProps {
   tipos: ReadonlyArray<ProductoTipoRecord>
+  /** Marcas activas del catálogo (para el select del formulario). */
+  marcas: ReadonlyArray<{ id: string; nombre: string }>
   /** RBAC productos:edit. */
   puedeEditar: boolean
   /** Solo admin puede borrar productos. */
@@ -36,7 +38,7 @@ export interface ProductosViewProps {
  * edición. La tabla trae los datos del servidor (paginación); reloadToken la
  * fuerza a recargar tras crear o editar.
  */
-export function ProductosView({ tipos, puedeEditar, puedeEliminar }: ProductosViewProps) {
+export function ProductosView({ tipos, marcas, puedeEditar, puedeEliminar }: ProductosViewProps) {
   const [pestania, setPestania] = useState<Pestania>("productos")
   const [tipoId, setTipoId] = useState<string>("")
   const [busqueda, setBusqueda] = useState("")
@@ -206,6 +208,7 @@ export function ProductosView({ tipos, puedeEditar, puedeEliminar }: ProductosVi
                 modo={editando ? "editar" : "crear"}
                 producto={editando ?? undefined}
                 tipos={tiposActivos}
+                marcas={marcas}
                 onSuccess={trasGuardar}
                 onCancel={cerrarFormulario}
                 onSavingChange={setSaving}

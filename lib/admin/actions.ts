@@ -4210,6 +4210,7 @@ const productoSchema = z.object({
     .min(1, "El nombre es obligatorio.")
     .max(200, "El nombre es demasiado largo."),
   marca: z.string().trim().max(120).nullable().optional(),
+  marcaId: z.string().uuid("Marca no válida.").nullable().optional(),
   modelo: z.string().trim().max(120).nullable().optional(),
   descripcion: z.string().trim().max(1000).nullable().optional(),
   unidad: z.string().trim().min(1).max(40).optional(),
@@ -4250,6 +4251,7 @@ function productoValues(data: z.output<typeof productoSchema>) {
     sku: txtOrNull(data.sku),
     nombre: data.nombre,
     marca: txtOrNull(data.marca),
+    marcaId: data.marcaId ?? null,
     modelo: txtOrNull(data.modelo),
     descripcion: txtOrNull(data.descripcion),
     unidad: data.unidad?.trim() || "pieza",
@@ -4266,6 +4268,7 @@ function mensajeProductoConflicto(e: unknown): string {
   const msg = e instanceof Error ? e.message : "";
   if (msg.includes("productos_sku_key")) return "Ya existe un producto con ese SKU.";
   if (msg.includes("productos_producto_tipo_id_fkey")) return "El tipo de producto no existe.";
+  if (msg.includes("productos_marca_id_fkey")) return "La marca seleccionada no existe.";
   return "No se pudo guardar el producto.";
 }
 

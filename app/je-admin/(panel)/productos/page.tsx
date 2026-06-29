@@ -2,7 +2,7 @@ import { Package } from "lucide-react"
 
 import { requirePerm } from "@/lib/admin/guard"
 import { can } from "@/lib/admin/rbac"
-import { getProductoTipos } from "@/lib/admin/queries"
+import { getProductoTipos, getMarcasActivas } from "@/lib/admin/queries"
 import { PageHeader } from "@/components/admin/ui/page-header"
 import { ProductosView } from "@/components/admin/productos/productos-view"
 
@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic"
  */
 export default async function ProductosPage() {
   const user = await requirePerm("productos", "view")
-  const tipos = await getProductoTipos()
+  const [tipos, marcas] = await Promise.all([getProductoTipos(), getMarcasActivas()])
   const puedeEditar = can(user.rol, "productos", "edit")
   const puedeEliminar = user.rol === "admin"
 
@@ -30,6 +30,7 @@ export default async function ProductosPage() {
 
       <ProductosView
         tipos={tipos}
+        marcas={marcas}
         puedeEditar={puedeEditar}
         puedeEliminar={puedeEliminar}
       />

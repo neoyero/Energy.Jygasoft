@@ -111,7 +111,8 @@ export const productos = pgTable("productos", {
 	productoTipoId: uuid("producto_tipo_id").notNull(),
 	sku: text(),
 	nombre: text().notNull(),
-	marca: text(),
+	marca: text(), // espejo del nombre de la marca (denormalizado)
+	marcaId: uuid("marca_id"), // FK -> marcas(id) ON DELETE SET NULL (definida en BD; marcas se declara más abajo)
 	modelo: text(),
 	descripcion: text(),
 	unidad: text().default('pieza').notNull(),

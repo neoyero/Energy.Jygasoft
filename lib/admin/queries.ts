@@ -3013,6 +3013,7 @@ export interface ProductoRecord {
   sku: string | null;
   nombre: string;
   marca: string | null;
+  marcaId: string | null;
   modelo: string | null;
   descripcion: string | null;
   unidad: string;
@@ -3107,6 +3108,7 @@ function mapProductoRow(row: {
   sku: string | null;
   nombre: string;
   marca: string | null;
+  marcaId: string | null;
   modelo: string | null;
   descripcion: string | null;
   unidad: string;
@@ -3129,6 +3131,7 @@ function mapProductoRow(row: {
     sku: row.sku,
     nombre: row.nombre,
     marca: row.marca,
+    marcaId: row.marcaId,
     modelo: row.modelo,
     descripcion: row.descripcion,
     unidad: row.unidad,
@@ -3153,6 +3156,7 @@ const productoSelect = {
   sku: schema.productos.sku,
   nombre: schema.productos.nombre,
   marca: schema.productos.marca,
+  marcaId: schema.productos.marcaId,
   modelo: schema.productos.modelo,
   descripcion: schema.productos.descripcion,
   unidad: schema.productos.unidad,

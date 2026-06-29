@@ -12,6 +12,16 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0014 — Enlace productos → marcas · 2026-06-29
+
+**Migración:** `db/migrations/0014_producto_marca_fk.sql`
+
+- `productos.marca_id` (FK → `marcas`, `ON DELETE SET NULL`) + índice. Se conserva
+  `productos.marca` (texto) como espejo del nombre para no tocar las lecturas
+  existentes (catálogo, galería, cotización). Backfill por nombre normalizado.
+
+---
+
 ## 0013 — Imagen (logo) de marca · 2026-06-29
 
 **Migración:** `db/migrations/0013_marca_imagen.sql`
