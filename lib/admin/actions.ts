@@ -1518,6 +1518,65 @@ async function sincronizarMontoOportunidad(
 }
 
 /**
+ * Refleja el cierre de la cotización en la etapa de su oportunidad enlazada:
+ * aceptada → ganada; rechazada/expirada → perdida. No degrada un deal ya GANADO
+ * por una cotización rechazada/expirada (un deal puede tener varias cotizaciones).
+ */
+async function sincronizarEtapaPorEstadoCotizacion(
+  tx: CotizacionTx,
+  cotizacionId: string,
+  estadoCot: CotizacionEstadoEnum,
+  actor: string,
+): Promise<void> {
+  let etapa: OportEtapa | null = null;
+  if (estadoCot === "aceptada") etapa = "ganada";
+  else if (estadoCot === "rechazada" || estadoCot === "expirada") etapa = "perdida";
+  if (!etapa) return;
+
+  const [cot] = await tx
+    .select({ oportunidadId: schema.cotizaciones.oportunidadId })
+    .from(schema.cotizaciones)
+    .where(eq(schema.cotizaciones.id, cotizacionId))
+    .limit(1);
+  if (!cot?.oportunidadId) return;
+
+  const [op] = await tx
+    .select({ etapa: schema.oportunidades.etapa })
+    .from(schema.oportunidades)
+    .where(eq(schema.oportunidades.id, cot.oportunidadId))
+    .limit(1);
+  if (!op || op.etapa === etapa) return;
+  // No revertir un deal ya ganado por una cotización rechazada/expirada.
+  if (etapa === "perdida" && op.etapa === "ganada") return;
+
+  await tx
+    .update(schema.oportunidades)
+    .set({
+      etapa,
+      probabilidad: PROBABILIDAD_POR_ETAPA[etapa],
+      cerradaAt: new Date().toISOString(),
+      ...(etapa === "perdida"
+        ? {
+            motivoPerdida:
+              estadoCot === "expirada"
+                ? "Cotización expirada"
+                : "Cotización rechazada",
+          }
+        : {}),
+    })
+    .where(eq(schema.oportunidades.id, cot.oportunidadId));
+
+  await tx.insert(schema.eventos).values({
+    entidadTipo: "oportunidad",
+    entidadId: cot.oportunidadId,
+    tipo: "cambio_etapa",
+    descripcion: `Etapa → ${etapa} (por cotización ${estadoCot})`,
+    payload: { etapa, origen: "cotizacion", estadoCotizacion: estadoCot },
+    actor,
+  });
+}
+
+/**
  * Crea una cotización borrador (version 1, totales en 0). Hereda el vendedor:
  * si el actor es un rol acotado usa su userId; si no, toma el del cliente.
  * Reintenta el folio ante colisión de unique (cotizaciones_folio_key).
@@ -1794,12 +1853,16 @@ export async function cambiarEstadoCotizacion(
         actor,
       });
 
+      // Refleja el cierre en la oportunidad: aceptada→ganada, rechazada/expirada→perdida.
+      await sincronizarEtapaPorEstadoCotizacion(tx, id, estado, actor);
+
       return { ok: true as const };
     });
 
     if (resultado.ok) {
       revalidatePath("/je-admin/cotizaciones");
       revalidatePath(`/je-admin/cotizaciones/${id}`);
+      revalidatePath("/je-admin/oportunidades");
     }
     return resultado;
   } catch {
