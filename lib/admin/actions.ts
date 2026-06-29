@@ -4778,6 +4778,7 @@ export interface SugerenciaPaquetes {
  */
 export async function sugerirPaquetesParaCotizacion(
   cotizacionId: string,
+  capacidadKwpOverride?: number | null,
 ): Promise<SugerenciaPaquetes> {
   const user = await assertPerm("cotizaciones", "edit");
   if (!(await puedeAccederCotizacion(user, cotizacionId))) {
@@ -4805,7 +4806,11 @@ export async function sugerirPaquetesParaCotizacion(
   }
 
   const segmento = segmentoDeTipoPersona(tipoPersona);
-  const cap = cot.capacidadKwp != null ? Number(cot.capacidadKwp) : null;
+  const capStored = cot.capacidadKwp != null ? Number(cot.capacidadKwp) : null;
+  const cap =
+    capacidadKwpOverride != null && capacidadKwpOverride > 0
+      ? capacidadKwpOverride
+      : capStored;
   const result = await getMejorPaquete({ capacidadKwp: cap ?? 0, segmento });
   return { ok: true, capacidadKwp: cap, segmento, ...result };
 }

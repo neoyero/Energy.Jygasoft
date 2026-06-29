@@ -2,19 +2,28 @@
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { Calculator, Sparkles } from "lucide-react"
+import { Calculator, Sparkles, Package, Check, AlertTriangle } from "lucide-react"
 
 import { esquemaCfe } from "@/db/schema"
 import { TARIFAS_CFE } from "@/lib/cfe/tarifas"
 import {
   calcularDimensionamiento,
   aplicarDimensionamiento,
+  sugerirPaquetesParaCotizacion,
+  aplicarPaqueteACotizacion,
+  type SugerenciaPaquetes,
 } from "@/lib/admin/actions"
 import type {
   CotizacionDetalleCabecera,
   CotizacionCalcContext,
   EsquemaCfe,
 } from "@/lib/admin/queries"
+
+const SEG_LABEL: Record<string, string> = {
+  residencial: "Residencial",
+  comercial: "Comercial",
+  industrial: "Industrial",
+}
 import type { DimensionarResult } from "@/lib/admin/cotizacion-dimensionado"
 import { labelFor } from "@/components/admin/ui/status-badge"
 import { ConfirmButton } from "@/components/admin/ui/confirm-button"
@@ -124,6 +133,12 @@ export function SistemaWizardStep({
   const [form, setForm] = useState<InsumosState>(() =>
     estadoInicial(cabecera, calcContext),
   )
+  // Modo de armado: cálculo (productos) o paquete (mejor ajuste).
+  const [modo, setModo] = useState<"manual" | "paquete">("manual")
+  const [paqueteSug, setPaqueteSug] = useState<SugerenciaPaquetes | null>(null)
+  const [paqueteSelId, setPaqueteSelId] = useState<string>("")
+  const [fallbackManual, setFallbackManual] = useState(false)
+  const [aplicandoPaquete, startAplicandoPaquete] = useTransition()
 
   // Parche inmutable de un campo del form.
   function set<K extends keyof InsumosState>(
@@ -187,8 +202,48 @@ export function SistemaWizardStep({
         setError(res.ok ? "No se pudo generar la propuesta." : res.error)
         return
       }
-      setPreview(res.preview)
       setAplicarError(null)
+
+      if (modo === "paquete") {
+        // Busca el paquete que mejor ajusta para la capacidad calculada.
+        const sug = await sugerirPaquetesParaCotizacion(
+          cotizacionId,
+          res.preview.sistema.capacidadKwp,
+        )
+        if (sug.ok && (sug.candidatos?.length ?? 0) > 0) {
+          setPaqueteSug(sug)
+          setPaqueteSelId(sug.mejor?.id ?? sug.candidatos![0]!.id)
+          setPreview(null)
+          setFallbackManual(false)
+          return
+        }
+        // No hay paquetes para el segmento → cae a manual con el cálculo.
+        setPaqueteSug(null)
+        setPreview(res.preview)
+        setFallbackManual(true)
+        return
+      }
+
+      setPaqueteSug(null)
+      setFallbackManual(false)
+      setPreview(res.preview)
+    })
+  }
+
+  function onAplicarPaquete(): void {
+    if (!paqueteSelId) return
+    setAplicarError(null)
+    startAplicandoPaquete(async () => {
+      const res = await aplicarPaqueteACotizacion({
+        cotizacionId,
+        paqueteId: paqueteSelId,
+        modo: "reemplazar",
+      })
+      if (!res.ok) {
+        setAplicarError(res.error)
+        return
+      }
+      router.refresh()
     })
   }
 
@@ -236,7 +291,14 @@ export function SistemaWizardStep({
     )
   }
 
-  const busy = pending || aplicando
+  const busy = pending || aplicando || aplicandoPaquete
+
+  const paqueteSel = paqueteSug?.candidatos?.find((c) => c.id === paqueteSelId)
+  const objetivoKwp = paqueteSug?.capacidadKwp ?? null
+  const paqueteNoCubre =
+    paqueteSel != null &&
+    objetivoKwp != null &&
+    (paqueteSel.capacidadKwp ?? 0) < objetivoKwp
 
   return (
     <div className="space-y-4 rounded-xl border border-border bg-card p-4">
@@ -249,6 +311,31 @@ export function SistemaWizardStep({
 
       {/* Form de insumos */}
       <form onSubmit={onCalcular} className="space-y-4">
+        {/* Modo de armado: cálculo (productos) o paquete (mejor ajuste). */}
+        <div className="space-y-1.5 sm:max-w-sm">
+          <Label htmlFor="wizard-modo">¿Cómo armar las partidas?</Label>
+          <select
+            id="wizard-modo"
+            value={modo}
+            onChange={(e) => {
+              setModo(e.target.value as "manual" | "paquete")
+              setPreview(null)
+              setPaqueteSug(null)
+              setFallbackManual(false)
+            }}
+            disabled={busy}
+            className={SELECT_CLASS}
+          >
+            <option value="manual">Cálculo — busca productos del catálogo</option>
+            <option value="paquete">Paquete — toma el que mejor se ajuste</option>
+          </select>
+          <p className="text-xs text-muted-foreground">
+            {modo === "paquete"
+              ? "Calcula la capacidad y aplica el paquete que mejor ajuste; si no hay paquete para el segmento, cambia a cálculo automáticamente."
+              : "Dimensiona el sistema y arma las partidas con productos del catálogo."}
+          </p>
+        </div>
+
         {!form.usarCapacidad ? (
           <fieldset className="space-y-3 rounded-lg border border-border p-3">
             <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -421,13 +508,87 @@ export function SistemaWizardStep({
         <div className="flex items-center gap-3">
           <Button type="submit" size="sm" disabled={busy}>
             <Calculator className="size-4" aria-hidden />
-            {pending ? "Calculando…" : "Calcular"}
+            {pending
+              ? "Calculando…"
+              : modo === "paquete"
+                ? "Calcular y buscar paquete"
+                : "Calcular"}
           </Button>
           {error ? (
             <span className="text-sm text-destructive">{error}</span>
           ) : null}
         </div>
       </form>
+
+      {/* Paquete sugerido (modo paquete) */}
+      {paqueteSug && paqueteSug.candidatos && paqueteSug.candidatos.length > 0 ? (
+        <div className="space-y-3 border-t border-border pt-4">
+          <div className="flex items-center gap-2">
+            <Package className="size-4 text-brand" aria-hidden />
+            <h3 className="text-sm font-semibold text-foreground">Paquete sugerido</h3>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Segmento{" "}
+            <strong>{SEG_LABEL[paqueteSug.segmento ?? ""] ?? paqueteSug.segmento}</strong>
+            {objetivoKwp != null ? (
+              <> · objetivo <strong>{objetivoKwp} kWp</strong></>
+            ) : null}
+            {paqueteSug.mejor ? (
+              <> · sugerido <strong>{paqueteSug.mejor.nombre}</strong>{paqueteSug.cubre ? " (cubre)" : " (no cubre del todo)"}</>
+            ) : null}
+          </p>
+
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div className="space-y-1.5">
+              <Label htmlFor="wizard-paquete">Paquete</Label>
+              <select
+                id="wizard-paquete"
+                value={paqueteSelId}
+                onChange={(e) => setPaqueteSelId(e.target.value)}
+                disabled={busy}
+                className={SELECT_CLASS}
+              >
+                {paqueteSug.candidatos.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre}
+                    {c.capacidadKwp != null ? ` · ${c.capacidadKwp} kWp` : ""} · $
+                    {c.total.toLocaleString("es-MX", { maximumFractionDigits: 0 })}
+                    {c.desactualizadas > 0 ? ` · ${c.desactualizadas} precio(s) desact.` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Button type="button" size="sm" onClick={onAplicarPaquete} disabled={busy || !paqueteSelId}>
+              <Check className="size-4" aria-hidden />
+              {aplicandoPaquete ? "Aplicando…" : "Aplicar paquete"}
+            </Button>
+          </div>
+
+          {paqueteNoCubre ? (
+            <p className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+              <AlertTriangle className="size-3.5" aria-hidden />
+              El paquete ({paqueteSel?.capacidadKwp ?? "?"} kWp) no cubre la capacidad objetivo ({objetivoKwp} kWp).
+            </p>
+          ) : null}
+          {paqueteSel && paqueteSel.desactualizadas > 0 ? (
+            <p className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+              <AlertTriangle className="size-3.5" aria-hidden />
+              El paquete tiene {paqueteSel.desactualizadas} precio(s) desactualizado(s) respecto al catálogo.
+            </p>
+          ) : null}
+          {aplicarError ? (
+            <span className="text-sm text-destructive">{aplicarError}</span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Aviso de fallback a manual */}
+      {fallbackManual ? (
+        <p className="inline-flex items-center gap-1.5 border-t border-border pt-4 text-xs font-medium text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="size-3.5" aria-hidden />
+          No hay paquetes para este segmento; se calculó la propuesta con productos del catálogo.
+        </p>
+      ) : null}
 
       {/* Preview editable + aplicar */}
       {preview ? (
