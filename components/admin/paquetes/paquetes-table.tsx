@@ -115,7 +115,6 @@ export function PaquetesTable({ filtros, puedeEditar, onEdit, reloadToken }: Paq
           <span className="text-xs text-stone-500 dark:text-muted-foreground">
             {SEGMENTO_LABEL[r.segmento] ?? r.segmento}
             {r.capacidadKwp != null ? ` · ${r.capacidadKwp} kWp` : ""}
-            {r.descuentoPct > 0 ? ` · -${r.descuentoPct}%` : ""}
           </span>
         </div>
       ),
@@ -127,6 +126,20 @@ export function PaquetesTable({ filtros, puedeEditar, onEdit, reloadToken }: Paq
       align: "end",
       hideOnMobile: true,
       render: (r) => <span className="tabular-nums text-muted-foreground">{r.lineas}</span>,
+    },
+    {
+      id: "descuento",
+      header: "Descuento",
+      accessor: (r) => r.descuentoPct,
+      align: "end",
+      render: (r) =>
+        r.descuentoPct > 0 ? (
+          <span className="inline-flex items-center rounded-full bg-brand/10 px-2 py-0.5 text-xs font-medium text-brand dark:bg-primary/15 dark:text-primary">
+            −{r.descuentoPct}%
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
     },
     {
       id: "total",
@@ -215,6 +228,7 @@ export function PaquetesTable({ filtros, puedeEditar, onEdit, reloadToken }: Paq
           <p className="text-xs text-stone-600 dark:text-muted-foreground">
             {SEGMENTO_LABEL[r.segmento] ?? r.segmento}
             {r.capacidadKwp != null ? ` · ${r.capacidadKwp} kWp` : ""} · {r.lineas} líneas
+            {r.descuentoPct > 0 ? ` · desc. ${r.descuentoPct}%` : ""}
           </p>
           <p className="text-sm tabular-nums text-stone-700 dark:text-foreground">{fmtMxn(r.total)}</p>
           {r.desactualizadas > 0 ? (
