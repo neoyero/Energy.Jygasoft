@@ -219,6 +219,7 @@ export interface MiActividadRow {
   tipo: string;
   titulo: string;
   estado: string;
+  prioridad: string;
   venceAt: string | null;
   entidadTipo: string | null;
   entidadId: string | null;
@@ -518,6 +519,7 @@ export async function getMisActividadesPendientes(
            tipo::text AS tipo,
            titulo,
            estado::text AS estado,
+           prioridad::text AS prioridad,
            vence_at AS vence_at,
            entidad_tipo::text AS entidad_tipo,
            entidad_id::text AS entidad_id,
@@ -534,6 +536,7 @@ export async function getMisActividadesPendientes(
     tipo: str(row.tipo),
     titulo: str(row.titulo),
     estado: str(row.estado),
+    prioridad: str(row.prioridad),
     venceAt: strOrNull(row.vence_at),
     entidadTipo: strOrNull(row.entidad_tipo),
     entidadId: strOrNull(row.entidad_id),
@@ -1219,6 +1222,7 @@ export interface ClienteActividadRow {
   titulo: string;
   descripcion: string | null;
   estado: string;
+  prioridad: string;
   venceAt: string | null;
   completadoAt: string | null;
   asignadoA: string | null;
@@ -1693,7 +1697,7 @@ async function getTimelineDeEntidad(
  * ordenadas por estado y vencimiento (nulls al final). `id` (bigint) -> string.
  * `vencida` se calcula en JS: vence_at pasado y aún pendiente.
  */
-async function getActividadesDeEntidad(
+export async function getActividadesDeEntidad(
   entidadTipo: (typeof schema.entidadTipo.enumValues)[number],
   entidadId: string,
 ): Promise<ClienteActividadRow[]> {
@@ -1704,6 +1708,7 @@ async function getActividadesDeEntidad(
       titulo: schema.actividades.titulo,
       descripcion: schema.actividades.descripcion,
       estado: schema.actividades.estado,
+      prioridad: schema.actividades.prioridad,
       venceAt: schema.actividades.venceAt,
       completadoAt: schema.actividades.completadoAt,
       asignadoA: schema.actividades.asignadoA,
@@ -1734,6 +1739,7 @@ async function getActividadesDeEntidad(
     titulo: row.titulo,
     descripcion: row.descripcion,
     estado: row.estado,
+    prioridad: row.prioridad,
     venceAt: row.venceAt,
     completadoAt: row.completadoAt,
     asignadoA: row.asignadoA,
@@ -1743,6 +1749,274 @@ async function getActividadesDeEntidad(
       row.venceAt != null &&
       new Date(row.venceAt) < ahora &&
       row.estado === "pendiente",
+  }));
+}
+
+// ===================== AGENDA GLOBAL DE ACTIVIDADES =====================
+
+/** Fila de la agenda global (incluye nombre del asignado y de la entidad). */
+export interface ActividadAgendaRow {
+  id: string;
+  tipo: string;
+  titulo: string;
+  descripcion: string | null;
+  estado: string;
+  prioridad: string;
+  venceAt: string | null;
+  completadoAt: string | null;
+  asignadoA: string | null;
+  asignadoNombre: string | null;
+  entidadTipo: string | null;
+  entidadId: string | null;
+  entidadNombre: string | null;
+  vencida: boolean;
+}
+
+export interface ActividadesFiltros {
+  estado?: string; // pendiente | completada | cancelada
+  tipo?: string; // actividad_tipo
+  prioridad?: string; // baja | media | alta
+  asignadoA?: string; // uuid | "sin" (sin asignar)
+  entidadTipo?: string; // entidad_tipo
+  vence?: string; // vencidas | hoy | semana | sin_fecha
+  busqueda?: string;
+}
+
+export interface ActividadesPage {
+  rows: ActividadAgendaRow[];
+  total: number;
+  hasMore: boolean;
+}
+
+export interface ActividadesResumen {
+  vencidas: number;
+  hoy: number;
+  proximas: number;
+  sinAsignar: number;
+  pendientes: number;
+  completadas: number;
+}
+
+/**
+ * Fragmento de propiedad para roles acotados (vendedor/preventa): la actividad
+ * es suya si está asignada a él o si la entidad dueña le pertenece (por
+ * vendedor_id de lead/cliente/oportunidad/cotizacion/proyecto). Para roles
+ * globales devuelve null (sin filtro). Se usa en la agenda y el resumen.
+ */
+function ownershipActividades(scope: DashboardScope): SQL | null {
+  if (!isScoped(scope.rol)) return null;
+  const uid = scope.userId;
+  return sql`(
+    a.asignado_a = ${uid}
+    OR (a.entidad_tipo = 'lead'        AND EXISTS (SELECT 1 FROM leads x         WHERE x.id = a.entidad_id AND x.vendedor_id = ${uid}))
+    OR (a.entidad_tipo = 'cliente'     AND EXISTS (SELECT 1 FROM clientes x      WHERE x.id = a.entidad_id AND x.vendedor_id = ${uid}))
+    OR (a.entidad_tipo = 'oportunidad' AND EXISTS (SELECT 1 FROM oportunidades x WHERE x.id = a.entidad_id AND x.vendedor_id = ${uid}))
+    OR (a.entidad_tipo = 'cotizacion'  AND EXISTS (SELECT 1 FROM cotizaciones x  WHERE x.id = a.entidad_id AND x.vendedor_id = ${uid}))
+    OR (a.entidad_tipo = 'proyecto'    AND EXISTS (SELECT 1 FROM proyectos x     WHERE x.id = a.entidad_id AND x.vendedor_id = ${uid}))
+  )`;
+}
+
+/** Construye las condiciones WHERE (scoping + filtros) de la agenda. */
+function condicionesActividades(
+  scope: DashboardScope,
+  filtros: ActividadesFiltros,
+): SQL[] {
+  const conds: SQL[] = [];
+
+  const own = ownershipActividades(scope);
+  if (own) conds.push(own);
+
+  if (filtros.estado) conds.push(sql`a.estado::text = ${filtros.estado}`);
+  if (filtros.tipo) conds.push(sql`a.tipo::text = ${filtros.tipo}`);
+  if (filtros.prioridad) conds.push(sql`a.prioridad::text = ${filtros.prioridad}`);
+  if (filtros.entidadTipo) conds.push(sql`a.entidad_tipo::text = ${filtros.entidadTipo}`);
+
+  if (filtros.asignadoA === "sin") {
+    conds.push(sql`a.asignado_a IS NULL`);
+  } else if (filtros.asignadoA) {
+    conds.push(sql`a.asignado_a = ${filtros.asignadoA}::uuid`);
+  }
+
+  switch (filtros.vence) {
+    case "vencidas":
+      conds.push(sql`a.vence_at IS NOT NULL AND a.vence_at < now() AND a.estado = 'pendiente'`);
+      break;
+    case "hoy":
+      conds.push(sql`a.vence_at IS NOT NULL AND a.vence_at::date = current_date`);
+      break;
+    case "semana":
+      conds.push(sql`a.vence_at IS NOT NULL AND a.vence_at >= now() AND a.vence_at <= now() + interval '7 days'`);
+      break;
+    case "sin_fecha":
+      conds.push(sql`a.vence_at IS NULL`);
+      break;
+    default:
+      break;
+  }
+
+  const q = filtros.busqueda?.trim();
+  if (q) conds.push(sql`a.titulo ILIKE ${"%" + q + "%"}`);
+
+  return conds;
+}
+
+/**
+ * Página de la agenda global de actividades. Resuelve el nombre del asignado
+ * (join a usuarios) y el nombre de la entidad dueña (subconsulta por tipo).
+ * Orden: pendientes primero, luego por vencimiento (nulls al final) y prioridad.
+ */
+export async function getActividadesPage(
+  scope: DashboardScope,
+  filtros: ActividadesFiltros,
+  opts: { limit: number; offset: number },
+): Promise<ActividadesPage> {
+  const conds = condicionesActividades(scope, filtros);
+  const where = conds.length
+    ? sql`WHERE ${sql.join(conds, sql` AND `)}`
+    : sql``;
+
+  const [{ total }] = asRows(
+    await db.execute(sql`SELECT count(*)::int AS total FROM actividades a ${where}`),
+  ).map((r) => ({ total: num(r.total) }));
+
+  const result = await db.execute(sql`
+    SELECT a.id::text AS id,
+           a.tipo::text AS tipo,
+           a.titulo,
+           a.descripcion,
+           a.estado::text AS estado,
+           a.prioridad::text AS prioridad,
+           a.vence_at AS vence_at,
+           a.completado_at AS completado_at,
+           a.asignado_a::text AS asignado_a,
+           u.nombre AS asignado_nombre,
+           a.entidad_tipo::text AS entidad_tipo,
+           a.entidad_id::text AS entidad_id,
+           CASE a.entidad_tipo
+             WHEN 'lead'        THEN (SELECT nombre FROM leads         WHERE id = a.entidad_id)
+             WHEN 'cliente'     THEN (SELECT nombre FROM clientes      WHERE id = a.entidad_id)
+             WHEN 'oportunidad' THEN (SELECT nombre FROM oportunidades WHERE id = a.entidad_id)
+             WHEN 'cotizacion'  THEN (SELECT folio  FROM cotizaciones  WHERE id = a.entidad_id)
+             WHEN 'proyecto'    THEN (SELECT folio  FROM proyectos     WHERE id = a.entidad_id)
+           END AS entidad_nombre,
+           (a.vence_at IS NOT NULL AND a.vence_at < now() AND a.estado = 'pendiente') AS vencida
+    FROM actividades a
+    LEFT JOIN usuarios u ON u.id = a.asignado_a
+    ${where}
+    ORDER BY (a.estado = 'pendiente') DESC,
+             a.vence_at ASC NULLS LAST,
+             CASE a.prioridad WHEN 'alta' THEN 0 WHEN 'media' THEN 1 ELSE 2 END,
+             a.id DESC
+    LIMIT ${opts.limit} OFFSET ${opts.offset}
+  `);
+
+  const rows: ActividadAgendaRow[] = asRows(result).map((row) => ({
+    id: str(row.id),
+    tipo: str(row.tipo),
+    titulo: str(row.titulo),
+    descripcion: strOrNull(row.descripcion),
+    estado: str(row.estado),
+    prioridad: str(row.prioridad),
+    venceAt: strOrNull(row.vence_at),
+    completadoAt: strOrNull(row.completado_at),
+    asignadoA: strOrNull(row.asignado_a),
+    asignadoNombre: strOrNull(row.asignado_nombre),
+    entidadTipo: strOrNull(row.entidad_tipo),
+    entidadId: strOrNull(row.entidad_id),
+    entidadNombre: strOrNull(row.entidad_nombre),
+    vencida: bool(row.vencida),
+  }));
+
+  return { rows, total, hasMore: opts.offset + rows.length < total };
+}
+
+/** Contadores de la agenda (chips): vencidas, hoy, próximas 7d, sin asignar, etc. */
+export async function getActividadesResumen(
+  scope: DashboardScope,
+): Promise<ActividadesResumen> {
+  const own = ownershipActividades(scope);
+  const where = own ? sql`WHERE ${own}` : sql``;
+
+  const [r] = asRows(
+    await db.execute(sql`
+      SELECT
+        count(*) FILTER (WHERE a.estado = 'pendiente' AND a.vence_at IS NOT NULL AND a.vence_at < now())::int AS vencidas,
+        count(*) FILTER (WHERE a.estado = 'pendiente' AND a.vence_at IS NOT NULL AND a.vence_at::date = current_date)::int AS hoy,
+        count(*) FILTER (WHERE a.estado = 'pendiente' AND a.vence_at > now() AND a.vence_at <= now() + interval '7 days')::int AS proximas,
+        count(*) FILTER (WHERE a.estado = 'pendiente' AND a.asignado_a IS NULL)::int AS sin_asignar,
+        count(*) FILTER (WHERE a.estado = 'pendiente')::int AS pendientes,
+        count(*) FILTER (WHERE a.estado = 'completada')::int AS completadas
+      FROM actividades a
+      ${where}
+    `),
+  );
+
+  return {
+    vencidas: num(r?.vencidas),
+    hoy: num(r?.hoy),
+    proximas: num(r?.proximas),
+    sinAsignar: num(r?.sin_asignar),
+    pendientes: num(r?.pendientes),
+    completadas: num(r?.completadas),
+  };
+}
+
+/** Opción de entidad para el selector del alta de actividad (id + etiqueta). */
+export interface EntidadOpcion {
+  id: string;
+  nombre: string;
+}
+
+/**
+ * Busca entidades de un tipo por nombre/folio para asociar una actividad, con
+ * scoping por vendedor. Devuelve hasta `limit` coincidencias. Los tipos sin
+ * dueño comercial directo (contacto/instalacion) no se ofrecen.
+ */
+export async function buscarEntidadesActividad(
+  scope: DashboardScope,
+  tipo: string,
+  q: string,
+  limit = 10,
+): Promise<EntidadOpcion[]> {
+  const term = `%${q.trim()}%`;
+  const scoped = isScoped(scope.rol);
+  const uid = scope.userId;
+
+  // Cada rama arma su SELECT (etiqueta = nombre o folio) + filtro de scope.
+  let stmt: SQL;
+  switch (tipo) {
+    case "lead":
+      stmt = sql`SELECT id::text AS id, coalesce(nombre, '(sin nombre)') AS nombre FROM leads
+                 WHERE nombre ILIKE ${term} ${scoped ? sql`AND vendedor_id = ${uid}` : sql``}
+                 ORDER BY created_at DESC LIMIT ${limit}`;
+      break;
+    case "cliente":
+      stmt = sql`SELECT id::text AS id, nombre FROM clientes
+                 WHERE nombre ILIKE ${term} ${scoped ? sql`AND vendedor_id = ${uid}` : sql``}
+                 ORDER BY created_at DESC LIMIT ${limit}`;
+      break;
+    case "oportunidad":
+      stmt = sql`SELECT id::text AS id, nombre FROM oportunidades
+                 WHERE nombre ILIKE ${term} ${scoped ? sql`AND vendedor_id = ${uid}` : sql``}
+                 ORDER BY created_at DESC LIMIT ${limit}`;
+      break;
+    case "cotizacion":
+      stmt = sql`SELECT id::text AS id, coalesce(folio, left(id::text, 8)) AS nombre FROM cotizaciones
+                 WHERE coalesce(folio, id::text) ILIKE ${term} ${scoped ? sql`AND vendedor_id = ${uid}` : sql``}
+                 ORDER BY created_at DESC LIMIT ${limit}`;
+      break;
+    case "proyecto":
+      stmt = sql`SELECT id::text AS id, coalesce(folio, left(id::text, 8)) AS nombre FROM proyectos
+                 WHERE coalesce(folio, id::text) ILIKE ${term} ${scoped ? sql`AND vendedor_id = ${uid}` : sql``}
+                 ORDER BY created_at DESC LIMIT ${limit}`;
+      break;
+    default:
+      return [];
+  }
+
+  return asRows(await db.execute(stmt)).map((row) => ({
+    id: str(row.id),
+    nombre: str(row.nombre),
   }));
 }
 

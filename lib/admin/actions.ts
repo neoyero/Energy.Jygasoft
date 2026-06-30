@@ -17,6 +17,11 @@ import {
   segmentoDeTipoPersona,
   getDesviacionesPaquetes,
   getMarcasPage,
+  getActividadesPage,
+  buscarEntidadesActividad,
+  type ActividadesPage,
+  type ActividadesFiltros,
+  type EntidadOpcion,
   type MarcasPage,
   type MarcasFiltros,
   type DashboardScope,
@@ -3824,9 +3829,8 @@ const venceAtOpcional = z
     return parsed.toISOString();
   });
 
-const crearActividadSchema = z.object({
-  entidadTipo: z.enum(schema.entidadTipo.enumValues),
-  entidadId: z.string().uuid("Entidad no válida."),
+/** Campos editables comunes a alta y edición de actividad. */
+const actividadCamposSchema = {
   tipo: z.enum(schema.actividadTipo.enumValues),
   titulo: z
     .string()
@@ -3834,6 +3838,7 @@ const crearActividadSchema = z.object({
     .min(2, "El título debe tener al menos 2 caracteres.")
     .max(200, "Título demasiado largo."),
   descripcion: optionalText(2000),
+  prioridad: z.enum(schema.actividadPrioridad.enumValues).default("media"),
   asignadoA: z
     .string()
     .uuid("Asignado no válido.")
@@ -3841,9 +3846,40 @@ const crearActividadSchema = z.object({
     .optional()
     .transform((v) => v ?? null),
   venceAt: venceAtOpcional,
+} as const;
+
+const crearActividadSchema = z.object({
+  entidadTipo: z.enum(schema.entidadTipo.enumValues),
+  entidadId: z.string().uuid("Entidad no válida."),
+  ...actividadCamposSchema,
 });
 
+const actualizarActividadSchema = z.object(actividadCamposSchema);
+
 type CrearActividadInput = z.input<typeof crearActividadSchema>;
+type ActualizarActividadInput = z.input<typeof actualizarActividadSchema>;
+
+const ACTIVIDADES_PATH = "/je-admin/actividades";
+
+/**
+ * Mapa entidadTipo -> segmento de ruta del back-office, para revalidar la ficha
+ * dueña de la actividad. Los tipos sin detalle propio (contacto, instalacion)
+ * devuelven null y no se revalidan.
+ */
+const SEGMENTO_ENTIDAD: Partial<Record<string, string>> = {
+  lead: "leads",
+  cliente: "clientes",
+  oportunidad: "oportunidades",
+  cotizacion: "cotizaciones",
+  proyecto: "proyectos",
+};
+
+/** Revalida la ficha de la entidad dueña de la actividad (si tiene ruta). */
+function revalidarEntidad(tipo: string | null, id: string | null): void {
+  if (!tipo || !id) return;
+  const seg = SEGMENTO_ENTIDAD[tipo];
+  if (seg) revalidatePath(`/je-admin/${seg}/${id}`);
+}
 
 /**
  * Crea una actividad sobre una entidad. `createdBy` = usuario actual. Deja traza
@@ -3879,6 +3915,7 @@ export async function crearActividad(
           tipo: d.tipo,
           titulo: d.titulo,
           descripcion: d.descripcion,
+          prioridad: d.prioridad,
           asignadoA: d.asignadoA,
           venceAt: d.venceAt,
           createdBy: user.id ?? null,
@@ -3886,7 +3923,7 @@ export async function crearActividad(
         .returning({ id: schema.actividades.id });
 
       await tx.insert(schema.eventos).values({
-        entidadTipo: "cliente",
+        entidadTipo: d.entidadTipo,
         entidadId: d.entidadId,
         tipo: "actividad_creada",
         descripcion: `Actividad creada: ${d.titulo}`,
@@ -3897,7 +3934,8 @@ export async function crearActividad(
       return actividad.id;
     });
 
-    revalidatePath(`/je-admin/clientes/${d.entidadId}`);
+    revalidarEntidad(d.entidadTipo, d.entidadId);
+    revalidatePath(ACTIVIDADES_PATH);
     return { ok: true, id: String(id) };
   } catch {
     return { ok: false, error: "No se pudo crear la actividad." };
@@ -3937,14 +3975,7 @@ export async function completarActividad(
   }
 
   try {
-    const entidadId = await db.transaction(async (tx) => {
-      const [actividad] = await tx
-        .select({ entidadId: schema.actividades.entidadId })
-        .from(schema.actividades)
-        .where(eq(schema.actividades.id, actividadId))
-        .limit(1);
-      if (!actividad) throw new Error("Actividad no encontrada");
-
+    await db.transaction(async (tx) => {
       await tx
         .update(schema.actividades)
         .set({
@@ -3954,10 +3985,10 @@ export async function completarActividad(
         })
         .where(eq(schema.actividades.id, actividadId));
 
-      if (actividad.entidadId) {
+      if (a.entidadTipo && a.entidadId) {
         await tx.insert(schema.eventos).values({
-          entidadTipo: "cliente",
-          entidadId: actividad.entidadId,
+          entidadTipo: a.entidadTipo,
+          entidadId: a.entidadId,
           tipo: "actividad_completada",
           descripcion: completada
             ? "Actividad completada"
@@ -3966,15 +3997,234 @@ export async function completarActividad(
           actor,
         });
       }
-
-      return actividad.entidadId;
     });
 
-    if (entidadId) revalidatePath(`/je-admin/clientes/${entidadId}`);
+    revalidarEntidad(a.entidadTipo, a.entidadId);
+    revalidatePath(ACTIVIDADES_PATH);
     return { ok: true };
   } catch {
     return { ok: false, error: "No se pudo actualizar la actividad." };
   }
+}
+
+/**
+ * Edita los campos de una actividad (tipo, título, descripción, prioridad,
+ * asignado, vencimiento). La entidad asociada es inmutable. Valida permiso +
+ * acceso a la entidad dueña; deja traza y revalida.
+ */
+export async function actualizarActividad(
+  id: string,
+  data: ActualizarActividadInput,
+): Promise<ActionResult> {
+  const user = await assertPerm("actividades", "edit");
+  const actor = actorOf(user);
+  const actividadId = Number(id);
+
+  const parsed = actualizarActividadSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
+    };
+  }
+  const d = parsed.data;
+
+  const [a] = await db
+    .select({
+      entidadTipo: schema.actividades.entidadTipo,
+      entidadId: schema.actividades.entidadId,
+    })
+    .from(schema.actividades)
+    .where(eq(schema.actividades.id, actividadId))
+    .limit(1);
+  if (!a) return { ok: false, error: SIN_ACCESO };
+  if (
+    a.entidadTipo &&
+    a.entidadId &&
+    !(await puedeAccederEntidad(user, a.entidadTipo, a.entidadId))
+  ) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(schema.actividades)
+        .set({
+          tipo: d.tipo,
+          titulo: d.titulo,
+          descripcion: d.descripcion,
+          prioridad: d.prioridad,
+          asignadoA: d.asignadoA,
+          venceAt: d.venceAt,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.actividades.id, actividadId));
+
+      if (a.entidadTipo && a.entidadId) {
+        await tx.insert(schema.eventos).values({
+          entidadTipo: a.entidadTipo,
+          entidadId: a.entidadId,
+          tipo: "actividad_actualizada",
+          descripcion: `Actividad actualizada: ${d.titulo}`,
+          payload: { actividadId: String(actividadId), titulo: d.titulo },
+          actor,
+        });
+      }
+    });
+
+    revalidarEntidad(a.entidadTipo, a.entidadId);
+    revalidatePath(ACTIVIDADES_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo actualizar la actividad." };
+  }
+}
+
+/**
+ * Cancela / reactiva una actividad (estado 'cancelada' <-> 'pendiente'). Cancelar
+ * es la baja "suave": conserva la traza sin borrar el registro.
+ */
+export async function cancelarActividad(
+  id: string,
+  cancelada: boolean,
+): Promise<ActionResult> {
+  const user = await assertPerm("actividades", "edit");
+  const actor = actorOf(user);
+  const actividadId = Number(id);
+
+  const [a] = await db
+    .select({
+      entidadTipo: schema.actividades.entidadTipo,
+      entidadId: schema.actividades.entidadId,
+    })
+    .from(schema.actividades)
+    .where(eq(schema.actividades.id, actividadId))
+    .limit(1);
+  if (!a) return { ok: false, error: SIN_ACCESO };
+  if (
+    a.entidadTipo &&
+    a.entidadId &&
+    !(await puedeAccederEntidad(user, a.entidadTipo, a.entidadId))
+  ) {
+    return { ok: false, error: SIN_ACCESO };
+  }
+
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(schema.actividades)
+        .set({
+          estado: cancelada ? "cancelada" : "pendiente",
+          completadoAt: null,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.actividades.id, actividadId));
+
+      if (a.entidadTipo && a.entidadId) {
+        await tx.insert(schema.eventos).values({
+          entidadTipo: a.entidadTipo,
+          entidadId: a.entidadId,
+          tipo: "actividad_cancelada",
+          descripcion: cancelada
+            ? "Actividad cancelada"
+            : "Actividad reactivada",
+          payload: { actividadId: String(actividadId), cancelada },
+          actor,
+        });
+      }
+    });
+
+    revalidarEntidad(a.entidadTipo, a.entidadId);
+    revalidatePath(ACTIVIDADES_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo cancelar la actividad." };
+  }
+}
+
+/**
+ * Elimina una actividad de forma permanente. Solo admin. Deja traza del borrado
+ * en la bitácora de la entidad dueña.
+ */
+export async function eliminarActividad(id: string): Promise<ActionResult> {
+  const user = await assertPerm("actividades", "edit");
+  if (user.rol !== "admin") {
+    return { ok: false, error: "Solo un administrador puede eliminar actividades." };
+  }
+  const actor = actorOf(user);
+  const actividadId = Number(id);
+
+  const [a] = await db
+    .select({
+      entidadTipo: schema.actividades.entidadTipo,
+      entidadId: schema.actividades.entidadId,
+      titulo: schema.actividades.titulo,
+    })
+    .from(schema.actividades)
+    .where(eq(schema.actividades.id, actividadId))
+    .limit(1);
+  if (!a) return { ok: false, error: "La actividad no existe." };
+
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(schema.actividades)
+        .where(eq(schema.actividades.id, actividadId));
+
+      if (a.entidadTipo && a.entidadId) {
+        await tx.insert(schema.eventos).values({
+          entidadTipo: a.entidadTipo,
+          entidadId: a.entidadId,
+          tipo: "actividad_eliminada",
+          descripcion: `Actividad eliminada: ${a.titulo}`,
+          payload: { titulo: a.titulo },
+          actor,
+        });
+      }
+    });
+
+    revalidarEntidad(a.entidadTipo, a.entidadId);
+    revalidatePath(ACTIVIDADES_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo eliminar la actividad." };
+  }
+}
+
+/**
+ * Página de la agenda global con scope por rol (server-side). El scope se arma
+ * desde la sesión: los roles acotados solo ven sus actividades.
+ */
+export async function fetchActividades(input: {
+  filtros?: ActividadesFiltros;
+  limit: number;
+  offset: number;
+}): Promise<ActividadesPage> {
+  const user = await assertPerm("actividades", "view");
+  const scope: DashboardScope = {
+    rol: (user.rol ?? "lectura") as Rol,
+    userId: user.id,
+  };
+  const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
+  const offset = Math.max(0, Math.trunc(input.offset));
+  return getActividadesPage(scope, input.filtros ?? {}, { limit, offset });
+}
+
+/**
+ * Autocompletado de entidades para asociar una actividad (alta desde la agenda
+ * global). Respeta el scope del rol.
+ */
+export async function buscarEntidadActividad(
+  tipo: string,
+  q: string,
+): Promise<EntidadOpcion[]> {
+  const user = await assertPerm("actividades", "view");
+  const scope: DashboardScope = {
+    rol: (user.rol ?? "lectura") as Rol,
+    userId: user.id,
+  };
+  return buscarEntidadesActividad(scope, tipo, q, 10);
 }
 
 /**
