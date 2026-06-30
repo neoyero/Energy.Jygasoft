@@ -3881,6 +3881,25 @@ function revalidarEntidad(tipo: string | null, id: string | null): void {
   if (seg) revalidatePath(`/je-admin/${seg}/${id}`);
 }
 
+const ASIGNACION_NO_PERMITIDA =
+  "No puedes asignar esta actividad a otra persona; solo a ti mismo.";
+
+/**
+ * Regla de asignación de actividades (quién puede asignar a quién):
+ *  - "Sin asignar" (null) siempre permitido.
+ *  - admin / gerente: a cualquiera.
+ *  - resto de roles: solo a sí mismos.
+ * Se valida en el servidor aunque la UI ya acote la lista (defensa en profundidad).
+ */
+function puedeAsignarActividad(
+  user: SessionUser,
+  asignadoA: string | null,
+): boolean {
+  if (asignadoA == null) return true;
+  if (user.rol === "admin" || user.rol === "gerente") return true;
+  return asignadoA === user.id;
+}
+
 /**
  * Crea una actividad sobre una entidad. `createdBy` = usuario actual. Deja traza
  * en la bitácora del cliente. `actividades.id` es bigint -> String(id) al
@@ -3903,6 +3922,10 @@ export async function crearActividad(
 
   if (!(await puedeAccederEntidad(user, d.entidadTipo, d.entidadId))) {
     return { ok: false, error: SIN_ACCESO };
+  }
+
+  if (!puedeAsignarActividad(user, d.asignadoA)) {
+    return { ok: false, error: ASIGNACION_NO_PERMITIDA };
   }
 
   try {
@@ -4028,6 +4051,10 @@ export async function actualizarActividad(
     };
   }
   const d = parsed.data;
+
+  if (!puedeAsignarActividad(user, d.asignadoA)) {
+    return { ok: false, error: ASIGNACION_NO_PERMITIDA };
+  }
 
   const [a] = await db
     .select({

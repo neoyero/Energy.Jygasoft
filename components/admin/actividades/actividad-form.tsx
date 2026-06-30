@@ -15,6 +15,7 @@ import {
   EntidadPicker,
   type EntidadSeleccionada,
 } from "@/components/admin/actividades/entidad-picker"
+import { AsignadoCombobox } from "@/components/admin/actividades/asignado-combobox"
 import {
   isoToLocalInput,
   nullable,
@@ -185,20 +186,13 @@ export function ActividadForm({
 
         <div className="space-y-1.5">
           <Label htmlFor="act-asignado">Asignado a</Label>
-          <select
+          <AsignadoCombobox
             id="act-asignado"
             value={form.asignadoA}
-            onChange={(e) => set("asignadoA", e.target.value)}
+            options={vendedores}
+            onChange={(v) => set("asignadoA", v)}
             disabled={pending}
-            className={SELECT_CLASS}
-          >
-            <option value="">Sin asignar</option>
-            {vendedores.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.nombre}
-              </option>
-            ))}
-          </select>
+          />
         </div>
       </div>
 

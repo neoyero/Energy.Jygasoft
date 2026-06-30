@@ -4,7 +4,7 @@ import { requirePerm } from "@/lib/admin/guard"
 import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getActividadesResumen,
-  getVendedores,
+  getUsuariosAsignables,
   isScoped,
   type DashboardScope,
 } from "@/lib/admin/queries"
@@ -29,7 +29,7 @@ export default async function ActividadesPage() {
 
   const [resumen, vendedores] = await Promise.all([
     getActividadesResumen(scope),
-    getVendedores(),
+    getUsuariosAsignables(scope),
   ])
 
   const puedeEditar = can(scope.rol, "actividades", "edit")

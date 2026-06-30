@@ -6,7 +6,7 @@ import {
   getCotizacion,
   getCatalogoDisponible,
   getOportunidadesDeClienteOpciones,
-  getVendedores,
+  getUsuariosAsignables,
   type DashboardScope,
   type OportunidadOpcion,
 } from "@/lib/admin/queries";
@@ -41,7 +41,7 @@ export default async function CotizacionDetailPage({ params }: Params) {
   const [detalle, catalogo, vendedores] = await Promise.all([
     getCotizacion(scope, id),
     getCatalogoDisponible(),
-    getVendedores(),
+    getUsuariosAsignables(scope),
   ]);
 
   if (!detalle) notFound();

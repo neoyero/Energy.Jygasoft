@@ -8,7 +8,7 @@ import {
   getCuadrillasActivas,
   getCatalogoDisponible,
   getActividadesDeEntidad,
-  getVendedores,
+  getUsuariosAsignables,
   type DashboardScope,
 } from "@/lib/admin/queries"
 import { formatMXN } from "@/lib/admin/format"
@@ -70,7 +70,7 @@ export default async function ProyectoDetail({ params }: Params) {
     getCuadrillasActivas(),
     getCatalogoDisponible(),
     getActividadesDeEntidad("proyecto", id),
-    getVendedores(),
+    getUsuariosAsignables(scope),
   ])
 
   const { proyecto } = detalle

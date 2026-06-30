@@ -968,6 +968,35 @@ export async function getVendedores(): Promise<VendedorOption[]> {
   return rows.map((row) => ({ id: row.id, nombre: row.nombre, rol: row.rol }));
 }
 
+/**
+ * Usuarios a los que el usuario actual PUEDE asignar una actividad, según la
+ * regla de relación por rol:
+ *  - admin / gerente: cualquiera (lista completa de asignables).
+ *  - resto de roles (vendedor, preventa, ops, field…): solo a sí mismo.
+ * "Sin asignar" se ofrece siempre en la UI; aquí se devuelven los destinos
+ * nominales válidos. Es la fuente de verdad de la UI; la action revalida.
+ */
+export async function getUsuariosAsignables(
+  scope: DashboardScope,
+): Promise<VendedorOption[]> {
+  const esManager = scope.rol === "admin" || scope.rol === "gerente";
+  if (esManager) return getVendedores();
+
+  const rows = await db
+    .select({
+      id: schema.usuarios.id,
+      nombre: schema.usuarios.nombre,
+      rol: schema.usuarios.rol,
+    })
+    .from(schema.usuarios)
+    .where(
+      and(eq(schema.usuarios.id, scope.userId), eq(schema.usuarios.activo, true)),
+    )
+    .limit(1);
+
+  return rows.map((row) => ({ id: row.id, nombre: row.nombre, rol: row.rol }));
+}
+
 /** Fila de asesor para la gestión en el panel (con el usuario vinculado). */
 export interface AsesorRow {
   id: string;

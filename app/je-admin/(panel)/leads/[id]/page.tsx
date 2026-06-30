@@ -6,6 +6,7 @@ import {
   getLeadTimeline,
   getActividadesDeEntidad,
   getAsesoresAsignables,
+  getUsuariosAsignables,
   type DashboardScope,
 } from "@/lib/admin/queries";
 import { requirePerm } from "@/lib/admin/guard";
@@ -74,10 +75,11 @@ export default async function LeadDetail({ params }: Params) {
   const lead = await getLead(scope, id);
   if (!lead) notFound();
 
-  const [timeline, vendedores, actividades] = await Promise.all([
+  const [timeline, vendedores, actividades, asignables] = await Promise.all([
     getLeadTimeline(id),
     getAsesoresAsignables(),
     getActividadesDeEntidad("lead", id),
+    getUsuariosAsignables(scope),
   ]);
 
   const puedeEditarActs = can(user.rol, "actividades", "edit");
@@ -203,7 +205,7 @@ export default async function LeadDetail({ params }: Params) {
             entidadTipo="lead"
             entidadId={lead.id}
             actividades={actividades}
-            vendedores={vendedores}
+            vendedores={asignables}
             puedeEditar={puedeEditarActs}
           />
         </CardContent>

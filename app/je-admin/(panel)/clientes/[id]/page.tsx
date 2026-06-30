@@ -6,6 +6,7 @@ import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getClienteDetalle,
   getVendedores,
+  getUsuariosAsignables,
   type DashboardScope,
 } from "@/lib/admin/queries"
 import { fmtFechaRel } from "@/lib/admin/format"
@@ -55,9 +56,10 @@ export default async function ClienteDetail({ params }: Params) {
     userId: user.id,
   }
 
-  const [detalle, vendedores] = await Promise.all([
+  const [detalle, vendedores, asignables] = await Promise.all([
     getClienteDetalle(scope, id),
     getVendedores(),
+    getUsuariosAsignables(scope),
   ])
   if (!detalle) notFound()
 
@@ -199,7 +201,7 @@ export default async function ClienteDetail({ params }: Params) {
       {/* Pestañas de relaciones */}
       <ClienteTabs
         detalle={detalle}
-        vendedores={vendedores}
+        vendedores={asignables}
         puedeEditar={puedeEditar}
         puedeCrearOport={puedeCrearOport}
         puedeCrearCotiz={puedeCrearCotiz}

@@ -2,7 +2,7 @@ import { requirePerm } from "@/lib/admin/guard";
 import { can, type Rol } from "@/lib/admin/rbac";
 import {
   getOportunidadesPipeline,
-  getVendedores,
+  getUsuariosAsignables,
   type DashboardScope,
 } from "@/lib/admin/queries";
 import { PageHeader } from "@/components/admin/ui/page-header";
@@ -21,7 +21,7 @@ export default async function PipelinePage() {
   const puedeAgendar = can(scope.rol, "actividades", "edit");
   const [data, vendedores] = await Promise.all([
     getOportunidadesPipeline(scope),
-    puedeAgendar ? getVendedores() : Promise.resolve([]),
+    puedeAgendar ? getUsuariosAsignables(scope) : Promise.resolve([]),
   ]);
   const puedeEditar = can(scope.rol, "oportunidades", "edit");
 
