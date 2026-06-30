@@ -31,8 +31,6 @@ export interface ActividadesViewProps {
   vendedores: ReadonlyArray<VendedorOption>
   puedeEditar: boolean
   puedeEliminar: boolean
-  /** Rol acotado (vendedor/preventa): oculta el filtro por asignado. */
-  rolScoped: boolean
 }
 
 /**
@@ -46,7 +44,6 @@ export function ActividadesView({
   vendedores,
   puedeEditar,
   puedeEliminar,
-  rolScoped,
 }: ActividadesViewProps) {
   const [preset, setPreset] = useState<Preset>("todas")
   const [estado, setEstado] = useState<string>("pendiente")
@@ -237,7 +234,7 @@ export function ActividadesView({
             </select>
           </Filtro>
 
-          {!rolScoped ? (
+          {vendedores.length > 1 ? (
             <Filtro label="Asignado">
               <select
                 value={asignadoA}

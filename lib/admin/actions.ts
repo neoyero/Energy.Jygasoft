@@ -3886,22 +3886,36 @@ function revalidarEntidad(tipo: string | null, id: string | null): void {
 }
 
 const ASIGNACION_NO_PERMITIDA =
-  "No puedes asignar esta actividad a otra persona; solo a ti mismo.";
+  "Solo puedes asignar esta actividad a ti mismo o a alguien de tu equipo.";
 
 /**
- * Regla de asignación de actividades (quién puede asignar a quién):
+ * Regla de asignación de actividades POR JERARQUÍA (Fase 2):
  *  - "Sin asignar" (null) siempre permitido.
- *  - admin / gerente: a cualquiera.
- *  - resto de roles: solo a sí mismos.
- * Se valida en el servidor aunque la UI ya acote la lista (defensa en profundidad).
+ *  - a sí mismo: siempre permitido.
+ *  - admin: a cualquiera (es global).
+ *  - resto de roles: solo a sus descendientes en la línea de reporte (subárbol).
+ * Los casos baratos (null / self / admin) cortocircuitan antes de tocar la BD;
+ * solo se consulta el subárbol al asignar a un tercero. Se valida en el servidor
+ * aunque la UI ya acote la lista (defensa en profundidad).
  */
-function puedeAsignarActividad(
+async function puedeAsignarActividad(
   user: SessionUser,
   asignadoA: string | null,
-): boolean {
-  if (asignadoA == null) return true;
-  if (user.rol === "admin" || user.rol === "gerente") return true;
-  return asignadoA === user.id;
+): Promise<boolean> {
+  if (asignadoA == null) return true; // sin asignar
+  if (!user.id) return false; // sesión sin id -> fail-closed
+  if (asignadoA === user.id) return true; // a sí mismo
+  if (user.rol === "admin") return true; // global
+  // Resto: el destino debe estar en su subárbol Y activo (coherente con
+  // getUsuariosAsignables, que solo ofrece activos).
+  const descendientes = await getDescendientes(user.id);
+  if (!descendientes.includes(asignadoA)) return false;
+  const [u] = await db
+    .select({ activo: schema.usuarios.activo })
+    .from(schema.usuarios)
+    .where(eq(schema.usuarios.id, asignadoA))
+    .limit(1);
+  return !!u && u.activo;
 }
 
 /**
@@ -3928,7 +3942,7 @@ export async function crearActividad(
     return { ok: false, error: SIN_ACCESO };
   }
 
-  if (!puedeAsignarActividad(user, d.asignadoA)) {
+  if (!(await puedeAsignarActividad(user, d.asignadoA))) {
     return { ok: false, error: ASIGNACION_NO_PERMITIDA };
   }
 
@@ -4056,14 +4070,11 @@ export async function actualizarActividad(
   }
   const d = parsed.data;
 
-  if (!puedeAsignarActividad(user, d.asignadoA)) {
-    return { ok: false, error: ASIGNACION_NO_PERMITIDA };
-  }
-
   const [a] = await db
     .select({
       entidadTipo: schema.actividades.entidadTipo,
       entidadId: schema.actividades.entidadId,
+      asignadoA: schema.actividades.asignadoA,
     })
     .from(schema.actividades)
     .where(eq(schema.actividades.id, actividadId))
@@ -4075,6 +4086,17 @@ export async function actualizarActividad(
     !(await puedeAccederEntidad(user, a.entidadTipo, a.entidadId))
   ) {
     return { ok: false, error: SIN_ACCESO };
+  }
+
+  // La regla de jerarquía solo aplica si el responsable CAMBIA: editar título o
+  // fecha de una actividad ya asignada a un tercero no debe bloquearse. Nota: no
+  // se re-sanea retroactivamente un asignadoA previo fuera de subárbol (p. ej.
+  // dejado por un admin); la invariante se garantiza en la asignación, no aquí.
+  if (
+    d.asignadoA !== a.asignadoA &&
+    !(await puedeAsignarActividad(user, d.asignadoA))
+  ) {
+    return { ok: false, error: ASIGNACION_NO_PERMITIDA };
   }
 
   try {

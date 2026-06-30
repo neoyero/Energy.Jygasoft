@@ -5,7 +5,6 @@ import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getActividadesResumen,
   getUsuariosAsignables,
-  isScoped,
   type DashboardScope,
 } from "@/lib/admin/queries"
 import { PageHeader } from "@/components/admin/ui/page-header"
@@ -34,7 +33,6 @@ export default async function ActividadesPage() {
 
   const puedeEditar = can(scope.rol, "actividades", "edit")
   const puedeEliminar = scope.rol === "admin"
-  const rolScoped = isScoped(scope.rol)
 
   return (
     <div className="flex flex-col gap-6">
@@ -49,7 +47,6 @@ export default async function ActividadesPage() {
         vendedores={vendedores}
         puedeEditar={puedeEditar}
         puedeEliminar={puedeEliminar}
-        rolScoped={rolScoped}
       />
     </div>
   )

@@ -6,6 +6,7 @@ import {
   and,
   or,
   ilike,
+  inArray,
   gte,
   lt,
   isNull,
@@ -979,17 +980,23 @@ export async function getVendedores(): Promise<VendedorOption[]> {
 
 /**
  * Usuarios a los que el usuario actual PUEDE asignar una actividad, según la
- * regla de relación por rol:
- *  - admin / gerente: cualquiera (lista completa de asignables).
- *  - resto de roles (vendedor, preventa, ops, field…): solo a sí mismo.
+ * regla POR JERARQUÍA (Fase 2):
+ *  - admin: cualquiera (es global).
+ *  - resto de roles: a sí mismo + a sus descendientes en la línea de reporte
+ *    (subárbol), solo usuarios activos. Un gerente solo ve a su equipo; un
+ *    vendedor sin reportes, solo a sí mismo.
  * "Sin asignar" se ofrece siempre en la UI; aquí se devuelven los destinos
  * nominales válidos. Es la fuente de verdad de la UI; la action revalida.
  */
 export async function getUsuariosAsignables(
   scope: DashboardScope,
 ): Promise<VendedorOption[]> {
-  const esManager = scope.rol === "admin" || scope.rol === "gerente";
-  if (esManager) return getVendedores();
+  if (scope.rol === "admin") return getVendedores();
+  if (!scope.userId) return []; // sesión sin id -> sin asignables
+
+  // self + subárbol (descendientes en reporta_a), únicamente activos.
+  // scope.userId siempre presente aquí (sesión válida); va primero en la lista.
+  const ids = [scope.userId, ...(await getDescendientes(scope.userId))];
 
   const rows = await db
     .select({
@@ -998,10 +1005,8 @@ export async function getUsuariosAsignables(
       rol: schema.usuarios.rol,
     })
     .from(schema.usuarios)
-    .where(
-      and(eq(schema.usuarios.id, scope.userId), eq(schema.usuarios.activo, true)),
-    )
-    .limit(1);
+    .where(and(inArray(schema.usuarios.id, ids), eq(schema.usuarios.activo, true)))
+    .orderBy(asc(schema.usuarios.nombre));
 
   return rows.map((row) => ({ id: row.id, nombre: row.nombre, rol: row.rol }));
 }
@@ -1129,13 +1134,19 @@ export async function getOrganigrama(): Promise<OrganigramaNodo[]> {
  * posteriores, para la visibilidad por equipo. CTE recursivo.
  */
 export async function getDescendientes(userId: string): Promise<string[]> {
+  if (!userId) return [];
+  // Lleva el camino recorrido para cortar ciclos si la data quedara corrupta
+  // (defensa en profundidad; los ciclos ya se previenen al asignar jefe).
   const result = await db.execute(sql`
     WITH RECURSIVE sub AS (
-      SELECT id FROM usuarios WHERE reporta_a = ${userId}
+      SELECT id, ARRAY[${userId}::uuid, id] AS path
+      FROM usuarios WHERE reporta_a = ${userId}
       UNION ALL
-      SELECT u.id FROM usuarios u JOIN sub ON u.reporta_a = sub.id
+      SELECT u.id, sub.path || u.id
+      FROM usuarios u JOIN sub ON u.reporta_a = sub.id
+      WHERE NOT (u.id = ANY(sub.path))
     )
-    SELECT id::text AS id FROM sub
+    SELECT DISTINCT id::text AS id FROM sub
   `);
   return asRows(result).map((r) => str(r.id));
 }
