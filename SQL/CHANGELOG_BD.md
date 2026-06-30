@@ -12,6 +12,16 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0015 — Prioridad en actividades · 2026-06-29
+
+**Migración:** `db/migrations/0015_actividad_prioridad.sql`
+
+- Nuevo enum `actividad_prioridad` (`baja|media|alta`).
+- `actividades.prioridad` (NOT NULL, default `'media'`) + índice
+  `ix_act_prioridad (prioridad, vence_at)` para ordenar/filtrar la agenda.
+
+---
+
 ## 0014 — Enlace productos → marcas · 2026-06-29
 
 **Migración:** `db/migrations/0014_producto_marca_fk.sql`

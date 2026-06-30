@@ -21,6 +21,7 @@ CREATE TYPE usuario_rol         AS ENUM ('admin','gerente','vendedor','preventa'
 CREATE TYPE cotizacion_estado   AS ENUM ('borrador','enviada','aceptada','rechazada','expirada');
 CREATE TYPE actividad_tipo      AS ENUM ('llamada','visita','email','whatsapp','tarea','nota','reunion');
 CREATE TYPE actividad_estado    AS ENUM ('pendiente','completada','cancelada');
+CREATE TYPE actividad_prioridad AS ENUM ('baja','media','alta');
 CREATE TYPE documento_tipo      AS ENUM ('contrato','anexo','recibo_cfe','identificacion','csf','carta_poder','unifilar','memoria_calculo','cotizacion','evidencia','cfdi','dictamen_uvie','otro');
 CREATE TYPE equipo_tipo         AS ENUM ('panel','inversor','estructura','material_electrico','otro');
 CREATE TYPE pago_estado         AS ENUM ('programado','pagado','vencido','cancelado');
@@ -428,6 +429,7 @@ CREATE TABLE actividades (
   entidad_tipo entidad_tipo, entidad_id uuid,
   asignado_a uuid REFERENCES usuarios(id) ON DELETE SET NULL,
   estado actividad_estado NOT NULL DEFAULT 'pendiente',
+  prioridad actividad_prioridad NOT NULL DEFAULT 'media',
   vence_at timestamptz, completado_at timestamptz,
   created_by uuid REFERENCES usuarios(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -436,6 +438,7 @@ CREATE TABLE actividades (
 CREATE INDEX ix_act_entidad ON actividades (entidad_tipo, entidad_id);
 CREATE INDEX ix_act_asignado ON actividades (asignado_a, estado);
 CREATE INDEX ix_act_vence ON actividades (vence_at);
+CREATE INDEX ix_act_prioridad ON actividades (prioridad, vence_at);
 CREATE TRIGGER trg_act_upd BEFORE UPDATE ON actividades FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TABLE eventos (

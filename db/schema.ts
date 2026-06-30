@@ -2,6 +2,7 @@ import { pgTable, uniqueIndex, unique, uuid, text, boolean, timestamp, foreignKe
 import { sql } from "drizzle-orm"
 
 export const actividadEstado = pgEnum("actividad_estado", ['pendiente', 'completada', 'cancelada'])
+export const actividadPrioridad = pgEnum("actividad_prioridad", ['baja', 'media', 'alta'])
 export const actividadTipo = pgEnum("actividad_tipo", ['llamada', 'visita', 'email', 'whatsapp', 'tarea', 'nota', 'reunion'])
 export const campanaEstado = pgEnum("campana_estado", ['borrador', 'activa', 'pausada', 'finalizada'])
 export const campanaPlataforma = pgEnum("campana_plataforma", ['youtube', 'facebook', 'instagram', 'whatsapp', 'google', 'otro'])
@@ -622,6 +623,7 @@ export const actividades = pgTable("actividades", {
 	entidadId: uuid("entidad_id"),
 	asignadoA: uuid("asignado_a"),
 	estado: actividadEstado().default('pendiente').notNull(),
+	prioridad: actividadPrioridad().default('media').notNull(),
 	venceAt: timestamp("vence_at", { withTimezone: true, mode: 'string' }),
 	completadoAt: timestamp("completado_at", { withTimezone: true, mode: 'string' }),
 	createdBy: uuid("created_by"),
@@ -631,6 +633,7 @@ export const actividades = pgTable("actividades", {
 	index("ix_act_asignado").using("btree", table.asignadoA.asc().nullsLast().op("uuid_ops"), table.estado.asc().nullsLast().op("uuid_ops")),
 	index("ix_act_entidad").using("btree", table.entidadTipo.asc().nullsLast().op("enum_ops"), table.entidadId.asc().nullsLast().op("enum_ops")),
 	index("ix_act_vence").using("btree", table.venceAt.asc().nullsLast().op("timestamptz_ops")),
+	index("ix_act_prioridad").using("btree", table.prioridad.asc().nullsLast().op("enum_ops"), table.venceAt.asc().nullsLast().op("timestamptz_ops")),
 	foreignKey({
 			columns: [table.asignadoA],
 			foreignColumns: [usuarios.id],
