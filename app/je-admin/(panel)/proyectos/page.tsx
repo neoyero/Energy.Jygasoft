@@ -5,7 +5,7 @@ import { type Rol } from "@/lib/admin/rbac"
 import {
   getProyectosFiltrados,
   getVendedores,
-  isScoped,
+  acotarFiltroVendedor,
   type DashboardScope,
 } from "@/lib/admin/queries"
 import { PageHeader } from "@/components/admin/ui/page-header"
@@ -27,12 +27,12 @@ export default async function ProyectosPage() {
     userId: user.id,
   }
 
-  const [proyectos, vendedores] = await Promise.all([
+  const [proyectos, vendedoresAll] = await Promise.all([
     getProyectosFiltrados(scope, {}),
     getVendedores(),
   ])
 
-  const rolScoped = isScoped(scope.rol)
+  const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll)
 
   return (
     <div className="flex flex-col gap-6">
@@ -45,7 +45,7 @@ export default async function ProyectosPage() {
       <ProyectosView
         proyectos={proyectos}
         vendedores={vendedores}
-        rolScoped={rolScoped}
+        rolScoped={ocultarFiltro}
       />
     </div>
   )

@@ -2,7 +2,7 @@ import { Wallet, CalendarClock, CheckCircle2, AlertTriangle } from "lucide-react
 
 import { requirePerm } from "@/lib/admin/guard"
 import { can, type Rol } from "@/lib/admin/rbac"
-import { getPagosData, isScoped, type DashboardScope } from "@/lib/admin/queries"
+import { getPagosData, type DashboardScope } from "@/lib/admin/queries"
 import { formatMXN } from "@/lib/admin/format"
 import { PageHeader } from "@/components/admin/ui/page-header"
 import { StatCard } from "@/components/admin/ui/stat-card"

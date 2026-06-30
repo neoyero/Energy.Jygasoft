@@ -14,6 +14,7 @@ import {
   type SQL,
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { cache } from "react";
 import { db, schema } from "@/db";
 import type { Rol } from "@/lib/admin/rbac";
 
@@ -123,23 +124,24 @@ export interface DashboardScope {
   userId: string;
 }
 
-/** true para roles con vista acotada a su subárbol (vendedor/preventa). */
+/**
+ * true para roles con vista acotada a su subárbol (vendedor/preventa/gerente).
+ * admin queda global (ve todo); el gerente ve a su equipo (su subárbol en la
+ * línea de reporte): un gerente sin reportes solo se vería a sí mismo.
+ */
 export function isScoped(rol: Rol): boolean {
-  return rol === "vendedor" || rol === "preventa";
+  return rol === "vendedor" || rol === "preventa" || rol === "gerente";
 }
 
 /**
  * IDs de vendedor visibles para el scope, según la regla de VISIBILIDAD POR
  * SUBÁRBOL (Fase 3):
- *  - roles acotados (isScoped: vendedor/preventa): su subárbol = [self,
- *    ...descendientes en la línea de reporte]. Un vendedor sin reportes solo se
- *    ve a sí mismo (igual que antes); uno con equipo ve también lo de su gente.
- *  - roles globales (admin/gerente/funcionales): `null` = sin filtro (ven todo).
+ *  - roles acotados (isScoped: vendedor/preventa/gerente): su subárbol = [self,
+ *    ...descendientes en la línea de reporte]. Sin reportes solo se ven a sí
+ *    mismos; con equipo ven también lo de su gente.
+ *  - roles globales (admin/funcionales): `null` = sin filtro (ven todo).
  * Devolver `null` significa "ver todo". Se reutiliza en todas las queries y en
  * los puedeAcceder*; reusa getDescendientes (cycle-safe).
- *
- * Nota de rollout: hoy gerente NO es scoped (ve todo). Para acotarlo a su
- * subárbol en el futuro basta con incluirlo en isScoped.
  */
 export async function idsEnAmbito(
   scope: DashboardScope,
@@ -147,6 +149,27 @@ export async function idsEnAmbito(
   if (!isScoped(scope.rol)) return null;
   if (!scope.userId) return []; // sesión sin id -> nada visible (fail-closed)
   return [scope.userId, ...(await getDescendientes(scope.userId))];
+}
+
+/**
+ * Acota la lista de vendedores del filtro y decide si mostrarlo, según la
+ * visibilidad por subárbol:
+ *  - rol global: lista completa + filtro visible.
+ *  - rol acotado: solo su equipo (ámbito); el filtro se oculta si no tiene a
+ *    nadie más que a sí mismo (un vendedor solitario no necesita filtro), pero
+ *    un gerente/líder con equipo sí lo conserva (acotado a su gente).
+ */
+export async function acotarFiltroVendedor<T extends { id: string }>(
+  scope: DashboardScope,
+  vendedores: ReadonlyArray<T>,
+): Promise<{ vendedores: T[]; ocultarFiltro: boolean }> {
+  const ambito = await idsEnAmbito(scope);
+  if (!ambito) return { vendedores: [...vendedores], ocultarFiltro: false };
+  const set = new Set(ambito);
+  return {
+    vendedores: vendedores.filter((v) => set.has(v.id)),
+    ocultarFiltro: ambito.length <= 1,
+  };
 }
 
 /** Fragmento SQL "(id1, id2, …)" parametrizado para usar con IN; vacío -> "(NULL)". */
@@ -1127,26 +1150,32 @@ export async function getOrganigrama(): Promise<OrganigramaNodo[]> {
 
 /**
  * Ids de todos los descendientes de un usuario en la línea de reporte (subárbol,
- * sin incluirlo a él). Se usa para prevenir ciclos al asignar jefe y, en fases
- * posteriores, para la visibilidad por equipo. CTE recursivo.
+ * sin incluirlo a él). Se usa para prevenir ciclos al asignar jefe y para la
+ * visibilidad por equipo (Fase 3). CTE recursivo.
+ *
+ * Memoizado con React cache(): durante una misma request/render, varias queries
+ * que resuelven el ámbito del mismo usuario comparten un solo CTE (p. ej. el
+ * dashboard ejecuta varias lecturas). La clave de memo es el userId.
  */
-export async function getDescendientes(userId: string): Promise<string[]> {
-  if (!userId) return [];
-  // Lleva el camino recorrido para cortar ciclos si la data quedara corrupta
-  // (defensa en profundidad; los ciclos ya se previenen al asignar jefe).
-  const result = await db.execute(sql`
-    WITH RECURSIVE sub AS (
-      SELECT id, ARRAY[${userId}::uuid, id] AS path
-      FROM usuarios WHERE reporta_a = ${userId}
-      UNION ALL
-      SELECT u.id, sub.path || u.id
-      FROM usuarios u JOIN sub ON u.reporta_a = sub.id
-      WHERE NOT (u.id = ANY(sub.path))
-    )
-    SELECT DISTINCT id::text AS id FROM sub
-  `);
-  return asRows(result).map((r) => str(r.id));
-}
+export const getDescendientes = cache(
+  async (userId: string): Promise<string[]> => {
+    if (!userId) return [];
+    // Lleva el camino recorrido para cortar ciclos si la data quedara corrupta
+    // (defensa en profundidad; los ciclos ya se previenen al asignar jefe).
+    const result = await db.execute(sql`
+      WITH RECURSIVE sub AS (
+        SELECT id, ARRAY[${userId}::uuid, id] AS path
+        FROM usuarios WHERE reporta_a = ${userId}
+        UNION ALL
+        SELECT u.id, sub.path || u.id
+        FROM usuarios u JOIN sub ON u.reporta_a = sub.id
+        WHERE NOT (u.id = ANY(sub.path))
+      )
+      SELECT DISTINCT id::text AS id FROM sub
+    `);
+    return asRows(result).map((r) => str(r.id));
+  },
+);
 
 /** Fila de asesor para la gestión en el panel (con el usuario vinculado). */
 export interface AsesorRow {

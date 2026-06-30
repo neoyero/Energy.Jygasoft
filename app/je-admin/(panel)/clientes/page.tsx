@@ -5,7 +5,7 @@ import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getClientesFiltrados,
   getVendedores,
-  isScoped,
+  acotarFiltroVendedor,
   type DashboardScope,
 } from "@/lib/admin/queries"
 import { PageHeader } from "@/components/admin/ui/page-header"
@@ -26,13 +26,13 @@ export default async function ClientesPage() {
     userId: user.id,
   }
 
-  const [clientes, vendedores] = await Promise.all([
+  const [clientes, vendedoresAll] = await Promise.all([
     getClientesFiltrados(scope, {}),
     getVendedores(),
   ])
 
   const puedeEditar = can(user.rol, "clientes", "edit")
-  const rolScoped = isScoped(scope.rol)
+  const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll)
 
   return (
     <div className="flex flex-col gap-6">
@@ -46,7 +46,7 @@ export default async function ClientesPage() {
         clientesIniciales={clientes}
         vendedores={vendedores}
         puedeEditar={puedeEditar}
-        rolScoped={rolScoped}
+        rolScoped={ocultarFiltro}
       />
     </div>
   )

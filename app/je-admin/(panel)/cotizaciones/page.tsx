@@ -6,7 +6,7 @@ import {
   getCotizacionesFiltradas,
   getCotizacionesKpis,
   getVendedores,
-  isScoped,
+  acotarFiltroVendedor,
   type DashboardScope,
 } from "@/lib/admin/queries"
 import { PageHeader } from "@/components/admin/ui/page-header"
@@ -28,14 +28,14 @@ export default async function CotizacionesPage() {
     userId: user.id,
   }
 
-  const [cotizaciones, vendedores, kpis] = await Promise.all([
+  const [cotizaciones, vendedoresAll, kpis] = await Promise.all([
     getCotizacionesFiltradas(scope, {}),
     getVendedores(),
     getCotizacionesKpis(scope),
   ])
 
   const puedeEditar = can(user.rol, "cotizaciones", "edit")
-  const rolScoped = isScoped(scope.rol)
+  const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll)
 
   return (
     <div className="flex flex-col gap-6">
@@ -50,7 +50,7 @@ export default async function CotizacionesPage() {
         vendedores={vendedores}
         kpis={kpis}
         puedeEditar={puedeEditar}
-        rolScoped={rolScoped}
+        rolScoped={ocultarFiltro}
       />
     </div>
   )

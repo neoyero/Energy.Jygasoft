@@ -5,7 +5,7 @@ import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getLeadsResumen,
   getAsesoresAsignables,
-  isScoped,
+  acotarFiltroVendedor,
   type DashboardScope,
 } from "@/lib/admin/queries"
 import { PageHeader } from "@/components/admin/ui/page-header"
@@ -28,13 +28,14 @@ export default async function LeadsPage() {
 
   // Resumen por estado (chips) + asesores asignables. Los leads se traen del
   // lado del cliente con paginación/scroll infinito (server actions).
-  const [resumen, vendedores] = await Promise.all([
+  const [resumen, vendedoresAll] = await Promise.all([
     getLeadsResumen(scope),
     getAsesoresAsignables(),
   ])
 
   const puedeEditar = can(user.rol, "leads", "edit")
-  const rolScoped = isScoped(scope.rol)
+  // Visibilidad por subárbol: el filtro de vendedor se acota al equipo del rol.
+  const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll)
 
   return (
     <div className="flex flex-col gap-6">
@@ -48,7 +49,7 @@ export default async function LeadsPage() {
         resumen={resumen}
         vendedores={vendedores}
         puedeEditar={puedeEditar}
-        rolScoped={rolScoped}
+        rolScoped={ocultarFiltro}
       />
     </div>
   )

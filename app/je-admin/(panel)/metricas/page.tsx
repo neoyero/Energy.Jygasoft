@@ -5,7 +5,7 @@ import { type Rol } from "@/lib/admin/rbac";
 import {
   getMetricasData,
   getVendedores,
-  isScoped,
+  acotarFiltroVendedor,
   type DashboardScope,
 } from "@/lib/admin/queries";
 import { PageHeader } from "@/components/admin/ui/page-header";
@@ -25,7 +25,6 @@ export default async function MetricasPage({
     rol: (user.rol ?? "lectura") as Rol,
     userId: user.id,
   };
-  const rolScoped = isScoped(scope.rol);
 
   const filtros = {
     desde: sp.desde,
@@ -33,10 +32,11 @@ export default async function MetricasPage({
     vendedorId: sp.vendedor ?? null,
   };
 
-  const [data, vendedores] = await Promise.all([
+  const [data, vendedoresAll] = await Promise.all([
     getMetricasData(scope, filtros),
     getVendedores(),
   ]);
+  const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll);
 
   return (
     <div className="space-y-8">
@@ -49,7 +49,7 @@ export default async function MetricasPage({
       <MetricasView
         data={data}
         vendedores={vendedores}
-        rolScoped={rolScoped}
+        rolScoped={ocultarFiltro}
         initial={{
           desde: sp.desde ?? "",
           hasta: sp.hasta ?? "",
