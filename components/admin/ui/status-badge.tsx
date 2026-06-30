@@ -137,6 +137,11 @@ export const STATUS_TONES: StatusToneMap = {
  */
 STATUS_TONES.pendiente = "warning";
 
+/** actividad_prioridad: alta = peligro, media = alerta, baja = neutral. */
+STATUS_TONES.alta = "danger";
+STATUS_TONES.media = "warning";
+STATUS_TONES.baja = "neutral";
+
 /**
  * Mapa value -> etiqueta legible en es-MX. Se exporta para selects/leyendas.
  * Las claves colisionantes comparten una sola etiqueta coherente.

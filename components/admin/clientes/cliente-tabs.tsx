@@ -11,7 +11,7 @@ import { ContactosPanel } from "@/components/admin/clientes/contactos-panel"
 import { OportunidadesPanel } from "@/components/admin/clientes/oportunidades-panel"
 import { CotizacionesPanel } from "@/components/admin/clientes/cotizaciones-panel"
 import { DocumentosPanel } from "@/components/admin/clientes/documentos-panel"
-import { ActividadesPanel } from "@/components/admin/clientes/actividades-panel"
+import { ActividadesPanel } from "@/components/admin/actividades/actividades-panel"
 import { cn } from "@/lib/utils"
 
 const DASH = "—"
@@ -185,7 +185,8 @@ export function ClienteTabs({
 
         {tab === "actividades" ? (
           <ActividadesPanel
-            clienteId={detalle.cliente.id}
+            entidadTipo="cliente"
+            entidadId={detalle.cliente.id}
             actividades={detalle.actividades}
             vendedores={vendedores}
             puedeEditar={puedeEditarActs}

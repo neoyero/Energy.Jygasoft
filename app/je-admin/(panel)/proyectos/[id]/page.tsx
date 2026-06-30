@@ -7,6 +7,8 @@ import {
   getProyectoDetalle,
   getCuadrillasActivas,
   getCatalogoDisponible,
+  getActividadesDeEntidad,
+  getVendedores,
   type DashboardScope,
 } from "@/lib/admin/queries"
 import { formatMXN } from "@/lib/admin/format"
@@ -21,6 +23,7 @@ import {
 import { StatusBadge } from "@/components/admin/ui/status-badge"
 import { FaseStepper } from "@/components/admin/proyectos/fase-stepper"
 import { ProyectoTabs } from "@/components/admin/proyectos/proyecto-tabs"
+import { ActividadesPanel } from "@/components/admin/actividades/actividades-panel"
 
 export const dynamic = "force-dynamic"
 
@@ -63,13 +66,16 @@ export default async function ProyectoDetail({ params }: Params) {
   const detalle = await getProyectoDetalle(scope, id)
   if (!detalle) notFound()
 
-  const [cuadrillas, catalogo] = await Promise.all([
+  const [cuadrillas, catalogo, actividades, vendedores] = await Promise.all([
     getCuadrillasActivas(),
     getCatalogoDisponible(),
+    getActividadesDeEntidad("proyecto", id),
+    getVendedores(),
   ])
 
   const { proyecto } = detalle
   const puedeEditar = can(user.rol, "proyectos", "edit")
+  const puedeEditarActs = can(user.rol, "actividades", "edit")
 
   return (
     <div className="space-y-6">
@@ -142,6 +148,22 @@ export default async function ProyectoDetail({ params }: Params) {
         catalogo={catalogo}
         puedeEditar={puedeEditar}
       />
+
+      {/* Actividades */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Actividades</CardTitle>
+        </CardHeader>
+        <CardContent className="mt-4">
+          <ActividadesPanel
+            entidadTipo="proyecto"
+            entidadId={id}
+            actividades={actividades}
+            vendedores={vendedores}
+            puedeEditar={puedeEditarActs}
+          />
+        </CardContent>
+      </Card>
     </div>
   )
 }

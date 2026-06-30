@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import {
   getLead,
   getLeadTimeline,
+  getActividadesDeEntidad,
   getAsesoresAsignables,
   type DashboardScope,
 } from "@/lib/admin/queries";
@@ -12,6 +13,7 @@ import { can, type Rol } from "@/lib/admin/rbac";
 import { formatMXN, fmtFechaRel } from "@/lib/admin/format";
 import { LeadActions } from "@/components/admin/lead-actions";
 import { LeadEditPanel } from "@/components/admin/leads/lead-edit-panel";
+import { ActividadesPanel } from "@/components/admin/actividades/actividades-panel";
 import { PageHeader } from "@/components/admin/ui/page-header";
 import {
   Card,
@@ -72,10 +74,13 @@ export default async function LeadDetail({ params }: Params) {
   const lead = await getLead(scope, id);
   if (!lead) notFound();
 
-  const [timeline, vendedores] = await Promise.all([
+  const [timeline, vendedores, actividades] = await Promise.all([
     getLeadTimeline(id),
     getAsesoresAsignables(),
+    getActividadesDeEntidad("lead", id),
   ]);
+
+  const puedeEditarActs = can(user.rol, "actividades", "edit");
 
   const descripcion = [lead.telefono, lead.email].filter(Boolean).join(" · ");
   const vendedorNombre =
@@ -187,6 +192,22 @@ export default async function LeadDetail({ params }: Params) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Actividades */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Actividades</CardTitle>
+        </CardHeader>
+        <CardContent className="mt-4">
+          <ActividadesPanel
+            entidadTipo="lead"
+            entidadId={lead.id}
+            actividades={actividades}
+            vendedores={vendedores}
+            puedeEditar={puedeEditarActs}
+          />
+        </CardContent>
+      </Card>
 
       {/* Timeline */}
       <Card>
