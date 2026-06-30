@@ -9,7 +9,11 @@ import { cn } from "@/lib/utils";
 import { formatMXN, formatInt } from "@/lib/admin/format";
 import { labelFor } from "@/components/admin/ui/status-badge";
 import { StatCard } from "@/components/admin/ui/stat-card";
-import type { OportunidadRow, PipelineData } from "@/lib/admin/queries";
+import type {
+  OportunidadRow,
+  PipelineData,
+  VendedorOption,
+} from "@/lib/admin/queries";
 import { updateOportunidadEtapa } from "@/lib/admin/actions";
 import { oportunidadEtapa } from "@/db/schema";
 import {
@@ -17,6 +21,8 @@ import {
   PROBABILIDAD_POR_ETAPA,
 } from "@/lib/admin/pipeline";
 import { DealCard } from "@/components/admin/oportunidades/deal-card";
+import { Modal } from "@/components/admin/ui/modal";
+import { ActividadForm } from "@/components/admin/actividades/actividad-form";
 
 // Orden canónico de etapas = orden del enum. Local (desde @/db/schema, sin `pg`)
 // para no arrastrar la BD al bundle del cliente.
@@ -27,6 +33,10 @@ type Etapa = (typeof oportunidadEtapa.enumValues)[number];
 export interface PipelineBoardProps {
   data: PipelineData;
   puedeEditar: boolean;
+  /** RBAC actividades:edit -> habilita "Agendar seguimiento" por tarjeta. */
+  puedeAgendar?: boolean;
+  /** Vendedores asignables (para el alta rápida de actividad). */
+  vendedores?: ReadonlyArray<VendedorOption>;
 }
 
 /** Rango de una etapa en el orden canonico (etapas desconocidas al final). */
@@ -46,13 +56,21 @@ const COLUMNAS: readonly Etapa[] = [...oportunidadEtapa.enumValues].sort(
  * Server Action se revierte y se refresca. Si `puedeEditar` es false, es solo
  * lectura (sin draggable ni handlers de drop).
  */
-export function PipelineBoard({ data, puedeEditar }: PipelineBoardProps) {
+export function PipelineBoard({
+  data,
+  puedeEditar,
+  puedeAgendar = false,
+  vendedores = [],
+}: PipelineBoardProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [oportunidades, setOportunidades] = useState<OportunidadRow[]>(
     data.oportunidades,
   );
   const [overEtapa, setOverEtapa] = useState<Etapa | null>(null);
+  // Acceso rápido a "Agendar seguimiento": id de la oportunidad activa + saving.
+  const [agendarId, setAgendarId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // Reagrupa por etapa cada vez que cambia el estado local.
   const porEtapa = useMemo(() => {
@@ -225,6 +243,9 @@ export function PipelineBoard({ data, puedeEditar }: PipelineBoardProps) {
                         ? (etapa) => moverOptimista(o.id, etapa as Etapa)
                         : undefined
                     }
+                    onAgendar={
+                      puedeAgendar ? (id) => setAgendarId(id) : undefined
+                    }
                   />
                 ))
               ) : (
@@ -237,6 +258,32 @@ export function PipelineBoard({ data, puedeEditar }: PipelineBoardProps) {
         );
       })}
       </div>
+
+      {/* Acceso rápido: alta de actividad ligada a la oportunidad seleccionada. */}
+      {puedeAgendar ? (
+        <Modal
+          open={agendarId !== null}
+          onOpenChange={(abierto) => {
+            if (!abierto) setAgendarId(null);
+          }}
+          title="Agendar seguimiento"
+          description="Crea una actividad ligada a esta oportunidad."
+          size="2xl"
+          dismissable={!saving}
+        >
+          {agendarId ? (
+            <ActividadForm
+              key={agendarId}
+              modo="crear"
+              entidadFija={{ tipo: "oportunidad", id: agendarId }}
+              vendedores={vendedores}
+              onSuccess={() => setAgendarId(null)}
+              onCancel={() => setAgendarId(null)}
+              onSavingChange={setSaving}
+            />
+          ) : null}
+        </Modal>
+      ) : null}
     </div>
   );
 }

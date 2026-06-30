@@ -2,7 +2,7 @@
 
 import type { DragEvent } from "react";
 import { Menu } from "@base-ui/react/menu";
-import { GripVertical, User, CalendarClock, MoveRight } from "lucide-react";
+import { GripVertical, User, CalendarClock, MoveRight, CalendarPlus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { formatMXN, fmtFechaRel } from "@/lib/admin/format";
@@ -25,6 +25,8 @@ export interface DealCardProps {
   etapas?: ReadonlyArray<EtapaOption>;
   /** Mueve la oportunidad a otra etapa (alternativa táctil al drag). */
   onMover?: (etapa: string) => void;
+  /** Abre el alta de actividad para esta oportunidad (acceso rápido). */
+  onAgendar?: (id: string) => void;
 }
 
 /**
@@ -38,12 +40,14 @@ export function DealCard({
   onDragStart,
   etapas,
   onMover,
+  onAgendar,
 }: DealCardProps) {
   const o = oportunidad;
   const cuenta = o.clienteNombre ?? o.leadNombre ?? "—";
   const fechaCierre =
     o.fechaCierreEstimada !== null ? fmtFechaRel(o.fechaCierreEstimada) : null;
   const puedeMover = Boolean(onMover && etapas && etapas.length > 0);
+  const mostrarMenu = puedeMover || Boolean(onAgendar);
 
   return (
     <article
@@ -75,13 +79,13 @@ export function DealCard({
           </p>
         </div>
 
-        {puedeMover ? (
+        {mostrarMenu ? (
           <Menu.Root>
             <Menu.Trigger
               // No iniciar arrastre desde el botón del menú.
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
-              aria-label="Mover a otra etapa"
+              aria-label="Acciones de la oportunidad"
               className={cn(
                 "inline-flex size-8 shrink-0 items-center justify-center rounded-md text-stone-400 transition-colors",
                 "hover:bg-stone-100 hover:text-stone-600 dark:hover:bg-muted",
@@ -101,24 +105,44 @@ export function DealCard({
                     "outline-none",
                   )}
                 >
-                  <p className="px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                    Mover a
-                  </p>
-                  {etapas!.map((et) => (
+                  {onAgendar ? (
                     <Menu.Item
-                      key={et.value}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onMover!(et.value);
+                        onAgendar(o.id);
                       }}
                       className={cn(
-                        "flex cursor-pointer items-center rounded-lg px-2.5 py-2 outline-none select-none",
+                        "flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 outline-none select-none",
                         "data-[highlighted]:bg-stone-100 dark:data-[highlighted]:bg-muted",
                       )}
                     >
-                      {et.label}
+                      <CalendarPlus className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                      Agendar seguimiento
                     </Menu.Item>
-                  ))}
+                  ) : null}
+
+                  {puedeMover ? (
+                    <>
+                      <p className="px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                        Mover a
+                      </p>
+                      {etapas!.map((et) => (
+                        <Menu.Item
+                          key={et.value}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onMover!(et.value);
+                          }}
+                          className={cn(
+                            "flex cursor-pointer items-center rounded-lg px-2.5 py-2 outline-none select-none",
+                            "data-[highlighted]:bg-stone-100 dark:data-[highlighted]:bg-muted",
+                          )}
+                        >
+                          {et.label}
+                        </Menu.Item>
+                      ))}
+                    </>
+                  ) : null}
                 </Menu.Popup>
               </Menu.Positioner>
             </Menu.Portal>

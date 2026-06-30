@@ -6,6 +6,7 @@ import {
   getCotizacion,
   getCatalogoDisponible,
   getOportunidadesDeClienteOpciones,
+  getVendedores,
   type DashboardScope,
   type OportunidadOpcion,
 } from "@/lib/admin/queries";
@@ -13,6 +14,7 @@ import { PageHeader } from "@/components/admin/ui/page-header";
 import { StatusBadge } from "@/components/admin/ui/status-badge";
 import { CotizacionBuilder } from "@/components/admin/cotizaciones/cotizacion-builder";
 import { CotizacionOportunidadLink } from "@/components/admin/cotizaciones/cotizacion-oportunidad-link";
+import { AgendarSeguimientoButton } from "@/components/admin/actividades/agendar-seguimiento-button";
 
 export const dynamic = "force-dynamic";
 
@@ -36,9 +38,10 @@ export default async function CotizacionDetailPage({ params }: Params) {
     userId: user.id,
   };
 
-  const [detalle, catalogo] = await Promise.all([
+  const [detalle, catalogo, vendedores] = await Promise.all([
     getCotizacion(scope, id),
     getCatalogoDisponible(),
+    getVendedores(),
   ]);
 
   if (!detalle) notFound();
@@ -46,6 +49,7 @@ export default async function CotizacionDetailPage({ params }: Params) {
   const { cotizacion } = detalle;
   const puedeEditar = can(user.rol, "cotizaciones", "edit");
   const puedeEditarDocs = can(user.rol, "documentos", "edit");
+  const puedeAgendar = can(user.rol, "actividades", "edit");
   const folio = cotizacion.folio ?? `#${cotizacion.id}`;
 
   // Oportunidades del cliente para el selector de enlace (solo si hay cliente).
@@ -62,7 +66,18 @@ export default async function CotizacionDetailPage({ params }: Params) {
           { label: "Cotizaciones", href: "/je-admin/cotizaciones" },
           { label: folio },
         ]}
-        actions={<StatusBadge value={cotizacion.estado} size="md" />}
+        actions={
+          <div className="flex flex-wrap items-center gap-3">
+            <StatusBadge value={cotizacion.estado} size="md" />
+            {puedeAgendar ? (
+              <AgendarSeguimientoButton
+                entidadTipo="cotizacion"
+                entidadId={cotizacion.id}
+                vendedores={vendedores}
+              />
+            ) : null}
+          </div>
+        }
       />
 
       {cotizacion.clienteId ? (
