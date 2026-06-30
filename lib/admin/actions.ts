@@ -241,7 +241,17 @@ type ActionResult = { ok: true } | { ok: false; error: string };
 
 const SIN_ACCESO = "No tienes acceso a este registro.";
 
-/** true si `user` puede acceder al lead (no scoped, o es su responsable). */
+/**
+ * IDs del ámbito de visibilidad del usuario (self + descendientes en la línea
+ * de reporte). Usado por los puedeAcceder* para roles scoped (Fase 3). Devuelve
+ * [] si no hay id de sesión (fail-closed).
+ */
+async function ambitoDe(user: SessionUser): Promise<string[]> {
+  if (!user.id) return [];
+  return [user.id, ...(await getDescendientes(user.id))];
+}
+
+/** true si `user` puede acceder al lead (no scoped, o está en su subárbol). */
 async function puedeAccederLead(user: SessionUser, leadId: string): Promise<boolean> {
   if (!isScoped((user.rol ?? "lectura") as Rol)) return true;
   const [row] = await db
@@ -249,7 +259,8 @@ async function puedeAccederLead(user: SessionUser, leadId: string): Promise<bool
     .from(schema.leads)
     .where(eq(schema.leads.id, leadId))
     .limit(1);
-  return !!row && row.vendedorId === user.id;
+  const amb = await ambitoDe(user);
+  return !!row && row.vendedorId != null && amb.includes(row.vendedorId);
 }
 
 /** true si `user` puede acceder al cliente (no scoped, o es su vendedor). */
@@ -260,7 +271,8 @@ async function puedeAccederCliente(user: SessionUser, clienteId: string): Promis
     .from(schema.clientes)
     .where(eq(schema.clientes.id, clienteId))
     .limit(1);
-  return !!row && row.vendedorId === user.id;
+  const amb = await ambitoDe(user);
+  return !!row && row.vendedorId != null && amb.includes(row.vendedorId);
 }
 
 /** true si `user` puede acceder a la oportunidad (no scoped, o es su vendedor). */
@@ -271,7 +283,8 @@ async function puedeAccederOportunidad(user: SessionUser, oportunidadId: string)
     .from(schema.oportunidades)
     .where(eq(schema.oportunidades.id, oportunidadId))
     .limit(1);
-  return !!row && row.vendedorId === user.id;
+  const amb = await ambitoDe(user);
+  return !!row && row.vendedorId != null && amb.includes(row.vendedorId);
 }
 
 /** true si `user` puede acceder a la cotización (no scoped, o es su vendedor). */
@@ -282,14 +295,26 @@ async function puedeAccederCotizacion(user: SessionUser, cotizacionId: string): 
     .from(schema.cotizaciones)
     .where(eq(schema.cotizaciones.id, cotizacionId))
     .limit(1);
-  return !!row && row.vendedorId === user.id;
+  const amb = await ambitoDe(user);
+  return !!row && row.vendedorId != null && amb.includes(row.vendedorId);
+}
+
+/** true si `user` puede acceder al proyecto (no scoped, o está en su subárbol). */
+async function puedeAccederProyecto(user: SessionUser, proyectoId: string): Promise<boolean> {
+  if (!isScoped((user.rol ?? "lectura") as Rol)) return true;
+  const [row] = await db
+    .select({ vendedorId: schema.proyectos.vendedorId })
+    .from(schema.proyectos)
+    .where(eq(schema.proyectos.id, proyectoId))
+    .limit(1);
+  const amb = await ambitoDe(user);
+  return !!row && row.vendedorId != null && amb.includes(row.vendedorId);
 }
 
 /**
  * Comprobación de propiedad por tipo de entidad (documentos/actividades, que
- * referencian leads/clientes/oportunidades/cotizaciones). Para tipos sin
- * vendedorId propio (proyecto/instalacion/contacto) los roles scoped no tienen
- * permiso de edición en esos módulos, así que se delega al RBAC (return true).
+ * referencian leads/clientes/oportunidades/cotizaciones/proyectos). Para tipos
+ * sin vendedorId propio (instalacion/contacto) se delega al RBAC (return true).
  */
 async function puedeAccederEntidad(
   user: SessionUser,
@@ -306,6 +331,8 @@ async function puedeAccederEntidad(
       return puedeAccederOportunidad(user, id);
     case "cotizacion":
       return puedeAccederCotizacion(user, id);
+    case "proyecto":
+      return puedeAccederProyecto(user, id);
     default:
       return true;
   }
@@ -2140,7 +2167,7 @@ type DimensionarInput = z.input<typeof dimensionarInputSchema>;
 export async function calcularDimensionamiento(
   input: DimensionarInput,
 ): Promise<ActionResult & { preview?: DimensionarResult }> {
-  await assertPerm("cotizaciones", "edit");
+  const user = await assertPerm("cotizaciones", "edit");
 
   const parsed = dimensionarInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -2150,6 +2177,12 @@ export async function calcularDimensionamiento(
     };
   }
   const d = parsed.data;
+
+  // Visibilidad por subárbol: un rol acotado no puede dimensionar una cotización
+  // fuera de su ámbito (getCotizacionCalcContext no valida scope).
+  if (!(await puedeAccederCotizacion(user, d.cotizacionId))) {
+    return { ok: false, error: SIN_ACCESO };
+  }
 
   const ctx = await getCotizacionCalcContext(d.cotizacionId);
   if (!ctx) {

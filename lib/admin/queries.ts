@@ -19,30 +19,6 @@ import type { Rol } from "@/lib/admin/rbac";
 
 /** Lecturas del panel (read-side). Las mutaciones van por Server Actions. */
 
-export async function getDashboard() {
-  const [leadsByEstado, oportByEtapa, totals] = await Promise.all([
-    db
-      .select({ estado: schema.leads.estado, n: sql<number>`count(*)::int` })
-      .from(schema.leads)
-      .groupBy(schema.leads.estado),
-    db
-      .select({ etapa: schema.oportunidades.etapa, n: sql<number>`count(*)::int` })
-      .from(schema.oportunidades)
-      .groupBy(schema.oportunidades.etapa),
-    db
-      .select({
-        leads: sql<number>`(select count(*) from leads)::int`,
-        clientes: sql<number>`(select count(*) from clientes)::int`,
-        oportunidades: sql<number>`(select count(*) from oportunidades)::int`,
-        proyectos: sql<number>`(select count(*) from proyectos)::int`,
-        simulaciones: sql<number>`(select count(*) from calculadora_simulaciones)::int`,
-      })
-      .from(sql`(select 1) as x`),
-  ]);
-
-  return { leadsByEstado, oportByEtapa, totals: totals[0] };
-}
-
 export type LeadRecord = typeof schema.leads.$inferSelect;
 
 /** Uso del inmueble (enum uso_inmueble). */
@@ -75,17 +51,10 @@ export interface LeadFormData {
   vendedorId: string | null;
 }
 
-export async function getLeads(limit = 200): Promise<LeadRecord[]> {
-  return db
-    .select()
-    .from(schema.leads)
-    .orderBy(desc(schema.leads.createdAt))
-    .limit(limit);
-}
-
 /**
  * Lead por id. Compartimentado: un rol scoped (vendedor/preventa) solo accede a
- * su propio lead; cualquier otro id devuelve null (la página hace notFound()).
+ * un lead de su subárbol; cualquier otro id devuelve null (la página hace
+ * notFound()).
  */
 export async function getLead(scope: DashboardScope, id: string) {
   const [lead] = await db
@@ -94,7 +63,9 @@ export async function getLead(scope: DashboardScope, id: string) {
     .where(eq(schema.leads.id, id))
     .limit(1);
   if (!lead) return null;
-  if (isScoped(scope.rol) && lead.vendedorId !== scope.userId) return null;
+  const ambito = await idsEnAmbito(scope);
+  if (ambito && (lead.vendedorId == null || !ambito.includes(lead.vendedorId)))
+    return null;
   return lead;
 }
 
@@ -107,22 +78,6 @@ export async function getLeadTimeline(id: string) {
     )
     .orderBy(desc(schema.eventos.createdAt))
     .limit(100);
-}
-
-export async function getOportunidades() {
-  return db
-    .select()
-    .from(schema.oportunidades)
-    .orderBy(desc(schema.oportunidades.createdAt))
-    .limit(200);
-}
-
-export async function getClientes() {
-  return db
-    .select()
-    .from(schema.clientes)
-    .orderBy(desc(schema.clientes.createdAt))
-    .limit(200);
 }
 
 export async function getUsuarios() {
@@ -156,8 +111,9 @@ export async function getUsuarios() {
  *  - Montos: coalesce(sum(col),0)::float8  -> number JS.
  *  - Conteos: count(*)::int.
  *  - ids bigint: id::text (evita perdida de precision en JS).
- *  - Scoping: roles 'vendedor' y 'preventa' ven SOLO sus entidades
- *    (filtro por vendedor_id = userId). El resto ve global.
+ *  - Scoping (Fase 3): roles 'vendedor' y 'preventa' ven su SUBÁRBOL
+ *    (filtro por vendedor_id IN idsEnAmbito = self + descendientes). El resto
+ *    (admin/gerente/funcionales) ve global.
  *  - db.execute(sql`…`) devuelve QueryResult; las filas estan en `.rows` y se
  *    tipan como unknown y se estrechan con helpers de narrowing (sin `any`).
  * ──────────────────────────────────────────────────────────────────────── */
@@ -167,9 +123,41 @@ export interface DashboardScope {
   userId: string;
 }
 
-/** true para roles con vista acotada a sus propias entidades. */
+/** true para roles con vista acotada a su subárbol (vendedor/preventa). */
 export function isScoped(rol: Rol): boolean {
   return rol === "vendedor" || rol === "preventa";
+}
+
+/**
+ * IDs de vendedor visibles para el scope, según la regla de VISIBILIDAD POR
+ * SUBÁRBOL (Fase 3):
+ *  - roles acotados (isScoped: vendedor/preventa): su subárbol = [self,
+ *    ...descendientes en la línea de reporte]. Un vendedor sin reportes solo se
+ *    ve a sí mismo (igual que antes); uno con equipo ve también lo de su gente.
+ *  - roles globales (admin/gerente/funcionales): `null` = sin filtro (ven todo).
+ * Devolver `null` significa "ver todo". Se reutiliza en todas las queries y en
+ * los puedeAcceder*; reusa getDescendientes (cycle-safe).
+ *
+ * Nota de rollout: hoy gerente NO es scoped (ve todo). Para acotarlo a su
+ * subárbol en el futuro basta con incluirlo en isScoped.
+ */
+export async function idsEnAmbito(
+  scope: DashboardScope,
+): Promise<string[] | null> {
+  if (!isScoped(scope.rol)) return null;
+  if (!scope.userId) return []; // sesión sin id -> nada visible (fail-closed)
+  return [scope.userId, ...(await getDescendientes(scope.userId))];
+}
+
+/** Fragmento SQL "(id1, id2, …)" parametrizado para usar con IN; vacío -> "(NULL)". */
+function sqlIdList(ids: string[]): SQL {
+  if (ids.length === 0) return sql`(NULL)`;
+  // Cast explícito a uuid para que el IN compare contra columnas uuid sin
+  // depender de la inferencia de tipos del driver.
+  return sql`(${sql.join(
+    ids.map((id) => sql`${id}::uuid`),
+    sql`, `,
+  )})`;
 }
 
 /** Orden canonico de etapas del pipeline (para ordenar/visualizar). */
@@ -313,16 +301,17 @@ function deltaPct(actual: number, previo: number): number | null {
 export async function getDashboardKpis(
   scope: DashboardScope,
 ): Promise<DashboardKpis> {
-  const scoped = isScoped(scope.rol);
-  const uid = scope.userId;
+  // Ámbito de visibilidad por subárbol (null = rol global, sin filtro).
+  const ambito = await idsEnAmbito(scope);
+  const enAmbito = ambito ? sqlIdList(ambito) : null;
 
   // Filtros de propiedad por tabla (vacio = sin filtro para roles globales).
-  const fLead = scoped ? sql`AND vendedor_id = ${uid}` : sql``;
-  const fOport = scoped ? sql`AND vendedor_id = ${uid}` : sql``;
-  const fProy = scoped ? sql`AND vendedor_id = ${uid}` : sql``;
+  const fLead = enAmbito ? sql`AND vendedor_id IN ${enAmbito}` : sql``;
+  const fOport = enAmbito ? sql`AND vendedor_id IN ${enAmbito}` : sql``;
+  const fProy = enAmbito ? sql`AND vendedor_id IN ${enAmbito}` : sql``;
   // pagos no tiene vendedor_id -> se acota via el proyecto dueño.
-  const fPago = scoped
-    ? sql`AND EXISTS (SELECT 1 FROM proyectos pr WHERE pr.id = p.proyecto_id AND pr.vendedor_id = ${uid})`
+  const fPago = enAmbito
+    ? sql`AND EXISTS (SELECT 1 FROM proyectos pr WHERE pr.id = p.proyecto_id AND pr.vendedor_id IN ${enAmbito})`
     : sql``;
 
   const result = await db.execute(sql`
@@ -436,8 +425,9 @@ export async function getDashboardKpis(
 export async function getLeadsSerie30d(
   scope: DashboardScope,
 ): Promise<LeadsSeriePoint[]> {
-  const fLead = isScoped(scope.rol)
-    ? sql`AND l.vendedor_id = ${scope.userId}`
+  const ambito = await idsEnAmbito(scope);
+  const fLead = ambito
+    ? sql`AND l.vendedor_id IN ${sqlIdList(ambito)}`
     : sql``;
 
   const result = await db.execute(sql`
@@ -464,8 +454,9 @@ export async function getLeadsSerie30d(
 export async function getPipelinePorEtapa(
   scope: DashboardScope,
 ): Promise<PipelineEtapaRow[]> {
-  const fOport = isScoped(scope.rol)
-    ? sql`WHERE vendedor_id = ${scope.userId}`
+  const ambito = await idsEnAmbito(scope);
+  const fOport = ambito
+    ? sql`WHERE vendedor_id IN ${sqlIdList(ambito)}`
     : sql``;
 
   const result = await db.execute(sql`
@@ -493,8 +484,9 @@ export async function getPipelinePorEtapa(
 export async function getProyectosPorFase(
   scope: DashboardScope,
 ): Promise<ProyectoFaseRow[]> {
-  const fProy = isScoped(scope.rol)
-    ? sql`WHERE vendedor_id = ${scope.userId}`
+  const ambito = await idsEnAmbito(scope);
+  const fProy = ambito
+    ? sql`WHERE vendedor_id IN ${sqlIdList(ambito)}`
     : sql``;
 
   const result = await db.execute(sql`
@@ -569,17 +561,17 @@ export async function getActividadReciente(
   scope: DashboardScope,
   limit = 10,
 ): Promise<EventoRow[]> {
-  const uid = scope.userId;
-
-  // Filtro de propiedad para roles acotados. Un evento es "del vendedor" si su
-  // entidad le pertenece. Se cubre lead/oportunidad/proyecto directamente y
-  // cliente a traves de tener al menos una oportunidad suya.
-  const ownership = isScoped(scope.rol)
+  // Filtro de propiedad por subárbol para roles acotados. Un evento es visible
+  // si su entidad pertenece a alguien del ámbito (self + descendientes). Cubre
+  // lead/oportunidad/proyecto directamente y cliente vía sus oportunidades.
+  const ambito = await idsEnAmbito(scope);
+  const lista = ambito ? sqlIdList(ambito) : null;
+  const ownership = lista
     ? sql`WHERE (
-        (e.entidad_tipo = 'lead'        AND EXISTS (SELECT 1 FROM leads x         WHERE x.id = e.entidad_id AND x.vendedor_id = ${uid}))
-     OR (e.entidad_tipo = 'oportunidad' AND EXISTS (SELECT 1 FROM oportunidades x WHERE x.id = e.entidad_id AND x.vendedor_id = ${uid}))
-     OR (e.entidad_tipo = 'proyecto'    AND EXISTS (SELECT 1 FROM proyectos x     WHERE x.id = e.entidad_id AND x.vendedor_id = ${uid}))
-     OR (e.entidad_tipo = 'cliente'     AND EXISTS (SELECT 1 FROM oportunidades x WHERE x.cliente_id = e.entidad_id AND x.vendedor_id = ${uid}))
+        (e.entidad_tipo = 'lead'        AND EXISTS (SELECT 1 FROM leads x         WHERE x.id = e.entidad_id AND x.vendedor_id IN ${lista}))
+     OR (e.entidad_tipo = 'oportunidad' AND EXISTS (SELECT 1 FROM oportunidades x WHERE x.id = e.entidad_id AND x.vendedor_id IN ${lista}))
+     OR (e.entidad_tipo = 'proyecto'    AND EXISTS (SELECT 1 FROM proyectos x     WHERE x.id = e.entidad_id AND x.vendedor_id IN ${lista}))
+     OR (e.entidad_tipo = 'cliente'     AND EXISTS (SELECT 1 FROM oportunidades x WHERE x.cliente_id = e.entidad_id AND x.vendedor_id IN ${lista}))
       )`
     : sql``;
 
@@ -762,11 +754,15 @@ const OPORTUNIDAD_QUERY_LIMIT = 500;
  * created_at. Incluye nombre del vendedor vía leftJoin a usuarios.
  */
 /** Construye las condiciones WHERE de un listado de leads (scope + filtros). */
-function leadsWhereConds(scope: DashboardScope, filtros: LeadsFiltros): SQL[] {
+async function leadsWhereConds(
+  scope: DashboardScope,
+  filtros: LeadsFiltros,
+): Promise<SQL[]> {
   const conds: SQL[] = [];
 
-  if (isScoped(scope.rol)) {
-    conds.push(eq(schema.leads.vendedorId, scope.userId));
+  const ambito = await idsEnAmbito(scope);
+  if (ambito) {
+    conds.push(inArray(schema.leads.vendedorId, ambito));
   }
 
   if (filtros.estado) conds.push(eq(schema.leads.estado, filtros.estado));
@@ -852,7 +848,7 @@ export async function getLeadsFiltrados(
   scope: DashboardScope,
   filtros: LeadsFiltros = {},
 ): Promise<LeadRow[]> {
-  const conds = leadsWhereConds(scope, filtros);
+  const conds = await leadsWhereConds(scope, filtros);
 
   const rows = await db
     .select(leadListSelect)
@@ -899,7 +895,7 @@ export async function getLeadsPage(
   filtros: LeadsFiltros,
   opts: { limit: number; offset: number },
 ): Promise<LeadsPage> {
-  const conds = leadsWhereConds(scope, filtros);
+  const conds = await leadsWhereConds(scope, filtros);
   const where = conds.length ? and(...conds) : undefined;
 
   const [{ total }] = await db
@@ -926,8 +922,9 @@ export async function getLeadsPage(
 export async function getLeadsResumen(
   scope: DashboardScope,
 ): Promise<LeadsResumen> {
-  const scopeCond = isScoped(scope.rol)
-    ? eq(schema.leads.vendedorId, scope.userId)
+  const ambito = await idsEnAmbito(scope);
+  const scopeCond = ambito
+    ? inArray(schema.leads.vendedorId, ambito)
     : undefined;
 
   const rows = await db
@@ -1230,8 +1227,9 @@ export async function getOportunidadesPipeline(
 ): Promise<PipelineData> {
   const leadAlias = schema.leads;
 
-  const scopeCond = isScoped(scope.rol)
-    ? eq(schema.oportunidades.vendedorId, scope.userId)
+  const ambito = await idsEnAmbito(scope);
+  const scopeCond = ambito
+    ? inArray(schema.oportunidades.vendedorId, ambito)
     : undefined;
 
   const rows = await db
@@ -1540,8 +1538,9 @@ export async function getClientesFiltrados(
 ): Promise<ClienteRow[]> {
   const conds: SQL[] = [];
 
-  if (isScoped(scope.rol)) {
-    conds.push(eq(schema.clientes.vendedorId, scope.userId));
+  const ambito = await idsEnAmbito(scope);
+  if (ambito) {
+    conds.push(inArray(schema.clientes.vendedorId, ambito));
   }
 
   if (filtros.tipoPersona) {
@@ -1622,7 +1621,9 @@ export async function getClienteDetalle(
     .limit(1);
 
   if (!cliente) return null;
-  if (isScoped(scope.rol) && cliente.vendedorId !== scope.userId) return null;
+  const ambito = await idsEnAmbito(scope);
+  if (ambito && (cliente.vendedorId == null || !ambito.includes(cliente.vendedorId)))
+    return null;
 
   const [
     vendedorNombre,
@@ -1982,31 +1983,33 @@ export interface ActividadesResumen {
 
 /**
  * Fragmento de propiedad para roles acotados (vendedor/preventa): la actividad
- * es suya si está asignada a él o si la entidad dueña le pertenece (por
- * vendedor_id de lead/cliente/oportunidad/cotizacion/proyecto). Para roles
- * globales devuelve null (sin filtro). Se usa en la agenda y el resumen.
+ * es visible si está asignada a alguien del ámbito (self + descendientes) o si
+ * la entidad dueña pertenece al ámbito (por vendedor_id de
+ * lead/cliente/oportunidad/cotizacion/proyecto). Para roles globales devuelve
+ * null (sin filtro). Se usa en la agenda y el resumen.
  */
-function ownershipActividades(scope: DashboardScope): SQL | null {
-  if (!isScoped(scope.rol)) return null;
-  const uid = scope.userId;
+async function ownershipActividades(scope: DashboardScope): Promise<SQL | null> {
+  const ambito = await idsEnAmbito(scope);
+  if (!ambito) return null;
+  const lista = sqlIdList(ambito);
   return sql`(
-    a.asignado_a = ${uid}
-    OR (a.entidad_tipo = 'lead'        AND EXISTS (SELECT 1 FROM leads x         WHERE x.id = a.entidad_id AND x.vendedor_id = ${uid}))
-    OR (a.entidad_tipo = 'cliente'     AND EXISTS (SELECT 1 FROM clientes x      WHERE x.id = a.entidad_id AND x.vendedor_id = ${uid}))
-    OR (a.entidad_tipo = 'oportunidad' AND EXISTS (SELECT 1 FROM oportunidades x WHERE x.id = a.entidad_id AND x.vendedor_id = ${uid}))
-    OR (a.entidad_tipo = 'cotizacion'  AND EXISTS (SELECT 1 FROM cotizaciones x  WHERE x.id = a.entidad_id AND x.vendedor_id = ${uid}))
-    OR (a.entidad_tipo = 'proyecto'    AND EXISTS (SELECT 1 FROM proyectos x     WHERE x.id = a.entidad_id AND x.vendedor_id = ${uid}))
+    a.asignado_a IN ${lista}
+    OR (a.entidad_tipo = 'lead'        AND EXISTS (SELECT 1 FROM leads x         WHERE x.id = a.entidad_id AND x.vendedor_id IN ${lista}))
+    OR (a.entidad_tipo = 'cliente'     AND EXISTS (SELECT 1 FROM clientes x      WHERE x.id = a.entidad_id AND x.vendedor_id IN ${lista}))
+    OR (a.entidad_tipo = 'oportunidad' AND EXISTS (SELECT 1 FROM oportunidades x WHERE x.id = a.entidad_id AND x.vendedor_id IN ${lista}))
+    OR (a.entidad_tipo = 'cotizacion'  AND EXISTS (SELECT 1 FROM cotizaciones x  WHERE x.id = a.entidad_id AND x.vendedor_id IN ${lista}))
+    OR (a.entidad_tipo = 'proyecto'    AND EXISTS (SELECT 1 FROM proyectos x     WHERE x.id = a.entidad_id AND x.vendedor_id IN ${lista}))
   )`;
 }
 
 /** Construye las condiciones WHERE (scoping + filtros) de la agenda. */
-function condicionesActividades(
+async function condicionesActividades(
   scope: DashboardScope,
   filtros: ActividadesFiltros,
-): SQL[] {
+): Promise<SQL[]> {
   const conds: SQL[] = [];
 
-  const own = ownershipActividades(scope);
+  const own = await ownershipActividades(scope);
   if (own) conds.push(own);
 
   if (filtros.estado) conds.push(sql`a.estado::text = ${filtros.estado}`);
@@ -2053,7 +2056,7 @@ export async function getActividadesPage(
   filtros: ActividadesFiltros,
   opts: { limit: number; offset: number },
 ): Promise<ActividadesPage> {
-  const conds = condicionesActividades(scope, filtros);
+  const conds = await condicionesActividades(scope, filtros);
   const where = conds.length
     ? sql`WHERE ${sql.join(conds, sql` AND `)}`
     : sql``;
@@ -2117,7 +2120,7 @@ export async function getActividadesPage(
 export async function getActividadesResumen(
   scope: DashboardScope,
 ): Promise<ActividadesResumen> {
-  const own = ownershipActividades(scope);
+  const own = await ownershipActividades(scope);
   const where = own ? sql`WHERE ${own}` : sql``;
 
   const [r] = asRows(
@@ -2162,35 +2165,36 @@ export async function buscarEntidadesActividad(
   limit = 10,
 ): Promise<EntidadOpcion[]> {
   const term = `%${q.trim()}%`;
-  const scoped = isScoped(scope.rol);
-  const uid = scope.userId;
+  // Filtro de visibilidad por subárbol (vacío para roles globales).
+  const ambito = await idsEnAmbito(scope);
+  const fVend = ambito ? sql`AND vendedor_id IN ${sqlIdList(ambito)}` : sql``;
 
   // Cada rama arma su SELECT (etiqueta = nombre o folio) + filtro de scope.
   let stmt: SQL;
   switch (tipo) {
     case "lead":
       stmt = sql`SELECT id::text AS id, coalesce(nombre, '(sin nombre)') AS nombre FROM leads
-                 WHERE nombre ILIKE ${term} ${scoped ? sql`AND vendedor_id = ${uid}` : sql``}
+                 WHERE nombre ILIKE ${term} ${fVend}
                  ORDER BY created_at DESC LIMIT ${limit}`;
       break;
     case "cliente":
       stmt = sql`SELECT id::text AS id, nombre FROM clientes
-                 WHERE nombre ILIKE ${term} ${scoped ? sql`AND vendedor_id = ${uid}` : sql``}
+                 WHERE nombre ILIKE ${term} ${fVend}
                  ORDER BY created_at DESC LIMIT ${limit}`;
       break;
     case "oportunidad":
       stmt = sql`SELECT id::text AS id, nombre FROM oportunidades
-                 WHERE nombre ILIKE ${term} ${scoped ? sql`AND vendedor_id = ${uid}` : sql``}
+                 WHERE nombre ILIKE ${term} ${fVend}
                  ORDER BY created_at DESC LIMIT ${limit}`;
       break;
     case "cotizacion":
       stmt = sql`SELECT id::text AS id, coalesce(folio, left(id::text, 8)) AS nombre FROM cotizaciones
-                 WHERE coalesce(folio, id::text) ILIKE ${term} ${scoped ? sql`AND vendedor_id = ${uid}` : sql``}
+                 WHERE coalesce(folio, id::text) ILIKE ${term} ${fVend}
                  ORDER BY created_at DESC LIMIT ${limit}`;
       break;
     case "proyecto":
       stmt = sql`SELECT id::text AS id, coalesce(folio, left(id::text, 8)) AS nombre FROM proyectos
-                 WHERE coalesce(folio, id::text) ILIKE ${term} ${scoped ? sql`AND vendedor_id = ${uid}` : sql``}
+                 WHERE coalesce(folio, id::text) ILIKE ${term} ${fVend}
                  ORDER BY created_at DESC LIMIT ${limit}`;
       break;
     default:
@@ -2266,8 +2270,9 @@ export async function getCotizacionesFiltradas(
 ): Promise<CotizacionRow[]> {
   const conds: SQL[] = [];
 
-  if (isScoped(scope.rol)) {
-    conds.push(eq(schema.cotizaciones.vendedorId, scope.userId));
+  const ambito = await idsEnAmbito(scope);
+  if (ambito) {
+    conds.push(inArray(schema.cotizaciones.vendedorId, ambito));
   }
 
   if (filtros.estado) conds.push(eq(schema.cotizaciones.estado, filtros.estado));
@@ -2340,8 +2345,9 @@ export async function getCotizacionesFiltradas(
 export async function getCotizacionesKpis(
   scope: DashboardScope,
 ): Promise<CotizacionesKpis> {
-  const f = isScoped(scope.rol)
-    ? sql`WHERE vendedor_id = ${scope.userId}`
+  const ambito = await idsEnAmbito(scope);
+  const f = ambito
+    ? sql`WHERE vendedor_id IN ${sqlIdList(ambito)}`
     : sql``;
 
   const result = await db.execute(sql`
@@ -2396,7 +2402,9 @@ export async function getCotizacion(
     .limit(1);
 
   if (!cot) return null;
-  if (isScoped(scope.rol) && cot.vendedorId !== scope.userId) return null;
+  const ambito = await idsEnAmbito(scope);
+  if (ambito && (cot.vendedorId == null || !ambito.includes(cot.vendedorId)))
+    return null;
 
   const itemRows = await db
     .select({
@@ -2746,8 +2754,9 @@ export async function getProyectosFiltrados(
 ): Promise<ProyectoRow[]> {
   const conds: SQL[] = [];
 
-  if (isScoped(scope.rol)) {
-    conds.push(eq(schema.proyectos.vendedorId, scope.userId));
+  const ambito = await idsEnAmbito(scope);
+  if (ambito) {
+    conds.push(inArray(schema.proyectos.vendedorId, ambito));
   }
 
   if (filtros.fase) conds.push(eq(schema.proyectos.fase, filtros.fase));
@@ -2826,7 +2835,9 @@ export async function getProyectoDetalle(
     .limit(1);
 
   if (!proyecto) return null;
-  if (isScoped(scope.rol) && proyecto.vendedorId !== scope.userId) return null;
+  const ambito = await idsEnAmbito(scope);
+  if (ambito && (proyecto.vendedorId == null || !ambito.includes(proyecto.vendedorId)))
+    return null;
 
   const [
     clienteNombre,
@@ -3119,9 +3130,10 @@ export async function getPagosData(
 ): Promise<PagosData> {
   const conds: SQL[] = [];
 
-  if (isScoped(scope.rol)) {
+  const ambitoPagos = await idsEnAmbito(scope);
+  if (ambitoPagos) {
     conds.push(
-      sql`EXISTS (SELECT 1 FROM proyectos pr WHERE pr.id = ${schema.pagos.proyectoId} AND pr.vendedor_id = ${scope.userId})`,
+      sql`EXISTS (SELECT 1 FROM proyectos pr WHERE pr.id = ${schema.pagos.proyectoId} AND pr.vendedor_id IN ${sqlIdList(ambitoPagos)})`,
     );
   }
 
@@ -3267,26 +3279,28 @@ export async function getMetricasData(
   scope: DashboardScope,
   filtros: MetricasFiltros = {},
 ): Promise<MetricasData> {
-  const scoped = isScoped(scope.rol);
-  const uid = scope.userId;
-
-  // Filtro de vendedor explícito (override por filtro) o scoping por rol.
-  const filtroVendedor =
+  // Filtro de vendedor: un filtro explícito (manager eligiendo un vendedor)
+  // gana; si no, los roles acotados ven su subárbol y los globales todo.
+  // (Métricas es solo-managers por RBAC; el ámbito es defensa en profundidad.)
+  const ambito = await idsEnAmbito(scope);
+  const explicito =
     filtros.vendedorId !== undefined && filtros.vendedorId !== null
-      ? filtros.vendedorId
-      : scoped
-        ? uid
-        : null;
+      ? [filtros.vendedorId]
+      : null;
+  // Un rol acotado no puede escapar su ámbito: el filtro explícito se
+  // intersecciona con el subárbol (vacío -> sqlIdList genera "(NULL)").
+  const vendedorIds = ambito
+    ? explicito
+      ? explicito.filter((id) => ambito.includes(id))
+      : ambito
+    : explicito;
+  const lista = vendedorIds ? sqlIdList(vendedorIds) : null;
 
-  const fProy = filtroVendedor
-    ? sql`AND vendedor_id = ${filtroVendedor}`
-    : sql``;
-  const fOport = filtroVendedor
-    ? sql`AND vendedor_id = ${filtroVendedor}`
-    : sql``;
+  const fProy = lista ? sql`AND vendedor_id IN ${lista}` : sql``;
+  const fOport = lista ? sql`AND vendedor_id IN ${lista}` : sql``;
   // pagos no tiene vendedor_id -> se acota via el proyecto dueño.
-  const fPago = filtroVendedor
-    ? sql`AND EXISTS (SELECT 1 FROM proyectos pr WHERE pr.id = p.proyecto_id AND pr.vendedor_id = ${filtroVendedor})`
+  const fPago = lista
+    ? sql`AND EXISTS (SELECT 1 FROM proyectos pr WHERE pr.id = p.proyecto_id AND pr.vendedor_id IN ${lista})`
     : sql``;
 
   // Rango temporal opcional [desde, hasta) sobre created_at.
@@ -3424,8 +3438,11 @@ export async function getMetricasData(
  * para columnas/fechas en consultas db.execute. Cada extremo es opcional; el
  * nombre de columna se interpola como SQL crudo (no es input de usuario).
  */
+/** Columnas permitidas para el rango temporal (lista blanca anti-inyección). */
+type ColumnaRango = "created_at" | "p.fecha_pagada";
+
 function sqlRango(
-  columna: string,
+  columna: ColumnaRango,
   desde: string | undefined,
   hasta: string | undefined,
 ): SQL {
