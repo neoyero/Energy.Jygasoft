@@ -12,6 +12,20 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0016 — Estructura organizacional (Fase 1) · 2026-06-29
+
+**Migración:** `db/migrations/0016_organizacion.sql`
+
+- Nueva tabla `areas` (departamentos): `nombre`, `nombre_normalizado` (único),
+  `descripcion`, `lider_id` (FK → `usuarios`), `activa`. Trigger `updated_at`.
+- `usuarios.reporta_a` (FK self → `usuarios`, `ON DELETE SET NULL`): línea de
+  reporte/organigrama. `usuarios.cargo` (título). `usuarios.area_id` (FK → `areas`).
+  Índices `ix_usuarios_reporta_a`, `ix_usuarios_area`.
+- Solo estructura + organigrama; NO altera todavía visibilidad de datos ni la
+  regla de asignación (fases posteriores).
+
+---
+
 ## 0015 — Prioridad en actividades · 2026-06-29
 
 **Migración:** `db/migrations/0015_actividad_prioridad.sql`

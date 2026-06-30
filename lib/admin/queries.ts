@@ -12,6 +12,7 @@ import {
   count,
   type SQL,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db, schema } from "@/db";
 import type { Rol } from "@/lib/admin/rbac";
 
@@ -124,6 +125,7 @@ export async function getClientes() {
 }
 
 export async function getUsuarios() {
+  const jefe = alias(schema.usuarios, "jefe");
   return db
     .select({
       id: schema.usuarios.id,
@@ -132,9 +134,16 @@ export async function getUsuarios() {
       rol: schema.usuarios.rol,
       telefono: schema.usuarios.telefono,
       activo: schema.usuarios.activo,
+      cargo: schema.usuarios.cargo,
+      reportaA: schema.usuarios.reportaA,
+      jefeNombre: jefe.nombre,
+      areaId: schema.usuarios.areaId,
+      areaNombre: schema.areas.nombre,
       ultimoAcceso: schema.usuarios.ultimoAcceso,
     })
     .from(schema.usuarios)
+    .leftJoin(jefe, eq(schema.usuarios.reportaA, jefe.id))
+    .leftJoin(schema.areas, eq(schema.usuarios.areaId, schema.areas.id))
     .orderBy(asc(schema.usuarios.nombre))
     .limit(500);
 }
@@ -995,6 +1004,140 @@ export async function getUsuariosAsignables(
     .limit(1);
 
   return rows.map((row) => ({ id: row.id, nombre: row.nombre, rol: row.rol }));
+}
+
+// ===================== ORGANIZACIÓN (áreas + organigrama) =====================
+
+export interface AreaRow {
+  id: string;
+  nombre: string;
+  descripcion: string | null;
+  liderId: string | null;
+  liderNombre: string | null;
+  activa: boolean;
+  miembros: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AreasFiltros {
+  busqueda?: string;
+  soloActivas?: boolean;
+}
+
+export interface AreasPage {
+  rows: AreaRow[];
+  total: number;
+}
+
+/** Página de áreas con líder y conteo de miembros. */
+export async function getAreasPage(
+  filtros: AreasFiltros,
+  opts: { limit: number; offset: number },
+): Promise<AreasPage> {
+  const conds: SQL[] = [];
+  if (filtros.soloActivas) conds.push(eq(schema.areas.activa, true));
+  const q = filtros.busqueda?.trim();
+  if (q) conds.push(ilike(schema.areas.nombre, `%${q}%`));
+  const where = conds.length ? and(...conds) : undefined;
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(schema.areas)
+    .where(where);
+
+  const lider = alias(schema.usuarios, "lider");
+  // Conteo de miembros por área (subconsulta correlacionada). `areas.id` se
+  // referencia con sql.raw para que no se renderice sin calificar (ambigüedad).
+  const miembros = sql<number>`(
+    SELECT count(*)::int FROM usuarios m WHERE m.area_id = ${sql.raw("areas.id")}
+  )`;
+
+  const rows = await db
+    .select({
+      id: schema.areas.id,
+      nombre: schema.areas.nombre,
+      descripcion: schema.areas.descripcion,
+      liderId: schema.areas.liderId,
+      liderNombre: lider.nombre,
+      activa: schema.areas.activa,
+      miembros,
+      createdAt: schema.areas.createdAt,
+      updatedAt: schema.areas.updatedAt,
+    })
+    .from(schema.areas)
+    .leftJoin(lider, eq(schema.areas.liderId, lider.id))
+    .where(where)
+    .orderBy(asc(schema.areas.nombre))
+    .limit(opts.limit)
+    .offset(opts.offset);
+
+  return {
+    rows: rows.map((r) => ({ ...r, miembros: Number(r.miembros) })),
+    total: Number(total),
+  };
+}
+
+/** Áreas activas para selects (id + nombre). */
+export async function getAreasActivas(): Promise<{ id: string; nombre: string }[]> {
+  return db
+    .select({ id: schema.areas.id, nombre: schema.areas.nombre })
+    .from(schema.areas)
+    .where(eq(schema.areas.activa, true))
+    .orderBy(asc(schema.areas.nombre));
+}
+
+/** Nodo del organigrama (usuario con su jefe y área). */
+export interface OrganigramaNodo {
+  id: string;
+  nombre: string;
+  cargo: string | null;
+  rol: string;
+  reportaA: string | null;
+  areaId: string | null;
+  areaNombre: string | null;
+  activo: boolean;
+}
+
+/**
+ * Nodos del organigrama: usuarios activos con su línea de reporte y área. El
+ * árbol se arma en el cliente (raíces = reportaA null o fuera del conjunto).
+ */
+export async function getOrganigrama(): Promise<OrganigramaNodo[]> {
+  const rows = await db
+    .select({
+      id: schema.usuarios.id,
+      nombre: schema.usuarios.nombre,
+      cargo: schema.usuarios.cargo,
+      rol: schema.usuarios.rol,
+      reportaA: schema.usuarios.reportaA,
+      areaId: schema.usuarios.areaId,
+      areaNombre: schema.areas.nombre,
+      activo: schema.usuarios.activo,
+    })
+    .from(schema.usuarios)
+    .leftJoin(schema.areas, eq(schema.usuarios.areaId, schema.areas.id))
+    .where(eq(schema.usuarios.activo, true))
+    .orderBy(asc(schema.usuarios.nombre));
+
+  return rows;
+}
+
+/**
+ * Ids de todos los descendientes de un usuario en la línea de reporte (subárbol,
+ * sin incluirlo a él). Se usa para prevenir ciclos al asignar jefe y, en fases
+ * posteriores, para la visibilidad por equipo. CTE recursivo.
+ */
+export async function getDescendientes(userId: string): Promise<string[]> {
+  const result = await db.execute(sql`
+    WITH RECURSIVE sub AS (
+      SELECT id FROM usuarios WHERE reporta_a = ${userId}
+      UNION ALL
+      SELECT u.id FROM usuarios u JOIN sub ON u.reporta_a = sub.id
+    )
+    SELECT id::text AS id FROM sub
+  `);
+  return asRows(result).map((r) => str(r.id));
 }
 
 /** Fila de asesor para la gestión en el panel (con el usuario vinculado). */

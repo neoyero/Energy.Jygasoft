@@ -37,6 +37,8 @@ export type Modulo =
   | "actividades"
   | "documentos"
   | "metricas"
+  | "organizacion"
+  | "areas"
   | "usuarios";
 
 // Grupos de roles para no repetir.
@@ -85,6 +87,9 @@ const MATRIX: Record<Modulo, { view: Rol[]; edit: Rol[] }> = {
     edit: [...OPS, ...COMERCIAL, ...FIELD],
   },
   metricas: { view: [...MANAGERS, "finanzas", "marketing", "lectura"], edit: MANAGERS },
+  // Organigrama visible para todos (transparencia); estructura la editan managers.
+  organizacion: { view: [...ALL], edit: MANAGERS },
+  areas: { view: [...ALL], edit: MANAGERS },
   usuarios: { view: ["admin"], edit: ["admin"] },
 };
 
@@ -108,6 +113,7 @@ export const NAV_GROUPS = [
   "Catálogos",
   "Finanzas",
   "Marketing",
+  "Organización",
   "Sistema",
 ] as const;
 export type NavGrupo = (typeof NAV_GROUPS)[number];
@@ -131,9 +137,11 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/je-admin/productos", label: "Productos", modulo: "productos", grupo: "Operaciones" },
   { href: "/je-admin/paquetes", label: "Paquetes", modulo: "paquetes", grupo: "Operaciones" },
   { href: "/je-admin/marcas", label: "Marcas", modulo: "marcas", grupo: "Catálogos" },
+  { href: "/je-admin/areas", label: "Áreas", modulo: "areas", grupo: "Catálogos" },
   { href: "/je-admin/pagos", label: "Pagos", modulo: "pagos", grupo: "Finanzas" },
   { href: "/je-admin/metricas", label: "Métricas", modulo: "metricas", grupo: "Finanzas" },
   { href: "/je-admin/campanas", label: "Campañas", modulo: "campanas", grupo: "Marketing" },
+  { href: "/je-admin/organigrama", label: "Organigrama", modulo: "organizacion", grupo: "Organización" },
   { href: "/je-admin/usuarios", label: "Usuarios", modulo: "usuarios", grupo: "Sistema" },
 ];
 

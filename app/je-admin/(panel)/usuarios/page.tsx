@@ -1,9 +1,11 @@
 import { requirePerm } from "@/lib/admin/guard";
-import { getUsuarios, getAsesores } from "@/lib/admin/queries";
+import { can } from "@/lib/admin/rbac";
+import { getUsuarios, getAsesores, getAreasActivas } from "@/lib/admin/queries";
 import {
   UsuarioCreateForm,
   UsuarioRowActions,
 } from "@/components/admin/usuario-form";
+import { UsuarioJerarquiaButton } from "@/components/admin/usuarios/usuario-jerarquia-button";
 import {
   AsesorCreateForm,
   AsesorRowActions,
@@ -22,9 +24,14 @@ function listOrAll(items: string[], vacio: string): string {
 }
 
 export default async function UsuariosPage() {
-  await requirePerm("usuarios", "view");
-  const [usuarios, asesores] = await Promise.all([getUsuarios(), getAsesores()]);
+  const user = await requirePerm("usuarios", "view");
+  const [usuarios, asesores, areas] = await Promise.all([
+    getUsuarios(),
+    getAsesores(),
+    getAreasActivas(),
+  ]);
   const usuarioOptions = usuarios.map((u) => ({ id: u.id, nombre: u.nombre }));
+  const puedeEditarOrg = can(user.rol, "organizacion", "edit");
 
   return (
     <div className="space-y-6">
@@ -45,9 +52,10 @@ export default async function UsuariosPage() {
               <th className="px-4 py-2 font-medium">Nombre</th>
               <th className="px-4 py-2 font-medium">Correo</th>
               <th className="px-4 py-2 font-medium">Rol</th>
-              <th className="px-4 py-2 font-medium">Teléfono</th>
+              <th className="px-4 py-2 font-medium">Cargo</th>
+              <th className="px-4 py-2 font-medium">Reporta a</th>
+              <th className="px-4 py-2 font-medium">Área</th>
               <th className="px-4 py-2 font-medium">Activo</th>
-              <th className="px-4 py-2 font-medium">Último acceso</th>
               <th className="px-4 py-2 font-medium text-right">Acciones</th>
             </tr>
           </thead>
@@ -60,29 +68,45 @@ export default async function UsuariosPage() {
                   {u.rol.replace(/_/g, " ")}
                 </td>
                 <td className="px-4 py-2 text-muted-foreground">
-                  {u.telefono ?? "—"}
+                  {u.cargo ?? "—"}
+                </td>
+                <td className="px-4 py-2 text-muted-foreground">
+                  {u.jefeNombre ?? "—"}
+                </td>
+                <td className="px-4 py-2 text-muted-foreground">
+                  {u.areaNombre ?? "—"}
                 </td>
                 <td className="px-4 py-2 text-muted-foreground">
                   {u.activo ? "Sí" : "No"}
                 </td>
-                <td className="px-4 py-2 text-muted-foreground">
-                  {fmtFecha(u.ultimoAcceso)}
-                </td>
                 <td className="px-4 py-2">
-                  <UsuarioRowActions
-                    id={u.id}
-                    nombre={u.nombre}
-                    rol={u.rol}
-                    telefono={u.telefono}
-                    activo={u.activo}
-                  />
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {puedeEditarOrg ? (
+                      <UsuarioJerarquiaButton
+                        id={u.id}
+                        nombre={u.nombre}
+                        cargo={u.cargo}
+                        reportaA={u.reportaA}
+                        areaId={u.areaId}
+                        usuarios={usuarioOptions}
+                        areas={areas}
+                      />
+                    ) : null}
+                    <UsuarioRowActions
+                      id={u.id}
+                      nombre={u.nombre}
+                      rol={u.rol}
+                      telefono={u.telefono}
+                      activo={u.activo}
+                    />
+                  </div>
                 </td>
               </tr>
             ))}
             {usuarios.length === 0 && (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={8}
                   className="px-4 py-8 text-center text-muted-foreground"
                 >
                   Aún no hay usuarios. Agrega al primer miembro del equipo arriba.

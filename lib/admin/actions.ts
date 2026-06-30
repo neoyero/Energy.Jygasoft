@@ -17,6 +17,10 @@ import {
   segmentoDeTipoPersona,
   getDesviacionesPaquetes,
   getMarcasPage,
+  getAreasPage,
+  getDescendientes,
+  type AreasPage,
+  type AreasFiltros,
   getActividadesPage,
   buscarEntidadesActividad,
   type ActividadesPage,
@@ -5342,5 +5346,177 @@ export async function quitarImagenMarca(id: string): Promise<ActionResult> {
     return { ok: true };
   } catch {
     return { ok: false, error: "No se pudo quitar el logo." };
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * ORGANIZACIÓN — Áreas (catálogo) + jerarquía de usuarios (línea de reporte).
+ * Fase 1: estructura y organigrama; no altera visibilidad ni asignación.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+const AREAS_PATH = "/je-admin/areas";
+const ORGANIGRAMA_PATH = "/je-admin/organigrama";
+
+const areaSchema = z.object({
+  nombre: z.string().trim().min(1, "El nombre es obligatorio.").max(120),
+  descripcion: z.string().trim().max(500).nullable().optional(),
+  liderId: z.string().uuid("Líder no válido.").nullable().optional().transform((v) => v ?? null),
+  activa: z.boolean().optional(),
+});
+
+function mensajeAreaConflicto(e: unknown): string {
+  const msg = e instanceof Error ? e.message : "";
+  if (msg.includes("ux_areas_nombre_norm")) return "Ya existe un área con ese nombre.";
+  return "No se pudo guardar el área.";
+}
+
+export async function fetchAreas(input: {
+  filtros?: AreasFiltros;
+  limit: number;
+  offset: number;
+}): Promise<AreasPage> {
+  await assertPerm("areas", "view");
+  const f = input.filtros ?? {};
+  const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
+  const offset = Math.max(0, Math.trunc(input.offset));
+  return getAreasPage({ busqueda: f.busqueda, soloActivas: f.soloActivas }, { limit, offset });
+}
+
+export async function crearArea(
+  data: z.input<typeof areaSchema>,
+): Promise<ActionResult & { id?: string }> {
+  await assertPerm("areas", "edit");
+  const parsed = areaSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  const d = parsed.data;
+  try {
+    const [row] = await db
+      .insert(schema.areas)
+      .values({
+        nombre: d.nombre,
+        nombreNormalizado: normalizarNombre(d.nombre),
+        descripcion: txtOrNull(d.descripcion),
+        liderId: d.liderId,
+        activa: d.activa ?? true,
+      })
+      .returning({ id: schema.areas.id });
+    revalidatePath(AREAS_PATH);
+    revalidatePath(ORGANIGRAMA_PATH);
+    return { ok: true, id: row.id };
+  } catch (e) {
+    return { ok: false, error: mensajeAreaConflicto(e) };
+  }
+}
+
+export async function actualizarArea(
+  id: string,
+  data: z.input<typeof areaSchema>,
+): Promise<ActionResult> {
+  await assertPerm("areas", "edit");
+  const parsed = areaSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  const d = parsed.data;
+  try {
+    await db
+      .update(schema.areas)
+      .set({
+        nombre: d.nombre,
+        nombreNormalizado: normalizarNombre(d.nombre),
+        descripcion: txtOrNull(d.descripcion),
+        liderId: d.liderId,
+        activa: d.activa ?? true,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.areas.id, id));
+    revalidatePath(AREAS_PATH);
+    revalidatePath(ORGANIGRAMA_PATH);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: mensajeAreaConflicto(e) };
+  }
+}
+
+export async function toggleAreaActiva(id: string, activa: boolean): Promise<ActionResult> {
+  await assertPerm("areas", "edit");
+  try {
+    await db
+      .update(schema.areas)
+      .set({ activa, updatedAt: new Date().toISOString() })
+      .where(eq(schema.areas.id, id));
+    revalidatePath(AREAS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo actualizar el área." };
+  }
+}
+
+export async function eliminarArea(id: string): Promise<ActionResult> {
+  await assertPerm("areas", "edit");
+  try {
+    // usuarios.area_id es ON DELETE SET NULL: los miembros quedan sin área.
+    await db.delete(schema.areas).where(eq(schema.areas.id, id));
+    revalidatePath(AREAS_PATH);
+    revalidatePath(ORGANIGRAMA_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo eliminar el área." };
+  }
+}
+
+const jerarquiaSchema = z.object({
+  reportaA: z.string().uuid("Jefe no válido.").nullable().optional().transform((v) => v ?? null),
+  cargo: z.string().trim().max(120).nullable().optional().transform((v) => (v ? v : null)),
+  areaId: z.string().uuid("Área no válida.").nullable().optional().transform((v) => v ?? null),
+});
+
+/**
+ * Actualiza la posición de un usuario en el organigrama: jefe directo (reportaA),
+ * cargo y área. Valida que no se asigne a sí mismo ni a un descendiente suyo
+ * (evita ciclos en la línea de reporte). Permiso: organizacion:edit.
+ */
+export async function actualizarJerarquiaUsuario(
+  userId: string,
+  data: z.input<typeof jerarquiaSchema>,
+): Promise<ActionResult> {
+  await assertPerm("organizacion", "edit");
+  const parsed = jerarquiaSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  const d = parsed.data;
+
+  if (d.reportaA) {
+    if (d.reportaA === userId) {
+      return { ok: false, error: "Un usuario no puede reportarse a sí mismo." };
+    }
+    // No puede reportar a alguien que está por debajo de él (ciclo).
+    const descendientes = await getDescendientes(userId);
+    if (descendientes.includes(d.reportaA)) {
+      return {
+        ok: false,
+        error: "No puedes asignar como jefe a alguien que depende de este usuario.",
+      };
+    }
+  }
+
+  try {
+    await db
+      .update(schema.usuarios)
+      .set({
+        reportaA: d.reportaA,
+        cargo: d.cargo,
+        areaId: d.areaId,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.usuarios.id, userId));
+    revalidatePath("/je-admin/usuarios");
+    revalidatePath(ORGANIGRAMA_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo actualizar la organización del usuario." };
   }
 }

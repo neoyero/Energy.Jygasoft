@@ -33,12 +33,44 @@ export const usuarios = pgTable("usuarios", {
 	telefono: text(),
 	passwordHash: text("password_hash"),
 	activo: boolean().default(true).notNull(),
+	// Estructura organizacional (Fase 1): línea de reporte + cargo + área.
+	reportaA: uuid("reporta_a"),
+	cargo: text(),
+	// area_id referencia `areas` (declarada más abajo); la FK vive en la BD para
+	// evitar la referencia adelantada en el modelo.
+	areaId: uuid("area_id"),
 	ultimoAcceso: timestamp("ultimo_acceso", { withTimezone: true, mode: 'string' }),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	uniqueIndex("ux_usuarios_email").using("btree", sql`lower(email)`),
 	unique("usuarios_folio_vendedor_key").on(table.folioVendedor),
+	index("ix_usuarios_reporta_a").using("btree", table.reportaA.asc().nullsLast().op("uuid_ops")),
+	index("ix_usuarios_area").using("btree", table.areaId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.reportaA],
+			foreignColumns: [table.id],
+			name: "usuarios_reporta_a_fkey"
+		}).onDelete("set null"),
+]);
+
+export const areas = pgTable("areas", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	nombre: text().notNull(),
+	nombreNormalizado: text("nombre_normalizado").notNull(),
+	descripcion: text(),
+	liderId: uuid("lider_id"),
+	activa: boolean().default(true).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	uniqueIndex("ux_areas_nombre_norm").using("btree", table.nombreNormalizado.asc().nullsLast().op("text_ops")),
+	index("ix_areas_lider").using("btree", table.liderId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.liderId],
+			foreignColumns: [usuarios.id],
+			name: "areas_lider_id_fkey"
+		}).onDelete("set null"),
 ]);
 
 /**

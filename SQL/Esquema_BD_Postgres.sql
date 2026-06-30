@@ -44,12 +44,37 @@ CREATE TABLE usuarios (
   telefono text,
   password_hash text,
   activo boolean NOT NULL DEFAULT true,
+  -- Estructura organizacional (Fase 1): línea de reporte + cargo + área.
+  reporta_a uuid REFERENCES usuarios(id) ON DELETE SET NULL,
+  cargo text,
+  area_id uuid,  -- FK -> areas, agregada tras crear `areas` (más abajo).
   ultimo_acceso timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX ux_usuarios_email ON usuarios (lower(email));
+CREATE INDEX ix_usuarios_reporta_a ON usuarios (reporta_a);
+CREATE INDEX ix_usuarios_area ON usuarios (area_id);
 CREATE TRIGGER trg_usuarios_upd BEFORE UPDATE ON usuarios FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Áreas / departamentos (organigrama). Se crea tras `usuarios` (la referencia) y
+-- luego se enlaza usuarios.area_id -> areas.id.
+CREATE TABLE areas (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre text NOT NULL,
+  nombre_normalizado text NOT NULL,
+  descripcion text,
+  lider_id uuid REFERENCES usuarios(id) ON DELETE SET NULL,
+  activa boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX ux_areas_nombre_norm ON areas (nombre_normalizado);
+CREATE INDEX ix_areas_lider ON areas (lider_id);
+CREATE TRIGGER trg_areas_upd BEFORE UPDATE ON areas FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+ALTER TABLE usuarios ADD CONSTRAINT usuarios_area_id_fkey
+  FOREIGN KEY (area_id) REFERENCES areas(id) ON DELETE SET NULL;
 
 -- Códigos de un solo uso (OTP) para login passwordless por correo (je-admin).
 CREATE TABLE login_codes (

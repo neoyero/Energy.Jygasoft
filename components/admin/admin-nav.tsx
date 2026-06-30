@@ -18,6 +18,8 @@ import {
   BarChart3,
   Megaphone,
   UserCog,
+  Network,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { navFor, NAV_GROUPS, type Modulo } from "@/lib/admin/rbac";
@@ -37,6 +39,8 @@ const ICONS: Record<Modulo, React.ComponentType<{ className?: string }>> = {
   pagos: CreditCard,
   metricas: BarChart3,
   campanas: Megaphone,
+  organizacion: Network,
+  areas: Building2,
   usuarios: UserCog,
 };
 
