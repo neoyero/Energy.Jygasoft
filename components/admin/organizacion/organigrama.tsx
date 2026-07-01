@@ -9,7 +9,7 @@ import {
   type DragEvent,
 } from "react"
 import { useRouter } from "next/navigation"
-import { ChevronDown, ChevronRight, Building2, Network, List, GripVertical } from "lucide-react"
+import { ChevronDown, ChevronRight, Building2, Network, List, GripVertical, Users } from "lucide-react"
 
 import type { OrganigramaNodo } from "@/lib/admin/queries"
 import { actualizarJerarquiaUsuario } from "@/lib/admin/actions"
@@ -22,6 +22,19 @@ interface NodoArbol extends OrganigramaNodo {
 }
 
 type Vista = "arbol" | "lista"
+type ModoArbol = "persona" | "area"
+
+/** Área para el árbol por áreas (jerarquía por padreId). */
+export interface AreaOrg {
+  id: string
+  nombre: string
+  padreId: string | null
+}
+
+interface AreaNodoArbol extends AreaOrg {
+  hijos: AreaNodoArbol[]
+  personas: OrganigramaNodo[]
+}
 
 /** Contexto de arrastre del organigrama (evita prop-drilling en el árbol). */
 interface OrgDnd {
@@ -35,6 +48,8 @@ const OrgDndCtx = createContext<OrgDnd | null>(null)
 
 export interface OrganigramaProps {
   nodos: ReadonlyArray<OrganigramaNodo>
+  /** Áreas (jerarquía) para el modo "por áreas" del árbol. */
+  areas?: ReadonlyArray<AreaOrg>
   /** RBAC organizacion:edit -> habilita reasignar jefe arrastrando. */
   puedeEditar?: boolean
 }
@@ -45,14 +60,18 @@ export interface OrganigramaProps {
  * arman desde la línea de reporte (reportaA); raíces = nodos sin jefe (o cuyo
  * jefe no está en el conjunto, p. ej. inactivo).
  */
-export function Organigrama({ nodos, puedeEditar = false }: OrganigramaProps) {
+export function Organigrama({ nodos, areas = [], puedeEditar = false }: OrganigramaProps) {
   const router = useRouter()
   const [vista, setVista] = useState<Vista>("arbol")
+  const [modoArbol, setModoArbol] = useState<ModoArbol>("persona")
   const [overId, setOverId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
 
   const { raices, total } = useMemo(() => construirArbol(nodos), [nodos])
+  const { raicesAreas, sinArea } = useMemo(() => construirArbolAreas(areas, nodos), [areas, nodos])
+  // El toggle Área/Persona solo aplica en la vista árbol.
+  const porArea = vista === "arbol" && modoArbol === "area"
   // Mapa id->nodo para conservar cargo/área al reasignar el jefe.
   const mapa = useMemo(() => {
     const m = new Map<string, OrganigramaNodo>()
@@ -104,27 +123,49 @@ export function Organigrama({ nodos, puedeEditar = false }: OrganigramaProps) {
           ) : (
             <span />
           )}
-          <div
-            className="inline-flex rounded-lg border border-stone-200 p-0.5 dark:border-border"
-            role="group"
-            aria-label="Cambiar vista del organigrama"
-          >
-            <BotonVista activo={vista === "arbol"} onClick={() => setVista("arbol")} label="Árbol">
-              <Network className="size-4" aria-hidden /> Árbol
-            </BotonVista>
-            <BotonVista activo={vista === "lista"} onClick={() => setVista("lista")} label="Lista">
-              <List className="size-4" aria-hidden /> Lista
-            </BotonVista>
+          <div className="flex items-center gap-2">
+            {/* Toggle Área/Persona: SOLO en la vista árbol. */}
+            {vista === "arbol" ? (
+              <div
+                className="inline-flex rounded-lg border border-stone-200 p-0.5 dark:border-border"
+                role="group"
+                aria-label="Agrupar el árbol por persona o por área"
+              >
+                <BotonVista activo={modoArbol === "persona"} onClick={() => setModoArbol("persona")} label="Por persona">
+                  <Users className="size-4" aria-hidden /> Persona
+                </BotonVista>
+                <BotonVista activo={modoArbol === "area"} onClick={() => setModoArbol("area")} label="Por área">
+                  <Building2 className="size-4" aria-hidden /> Área
+                </BotonVista>
+              </div>
+            ) : null}
+
+            <div
+              className="inline-flex rounded-lg border border-stone-200 p-0.5 dark:border-border"
+              role="group"
+              aria-label="Cambiar vista del organigrama"
+            >
+              <BotonVista activo={vista === "arbol"} onClick={() => setVista("arbol")} label="Árbol">
+                <Network className="size-4" aria-hidden /> Árbol
+              </BotonVista>
+              <BotonVista activo={vista === "lista"} onClick={() => setVista("lista")} label="Lista">
+                <List className="size-4" aria-hidden /> Lista
+              </BotonVista>
+            </div>
           </div>
         </div>
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-        {/* Zona para soltar y convertir en raíz (quitar jefe). */}
-        {puedeEditar ? <ZonaRaiz /> : null}
+        {/* Zona para soltar y convertir en raíz (quitar jefe). Solo en modo persona. */}
+        {puedeEditar && !porArea ? <ZonaRaiz /> : null}
 
         {vista === "arbol" ? (
-          <OrganigramaArbol raices={raices} />
+          porArea ? (
+            <OrganigramaAreas raices={raicesAreas} sinArea={sinArea} />
+          ) : (
+            <OrganigramaArbol raices={raices} />
+          )
         ) : (
           <div className="flex flex-col gap-2">
             {raices.map((n) => (
@@ -260,6 +301,95 @@ function ArbolNodo({ nodo }: { nodo: NodoArbol }) {
   )
 }
 
+/* ── Vista ÁRBOL POR ÁREAS (áreas anidadas con personas dentro) ──────────── */
+
+function OrganigramaAreas({
+  raices,
+  sinArea,
+}: {
+  raices: AreaNodoArbol[]
+  sinArea: OrganigramaNodo[]
+}) {
+  if (raices.length === 0 && sinArea.length === 0) {
+    return (
+      <EmptyState
+        title="Sin áreas"
+        description="Crea áreas (en Áreas) y asigna a cada usuario su área (en Usuarios)."
+      />
+    )
+  }
+  return (
+    <div className="overflow-x-auto pb-4">
+      <style>{TREE_CSS}</style>
+      <div className="org-tree min-w-fit text-stone-300 dark:text-border">
+        <ul>
+          {raices.map((a) => (
+            <AreaOrgNodo key={a.id} nodo={a} />
+          ))}
+          {sinArea.length > 0 ? (
+            <li>
+              <div className="org-node relative inline-flex w-48 flex-col items-center gap-0.5 rounded-xl border border-dashed border-border bg-muted/30 px-3 py-2.5 text-center shadow-sm">
+                <span className="inline-flex items-center gap-1 text-sm font-semibold text-foreground">
+                  <Building2 className="size-3.5" aria-hidden /> Sin área
+                </span>
+                <span className="text-[11px] text-muted-foreground">{sinArea.length} persona(s)</span>
+              </div>
+              <ul>
+                {sinArea.map((p) => (
+                  <li key={p.id}>
+                    <PersonaMini nodo={p} />
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ) : null}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
+function AreaOrgNodo({ nodo }: { nodo: AreaNodoArbol }) {
+  const tieneHijos = nodo.hijos.length > 0 || nodo.personas.length > 0
+  return (
+    <li>
+      <div className="org-node relative inline-flex w-48 flex-col items-center gap-0.5 rounded-xl border border-brand/30 bg-brand/5 px-3 py-2.5 text-center shadow-sm dark:border-primary/40 dark:bg-primary/10">
+        <span className="inline-flex items-center gap-1 text-sm font-semibold leading-tight text-brand dark:text-foreground">
+          <Building2 className="size-3.5 shrink-0" aria-hidden /> {nodo.nombre}
+        </span>
+        <span className="text-[11px] text-muted-foreground">
+          {nodo.personas.length} persona{nodo.personas.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      {tieneHijos ? (
+        <ul>
+          {nodo.hijos.map((h) => (
+            <AreaOrgNodo key={h.id} nodo={h} />
+          ))}
+          {nodo.personas.map((p) => (
+            <li key={p.id}>
+              <PersonaMini nodo={p} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  )
+}
+
+/** Tarjeta de persona (compacta, sin arrastre) para el árbol por áreas. */
+function PersonaMini({ nodo }: { nodo: OrganigramaNodo }) {
+  return (
+    <div className="org-node inline-flex w-44 flex-col items-center gap-1 rounded-xl border border-border bg-card px-3 py-2.5 text-center shadow-sm">
+      <span className="grid size-9 place-items-center rounded-full bg-brand/10 text-sm font-semibold text-brand dark:bg-muted dark:text-foreground">
+        {nodo.nombre.charAt(0).toUpperCase()}
+      </span>
+      <span className="line-clamp-2 text-sm font-medium leading-tight text-foreground">{nodo.nombre}</span>
+      <span className="text-xs text-muted-foreground">{nodo.cargo ?? labelFor(nodo.rol)}</span>
+    </div>
+  )
+}
+
 /* ── Vista LISTA (anidada / colapsable) ──────────────────────────────────── */
 
 function NodoLista({ nodo, nivel }: { nodo: NodoArbol; nivel: number }) {
@@ -368,6 +498,43 @@ function construirArbol(nodos: ReadonlyArray<OrganigramaNodo>): {
   ordenar(raices)
 
   return { raices, total: mapa.size }
+}
+
+/** Arma el árbol de ÁREAS (por padreId) con las personas de cada área dentro. */
+function construirArbolAreas(
+  areas: ReadonlyArray<AreaOrg>,
+  personas: ReadonlyArray<OrganigramaNodo>,
+): { raicesAreas: AreaNodoArbol[]; sinArea: OrganigramaNodo[] } {
+  const mapa = new Map<string, AreaNodoArbol>()
+  for (const a of areas) mapa.set(a.id, { ...a, hijos: [], personas: [] })
+
+  const raicesAreas: AreaNodoArbol[] = []
+  for (const a of mapa.values()) {
+    const padre = a.padreId ? mapa.get(a.padreId) : null
+    if (padre) padre.hijos.push(a)
+    else raicesAreas.push(a)
+  }
+
+  const sinArea: OrganigramaNodo[] = []
+  for (const p of personas) {
+    const area = p.areaId ? mapa.get(p.areaId) : null
+    if (area) area.personas.push(p)
+    else sinArea.push(p)
+  }
+
+  const porNombre = (a: { nombre: string }, b: { nombre: string }) =>
+    a.nombre.localeCompare(b.nombre, "es")
+  const ordenar = (lista: AreaNodoArbol[]) => {
+    lista.sort(porNombre)
+    lista.forEach((x) => {
+      x.personas.sort(porNombre)
+      ordenar(x.hijos)
+    })
+  }
+  ordenar(raicesAreas)
+  sinArea.sort(porNombre)
+
+  return { raicesAreas, sinArea }
 }
 
 /**
