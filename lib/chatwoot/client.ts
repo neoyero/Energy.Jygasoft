@@ -70,6 +70,11 @@ export async function cwRequest<T>(method: Metodo, path: string, body?: unknown)
       const res = await fetch(`${base}${path}`, {
         method,
         headers: {
+          // Con guiones: sobrevive a proxies que descartan cabeceras con guion
+          // bajo (nginx `underscores_in_headers off`). Rack normaliza ambas a la
+          // misma variable, así que Chatwoot la lee igual. Enviamos las dos por
+          // robustez (dev y prod pasan por el mismo proxy).
+          "api-access-token": token,
           api_access_token: token,
           "content-type": "application/json",
           accept: "application/json",
