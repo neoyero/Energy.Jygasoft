@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { GoogleGenAI } from "@google/genai";
-import { serverEnv } from "@/lib/env";
+import { getIntegracion } from "@/lib/config/service";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { verifyTurnstile } from "@/lib/turnstile";
 
@@ -94,7 +94,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const apiKey = serverEnv.GEMINI_API_KEY;
+  const gemini = await getIntegracion("gemini");
+  const apiKey = gemini.secreto("api_key");
+  const model = gemini.ajuste("model") ?? "gemini-2.5-flash";
   if (!apiKey) {
     return NextResponse.json({ text: FALLBACK, fallback: true });
   }
@@ -110,7 +112,7 @@ export async function POST(req: NextRequest) {
     ];
 
     const result = await ai.models.generateContent({
-      model: serverEnv.GEMINI_MODEL,
+      model,
       contents,
       config: {
         systemInstruction: SYSTEM_PROMPT,

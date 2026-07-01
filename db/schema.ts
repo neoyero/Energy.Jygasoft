@@ -783,6 +783,29 @@ export const configParametros = pgTable("config_parametros", {
 });
 
 /**
+ * Integraciones/conexiones externas: `ajustes` (jsonb en claro: urls, ids, flags)
+ * y `secretos` (jsonb cifrado AES-256-GCM; la llave vive solo en el env). Una
+ * fila por conexión (chatwoot, m365, meta, n8n, gemini, turnstile, app).
+ */
+export const integraciones = pgTable("integraciones", {
+	clave: text().primaryKey().notNull(),
+	nombre: text().notNull(),
+	descripcion: text(),
+	activo: boolean().default(true).notNull(),
+	ajustes: jsonb().default({}).notNull(),
+	secretos: jsonb().default({}).notNull(),
+	actualizadoPor: uuid("actualizado_por"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.actualizadoPor],
+			foreignColumns: [usuarios.id],
+			name: "integraciones_actualizado_por_fkey"
+		}).onDelete("set null"),
+]);
+
+/**
  * Catálogo Nacional de Códigos Postales (SEPOMEX / Correos de México).
  * Una fila por asentamiento (colonia). Datos de referencia: se recargan
  * por completo con `pnpm db:import-cp` (TRUNCATE + carga desde los .xlsx).

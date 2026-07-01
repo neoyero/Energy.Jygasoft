@@ -1,6 +1,6 @@
 import { sign } from "@/lib/hmac";
-import { serverEnv } from "@/lib/env";
 import { db, schema } from "@/db";
+import { getIntegracion } from "@/lib/config/service";
 
 /**
  * Dispatch saliente del sitio hacia n8n (contrato §4), firmado con HMAC.
@@ -49,8 +49,10 @@ async function logWebhook(args: {
 export async function dispatchLeadToN8n(
   envelope: N8nLeadEnvelope,
 ): Promise<DispatchResult> {
-  const url = serverEnv.N8N_WEBHOOK_URL;
-  const secret = serverEnv.N8N_HMAC_SECRET;
+  const n8n = await getIntegracion("n8n");
+  const url = n8n.ajuste("webhook_url");
+  const secret = n8n.secreto("hmac_secret");
+  const kid = n8n.ajuste("hmac_kid") ?? "energy-web-v1";
 
   if (!url || !secret) {
     await logWebhook({
@@ -76,7 +78,7 @@ export async function dispatchLeadToN8n(
         "X-Jygasoft-Signature": signature,
         "X-Jygasoft-Timestamp": ts,
         "X-Jygasoft-Request-Id": envelope.request_id,
-        "X-Jygasoft-Kid": serverEnv.N8N_HMAC_KID,
+        "X-Jygasoft-Kid": kid,
       },
       body,
       // No esperar indefinidamente si n8n no responde.

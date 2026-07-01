@@ -23,7 +23,7 @@ export default async function UsuariosPage() {
     email: u.email,
   }));
   const puedeEditar = can(user.rol, "usuarios", "edit");
-  const chatwootActivo = chatwootConfigurado();
+  const chatwootActivo = await chatwootConfigurado();
 
   return (
     <div className="flex flex-col gap-6">

@@ -39,6 +39,7 @@ export type Modulo =
   | "metricas"
   | "organizacion"
   | "areas"
+  | "integraciones"
   | "usuarios";
 
 // Grupos de roles para no repetir.
@@ -90,6 +91,8 @@ const MATRIX: Record<Modulo, { view: Rol[]; edit: Rol[] }> = {
   // Organigrama visible para todos (transparencia); estructura la editan managers.
   organizacion: { view: [...ALL], edit: MANAGERS },
   areas: { view: [...ALL], edit: MANAGERS },
+  // Integraciones (tokens/keys de servicios): solo admin.
+  integraciones: { view: ["admin"], edit: ["admin"] },
   usuarios: { view: ["admin"], edit: ["admin"] },
 };
 
@@ -142,6 +145,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/je-admin/metricas", label: "Métricas", modulo: "metricas", grupo: "Finanzas" },
   { href: "/je-admin/campanas", label: "Campañas", modulo: "campanas", grupo: "Marketing" },
   { href: "/je-admin/organigrama", label: "Organigrama", modulo: "organizacion", grupo: "Organización" },
+  { href: "/je-admin/integraciones", label: "Integraciones", modulo: "integraciones", grupo: "Sistema" },
   { href: "/je-admin/usuarios", label: "Usuarios", modulo: "usuarios", grupo: "Sistema" },
 ];
 

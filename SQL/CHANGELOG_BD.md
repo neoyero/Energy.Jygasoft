@@ -12,6 +12,17 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0018 — Integraciones/configuraciones en BD (secretos cifrados) · 2026-06-30
+
+**Migración:** `db/migrations/0018_integraciones.sql`
+
+- Nueva tabla `integraciones` (una fila por conexión): `ajustes` (jsonb en claro),
+  `secretos` (jsonb cifrado AES-256-GCM — la llave `CONFIG_ENC_KEY` vive solo en
+  el env), `activo`, `actualizado_por` (FK→usuarios), trigger `updated_at`.
+- Complementa a `config_parametros` (parámetros de negocio no sensibles).
+
+---
+
 ## 0017 — Asesores especializados con Chatwoot (Fase 1) · 2026-06-30
 
 **Migración:** `db/migrations/0017_asesor_chatwoot.sql`

@@ -1,4 +1,5 @@
 import { serverEnv } from "@/lib/env";
+import { getIntegracion } from "@/lib/config/service";
 
 /**
  * Verificación server-side de Cloudflare Turnstile.
@@ -18,7 +19,7 @@ export async function verifyTurnstile(
   token: string | undefined | null,
   remoteIp?: string,
 ): Promise<TurnstileResult> {
-  const secret = serverEnv.TURNSTILE_SECRET;
+  const secret = (await getIntegracion("turnstile")).secreto("secret");
 
   if (!secret) {
     if (serverEnv.NODE_ENV === "production") {

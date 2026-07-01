@@ -31,6 +31,7 @@ const SECTION_TO_MODULO: Record<string, Modulo> = {
   metricas: "metricas",
   areas: "areas",
   organigrama: "organizacion",
+  integraciones: "integraciones",
   usuarios: "usuarios",
 };
 

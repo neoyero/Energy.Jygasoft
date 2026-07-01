@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { eq, and, sql } from "drizzle-orm";
 import { verify } from "@/lib/hmac";
-import { serverEnv } from "@/lib/env";
+import { getIntegracion } from "@/lib/config/service";
 import { db, schema } from "@/db";
 
 export const runtime = "nodejs";
@@ -47,7 +47,7 @@ async function logInbound(args: {
 }
 
 export async function POST(req: NextRequest) {
-  const secret = serverEnv.WEBHOOK_INBOUND_SECRET;
+  const secret = (await getIntegracion("n8n")).secreto("webhook_inbound_secret");
   if (!secret) {
     return NextResponse.json({ ok: false, error: "not_configured" }, { status: 503 });
   }

@@ -1,19 +1,16 @@
-import { serverEnv } from "@/lib/env";
+import { getIntegracion } from "@/lib/config/service";
 
 /**
  * Cliente de Chatwoot (self-hosted) — Application API por cuenta.
- * Autentica con el header `api_access_token` (Access Token de un admin de la
- * cuenta). Si no está configurado, `chatwootConfigurado()` devuelve false y el
- * módulo de asesores degrada al modo manual. No lanza: retorna {ok,error}.
+ * La configuración (url, account_id, api_token) se resuelve desde el servicio
+ * de integraciones (BD con fallback a env). Autentica con el header
+ * `api_access_token`. Si no está configurado, `chatwootConfigurado()` devuelve
+ * false y el módulo de asesores degrada al modo manual. No lanza: {ok,error}.
  */
 
-/** true si están las variables mínimas para hablar con Chatwoot. */
-export function chatwootConfigurado(): boolean {
-  return Boolean(
-    serverEnv.CHATWOOT_URL &&
-      serverEnv.CHATWOOT_ACCOUNT_ID &&
-      serverEnv.CHATWOOT_API_TOKEN,
-  );
+/** true si están los datos mínimos para hablar con Chatwoot. */
+export async function chatwootConfigurado(): Promise<boolean> {
+  return (await getIntegracion("chatwoot")).configurada();
 }
 
 /** Agente de Chatwoot (subset relevante). */
@@ -28,28 +25,26 @@ export interface ChatwootAgent {
 
 type CwResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
-/** Base `${url}/api/v1/accounts/{id}` sin barra final. */
-function baseUrl(): string {
-  const url = (serverEnv.CHATWOOT_URL ?? "").replace(/\/+$/, "");
-  return `${url}/api/v1/accounts/${serverEnv.CHATWOOT_ACCOUNT_ID}`;
-}
-
 /**
  * fetch autenticado a la Application API. `path` es relativo a la cuenta
- * (p. ej. "/agents"). Maneja errores sin lanzar.
+ * (p. ej. "/agents"). Resuelve config desde el servicio. No lanza.
  */
 async function cwFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<CwResult<T>> {
-  if (!chatwootConfigurado()) {
+  const cfg = await getIntegracion("chatwoot");
+  if (!cfg.configurada()) {
     return { ok: false, error: "Chatwoot no está configurado." };
   }
+  const url = (cfg.ajuste("url") ?? "").replace(/\/+$/, "");
+  const base = `${url}/api/v1/accounts/${cfg.ajuste("account_id")}`;
+  const token = cfg.secreto("api_token") as string;
   try {
-    const res = await fetch(`${baseUrl()}${path}`, {
+    const res = await fetch(`${base}${path}`, {
       ...init,
       headers: {
-        api_access_token: serverEnv.CHATWOOT_API_TOKEN as string,
+        api_access_token: token,
         "content-type": "application/json",
         accept: "application/json",
         ...(init?.headers ?? {}),

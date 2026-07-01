@@ -64,6 +64,12 @@ const serverSchema = z.object({
   // Carpeta raíz dentro del drive donde se guardan los documentos del CRM.
   M365_DOCS_ROOT: z.string().default("CRM"),
 
+  // Configuraciones/integraciones en BD: llave maestra para cifrar los secretos
+  // (AES-256-GCM). 32 bytes en base64. ÚNICO secreto que permanece en el env.
+  // CONFIG_ENC_KEY_PREV permite rotación (descifrar con la previa, recifrar).
+  CONFIG_ENC_KEY: z.string().optional(),
+  CONFIG_ENC_KEY_PREV: z.string().optional(),
+
   // je-admin — Chatwoot (conversaciones, self-hosted). Administración de agentes
   // desde el panel. Si faltan, el módulo de asesores degrada al modo manual.
   CHATWOOT_URL: z.string().url().optional(),

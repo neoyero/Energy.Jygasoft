@@ -20,6 +20,7 @@ import {
   UserCog,
   Network,
   Building2,
+  KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { navFor, NAV_GROUPS, type Modulo } from "@/lib/admin/rbac";
@@ -41,6 +42,7 @@ const ICONS: Record<Modulo, React.ComponentType<{ className?: string }>> = {
   campanas: Megaphone,
   organizacion: Network,
   areas: Building2,
+  integraciones: KeyRound,
   usuarios: UserCog,
 };
 

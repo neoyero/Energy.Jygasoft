@@ -1,4 +1,5 @@
 import { serverEnv } from "@/lib/env";
+import { getIntegracion } from "@/lib/config/service";
 
 /**
  * Envío de correo transaccional vía Microsoft 365 / Graph (client-credentials).
@@ -33,26 +34,27 @@ export interface MailResult {
   error?: string;
 }
 
-function isConfigured(): boolean {
-  return Boolean(
-    serverEnv.M365_TENANT_ID &&
-      serverEnv.M365_CLIENT_ID &&
-      serverEnv.M365_CLIENT_SECRET &&
-      serverEnv.M365_SENDER,
-  );
-}
-
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
-/** Token de aplicación de Microsoft Graph (client-credentials, scope .default). */
+/**
+ * Token de aplicación de Microsoft Graph (client-credentials, scope .default).
+ * La config de M365 se resuelve desde el servicio (BD con fallback a env).
+ */
 export async function getGraphToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
     return cachedToken.value;
   }
-  const url = `https://login.microsoftonline.com/${serverEnv.M365_TENANT_ID}/oauth2/v2.0/token`;
+  const m = await getIntegracion("m365");
+  const tenantId = m.ajuste("tenant_id");
+  const clientId = m.ajuste("client_id");
+  const clientSecret = m.secreto("client_secret");
+  if (!tenantId || !clientId || !clientSecret) {
+    throw new Error("m365_no_configurado");
+  }
+  const url = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
   const body = new URLSearchParams({
-    client_id: serverEnv.M365_CLIENT_ID!,
-    client_secret: serverEnv.M365_CLIENT_SECRET!,
+    client_id: clientId,
+    client_secret: clientSecret,
     scope: "https://graph.microsoft.com/.default",
     grant_type: "client_credentials",
   });
@@ -75,7 +77,12 @@ export async function getGraphToken(): Promise<string> {
 }
 
 export async function sendMail(input: MailInput): Promise<MailResult> {
-  if (!isConfigured()) {
+  const m = await getIntegracion("m365");
+  const sender = m.ajuste("sender");
+  const configured =
+    Boolean(m.ajuste("tenant_id") && m.ajuste("client_id") && m.secreto("client_secret")) &&
+    Boolean(sender);
+  if (!configured) {
     if (serverEnv.NODE_ENV === "production") {
       console.error("[email] Microsoft 365 no configurado; no se envió el correo.");
       return { ok: false, error: "not_configured" };
@@ -89,9 +96,8 @@ export async function sendMail(input: MailInput): Promise<MailResult> {
 
   try {
     const token = await getGraphToken();
-    const sender = serverEnv.M365_SENDER!;
     const res = await fetch(
-      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`,
+      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender as string)}/sendMail`,
       {
         method: "POST",
         headers: {

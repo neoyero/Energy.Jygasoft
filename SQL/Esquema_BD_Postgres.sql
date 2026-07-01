@@ -534,6 +534,21 @@ CREATE TABLE config_parametros (
 );
 CREATE TRIGGER trg_config_upd BEFORE UPDATE ON config_parametros FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- Integraciones/conexiones externas: ajustes (jsonb en claro) + secretos (jsonb
+-- cifrado AES-256-GCM; la llave maestra vive solo en el env).
+CREATE TABLE integraciones (
+  clave           text PRIMARY KEY,
+  nombre          text NOT NULL,
+  descripcion     text,
+  activo          boolean NOT NULL DEFAULT true,
+  ajustes         jsonb NOT NULL DEFAULT '{}',
+  secretos        jsonb NOT NULL DEFAULT '{}',
+  actualizado_por uuid REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER trg_integraciones_upd BEFORE UPDATE ON integraciones FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 CREATE TABLE tarifas_cfe (
   id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tarifa         text NOT NULL,            -- '1','DAC','PDBT','GDMTH','GDMTO'

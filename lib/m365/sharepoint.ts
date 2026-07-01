@@ -1,5 +1,5 @@
-import { serverEnv } from "@/lib/env";
 import { getGraphToken } from "@/lib/email";
+import { getIntegracion } from "@/lib/config/service";
 
 /**
  * Subida de documentos a SharePoint/OneDrive vía Microsoft Graph (app-only,
@@ -22,24 +22,28 @@ export interface SharePointUploadResult {
   error?: string;
 }
 
-export function sharePointConfigurado(): boolean {
-  return Boolean(
-    serverEnv.M365_TENANT_ID &&
-      serverEnv.M365_CLIENT_ID &&
-      serverEnv.M365_CLIENT_SECRET &&
-      (serverEnv.M365_DOCS_DRIVE_ID || serverEnv.M365_DOCS_SITE_ID),
+/**
+ * Config de M365 para documentos, resuelta desde el servicio (BD con fallback a
+ * env): credenciales + base del drive destino + carpeta raíz.
+ */
+async function resolverDrive(): Promise<{ base: string | null; root: string; configurado: boolean }> {
+  const m = await getIntegracion("m365");
+  const credenciales = Boolean(
+    m.ajuste("tenant_id") && m.ajuste("client_id") && m.secreto("client_secret"),
   );
+  const driveId = m.ajuste("docs_drive_id");
+  const siteId = m.ajuste("docs_site_id");
+  const base = driveId
+    ? `${GRAPH}/drives/${driveId}`
+    : siteId
+      ? `${GRAPH}/sites/${siteId}/drive`
+      : null;
+  return { base, root: m.ajuste("docs_root") ?? "CRM", configurado: credenciales && base != null };
 }
 
-/** Base del drive destino: por id de drive, o el drive por defecto del sitio. */
-function driveBase(): string | null {
-  if (serverEnv.M365_DOCS_DRIVE_ID) {
-    return `${GRAPH}/drives/${serverEnv.M365_DOCS_DRIVE_ID}`;
-  }
-  if (serverEnv.M365_DOCS_SITE_ID) {
-    return `${GRAPH}/sites/${serverEnv.M365_DOCS_SITE_ID}/drive`;
-  }
-  return null;
+/** true si Documentos en M365 está configurado (credenciales + drive destino). */
+export async function sharePointConfigurado(): Promise<boolean> {
+  return (await resolverDrive()).configurado;
 }
 
 /** Sanitiza un segmento de ruta (sin caracteres prohibidos por SharePoint). */
@@ -62,12 +66,13 @@ export async function uploadDocumentoSharePoint(params: {
   contentType: string;
   bytes: Buffer;
 }): Promise<SharePointUploadResult> {
-  const base = driveBase();
-  if (!sharePointConfigurado() || !base) {
+  const d = await resolverDrive();
+  const base = d.base;
+  if (!d.configurado || !base) {
     return { ok: false, error: "not_configured" };
   }
 
-  const root = safeSeg(serverEnv.M365_DOCS_ROOT);
+  const root = safeSeg(d.root);
   const carpeta = params.carpeta
     .split("/")
     .filter(Boolean)
@@ -159,8 +164,10 @@ export async function uploadDocumentoSharePoint(params: {
  * Sigue el redirect a la downloadUrl. Devuelve null si no está disponible.
  */
 export async function fetchDriveItemContent(itemId: string): Promise<Response | null> {
-  const base = driveBase();
-  if (!base || !sharePointConfigurado() || !itemId) return null;
+  if (!itemId) return null;
+  const d = await resolverDrive();
+  const base = d.base;
+  if (!base || !d.configurado) return null;
   try {
     const token = await getGraphToken();
     const res = await fetch(`${base}/items/${itemId}/content`, {
@@ -179,8 +186,10 @@ export async function fetchDriveItemContent(itemId: string): Promise<Response | 
  * quitar la imagen de un producto). No lanza: devuelve true/false.
  */
 export async function deleteDriveItem(itemId: string): Promise<boolean> {
-  const base = driveBase();
-  if (!base || !sharePointConfigurado() || !itemId) return false;
+  if (!itemId) return false;
+  const d = await resolverDrive();
+  const base = d.base;
+  if (!base || !d.configurado) return false;
   try {
     const token = await getGraphToken();
     const res = await fetch(`${base}/items/${itemId}`, {

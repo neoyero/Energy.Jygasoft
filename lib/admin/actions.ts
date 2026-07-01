@@ -61,6 +61,8 @@ import {
 import { sendMail } from "@/lib/email";
 import { deleteDriveItem } from "@/lib/m365/sharepoint";
 import { chatwootConfigurado, listarAgentes, crearAgente } from "@/lib/chatwoot/client";
+import { REGISTRO, invalidarConfig } from "@/lib/config/service";
+import { cifrarSecreto } from "@/lib/config/crypto";
 import { serverEnv, clientEnv } from "@/lib/env";
 import {
   renderCotizacionPdf,
@@ -953,7 +955,7 @@ export async function crearAsesor(
 
   // Aprovisionamiento por invitación (solo si hay correo, no hay id previo y
   // Chatwoot está configurado).
-  if (chatwootConfigurado() && chatwootAgentId == null && email) {
+  if ((await chatwootConfigurado()) && chatwootAgentId == null && email) {
     const res = await crearAgente({ name: d.nombre, email, role: "agent" });
     if (res.ok && res.data?.id) {
       chatwootAgentId = res.data.id;
@@ -1022,7 +1024,7 @@ export async function sincronizarAsesoresChatwoot(): Promise<
   ActionResult & { enlazados?: number; sinMatch?: number }
 > {
   await assertPerm("usuarios", "edit");
-  if (!chatwootConfigurado()) {
+  if (!(await chatwootConfigurado())) {
     return { ok: false, error: "Chatwoot no está configurado." };
   }
   const res = await listarAgentes();
@@ -5870,4 +5872,90 @@ export async function eliminarCampana(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar la campaña." };
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * INTEGRACIONES — configuración de conexiones (secretos cifrados en BD).
+ * Solo admin (RBAC integraciones:edit). Nunca se devuelven valores de secretos.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+export interface GuardarIntegracionInput {
+  activo: boolean;
+  /** Ajustes en claro (urls, ids, flags). */
+  ajustes: Record<string, string>;
+  /** Secretos a establecer/reemplazar. Campos ausentes o vacíos = sin cambio. */
+  secretos: Record<string, string>;
+}
+
+/**
+ * Guarda una integración: ajustes en claro + secretos cifrados (AES-256-GCM).
+ * Solo cifra/actualiza los secretos con valor no vacío; los demás se conservan.
+ * Upsert por clave. Invalida la caché del servicio de config.
+ */
+export async function guardarIntegracion(
+  clave: string,
+  input: GuardarIntegracionInput,
+): Promise<ActionResult> {
+  const user = await assertPerm("integraciones", "edit");
+  const def = REGISTRO.find((d) => d.clave === clave);
+  if (!def) return { ok: false, error: "Integración no válida." };
+
+  // Ajustes: solo los campos declarados en el registro.
+  const ajustes: Record<string, string> = {};
+  for (const c of def.ajustes) {
+    const v = input.ajustes?.[c.campo];
+    if (typeof v === "string" && v.trim() !== "") ajustes[c.campo] = v.trim();
+  }
+
+  // Secretos: parte de los existentes; cifra solo los provistos no vacíos.
+  const [prev] = await db
+    .select({ secretos: schema.integraciones.secretos })
+    .from(schema.integraciones)
+    .where(eq(schema.integraciones.clave, clave))
+    .limit(1);
+  const secretos: Record<string, unknown> = {
+    ...((prev?.secretos as Record<string, unknown>) ?? {}),
+  };
+  try {
+    for (const c of def.secretos) {
+      const v = input.secretos?.[c.campo];
+      if (typeof v === "string" && v.trim() !== "") {
+        secretos[c.campo] = cifrarSecreto(`${clave}:${c.campo}`, v.trim());
+      }
+    }
+  } catch {
+    return { ok: false, error: "No se pudo cifrar (¿falta CONFIG_ENC_KEY?)." };
+  }
+
+  try {
+    await db
+      .insert(schema.integraciones)
+      .values({
+        clave,
+        nombre: def.nombre,
+        descripcion: def.descripcion,
+        activo: input.activo,
+        ajustes,
+        secretos,
+        actualizadoPor: user.id ?? null,
+      })
+      .onConflictDoUpdate({
+        target: schema.integraciones.clave,
+        set: {
+          nombre: def.nombre,
+          descripcion: def.descripcion,
+          activo: input.activo,
+          ajustes,
+          secretos,
+          actualizadoPor: user.id ?? null,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+  } catch {
+    return { ok: false, error: "No se pudo guardar la integración." };
+  }
+
+  invalidarConfig(clave);
+  revalidatePath("/je-admin/integraciones");
+  return { ok: true };
 }

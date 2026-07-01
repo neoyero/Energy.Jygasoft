@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { serverEnv } from "@/lib/env";
+import { getIntegracion } from "@/lib/config/service";
 
 /**
  * Meta Conversions API (server-side). Se deduplica con el Pixel del cliente
@@ -57,8 +57,10 @@ export interface CapiResult {
 }
 
 export async function sendCapiEvent(args: CapiEventArgs): Promise<CapiResult> {
-  const pixelId = serverEnv.META_PIXEL_ID;
-  const token = serverEnv.META_CAPI_TOKEN;
+  const meta = await getIntegracion("meta");
+  const pixelId = meta.ajuste("pixel_id");
+  const token = meta.secreto("capi_token");
+  const testEventCode = meta.ajuste("test_event_code");
   if (!pixelId || !token) return { ok: false, skipped: true };
 
   const userData = buildUserData(args);
@@ -78,8 +80,8 @@ export async function sendCapiEvent(args: CapiEventArgs): Promise<CapiResult> {
 
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${pixelId}/events?access_token=${encodeURIComponent(token)}`;
   const body: Record<string, unknown> = { data: [event] };
-  if (serverEnv.META_CAPI_TEST_EVENT_CODE) {
-    body.test_event_code = serverEnv.META_CAPI_TEST_EVENT_CODE;
+  if (testEventCode) {
+    body.test_event_code = testEventCode;
   }
 
   try {

@@ -22,7 +22,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!can(user.rol, "marcas", "edit")) {
     return NextResponse.json({ ok: false, error: "Permiso denegado." }, { status: 403 });
   }
-  if (!sharePointConfigurado()) {
+  if (!(await sharePointConfigurado())) {
     return NextResponse.json({ ok: false, error: "Almacenamiento M365 no configurado." }, { status: 503 });
   }
 
