@@ -326,21 +326,10 @@ function OrganigramaAreas({
           {raices.map((a) => (
             <AreaOrgNodo key={a.id} nodo={a} />
           ))}
+          {/* Personas sin área asignada: su propio recuadro. */}
           {sinArea.length > 0 ? (
             <li>
-              <div className="org-node relative inline-flex w-48 flex-col items-center gap-0.5 rounded-xl border border-dashed border-border bg-muted/30 px-3 py-2.5 text-center shadow-sm">
-                <span className="inline-flex items-center gap-1 text-sm font-semibold text-foreground">
-                  <Building2 className="size-3.5" aria-hidden /> Sin área
-                </span>
-                <span className="text-[11px] text-muted-foreground">{sinArea.length} persona(s)</span>
-              </div>
-              <ul>
-                {sinArea.map((p) => (
-                  <li key={p.id}>
-                    <PersonaMini nodo={p} />
-                  </li>
-                ))}
-              </ul>
+              <AreaCaja nombre="Sin área" personas={sinArea} dashed />
             </li>
           ) : null}
         </ul>
@@ -350,26 +339,13 @@ function OrganigramaAreas({
 }
 
 function AreaOrgNodo({ nodo }: { nodo: AreaNodoArbol }) {
-  const tieneHijos = nodo.hijos.length > 0 || nodo.personas.length > 0
   return (
     <li>
-      <div className="org-node relative inline-flex w-48 flex-col items-center gap-0.5 rounded-xl border border-brand/30 bg-brand/5 px-3 py-2.5 text-center shadow-sm dark:border-primary/40 dark:bg-primary/10">
-        <span className="inline-flex items-center gap-1 text-sm font-semibold leading-tight text-brand dark:text-foreground">
-          <Building2 className="size-3.5 shrink-0" aria-hidden /> {nodo.nombre}
-        </span>
-        <span className="text-[11px] text-muted-foreground">
-          {nodo.personas.length} persona{nodo.personas.length === 1 ? "" : "s"}
-        </span>
-      </div>
-      {tieneHijos ? (
+      <AreaCaja nombre={nodo.nombre} personas={nodo.personas} />
+      {nodo.hijos.length > 0 ? (
         <ul>
           {nodo.hijos.map((h) => (
             <AreaOrgNodo key={h.id} nodo={h} />
-          ))}
-          {nodo.personas.map((p) => (
-            <li key={p.id}>
-              <PersonaMini nodo={p} />
-            </li>
           ))}
         </ul>
       ) : null}
@@ -377,15 +353,60 @@ function AreaOrgNodo({ nodo }: { nodo: AreaNodoArbol }) {
   )
 }
 
-/** Tarjeta de persona (compacta, sin arrastre) para el árbol por áreas. */
-function PersonaMini({ nodo }: { nodo: OrganigramaNodo }) {
+/**
+ * Recuadro (tag) de un área con SUS PERSONAS dentro (lista compacta). Los nombres
+ * largos se truncan y muestran el nombre completo + cargo en un tooltip (title).
+ */
+function AreaCaja({
+  nombre,
+  personas,
+  dashed = false,
+}: {
+  nombre: string
+  personas: OrganigramaNodo[]
+  dashed?: boolean
+}) {
   return (
-    <div className="org-node inline-flex w-44 flex-col items-center gap-1 rounded-xl border border-border bg-card px-3 py-2.5 text-center shadow-sm">
-      <span className="grid size-9 place-items-center rounded-full bg-brand/10 text-sm font-semibold text-brand dark:bg-muted dark:text-foreground">
-        {nodo.nombre.charAt(0).toUpperCase()}
-      </span>
-      <span className="line-clamp-2 text-sm font-medium leading-tight text-foreground">{nodo.nombre}</span>
-      <span className="text-xs text-muted-foreground">{nodo.cargo ?? labelFor(nodo.rol)}</span>
+    <div
+      className={cn(
+        "org-node inline-flex w-52 flex-col gap-1.5 rounded-xl border px-3 py-2.5 shadow-sm",
+        dashed
+          ? "border-dashed border-border bg-muted/30"
+          : "border-brand/30 bg-brand/5 dark:border-primary/40 dark:bg-primary/10",
+      )}
+    >
+      <div className="flex items-center justify-between gap-1">
+        <span
+          title={nombre}
+          className="inline-flex min-w-0 items-center gap-1 text-sm font-semibold leading-tight text-brand dark:text-foreground"
+        >
+          <Building2 className="size-3.5 shrink-0" aria-hidden />
+          <span className="truncate">{nombre}</span>
+        </span>
+        <span className="shrink-0 rounded-full bg-background/70 px-1.5 text-[10px] font-medium text-muted-foreground">
+          {personas.length}
+        </span>
+      </div>
+
+      {personas.length > 0 ? (
+        <ul className="flex flex-col gap-0.5">
+          {personas.map((p) => {
+            const cargo = p.cargo ?? labelFor(p.rol)
+            return (
+              <li
+                key={p.id}
+                title={cargo ? `${p.nombre} · ${cargo}` : p.nombre}
+                className="truncate rounded-md bg-card/80 px-2 py-1 text-left text-xs text-foreground"
+              >
+                <span className="font-medium">{p.nombre}</span>
+                {cargo ? <span className="text-muted-foreground"> · {cargo}</span> : null}
+              </li>
+            )
+          })}
+        </ul>
+      ) : (
+        <span className="text-[11px] italic text-muted-foreground">Sin personas</span>
+      )}
     </div>
   )
 }
