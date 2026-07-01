@@ -40,6 +40,7 @@ export type Modulo =
   | "organizacion"
   | "areas"
   | "cargos"
+  | "chatwoot"
   | "integraciones"
   | "usuarios";
 
@@ -93,6 +94,8 @@ const MATRIX: Record<Modulo, { view: Rol[]; edit: Rol[] }> = {
   organizacion: { view: [...ALL], edit: MANAGERS },
   areas: { view: [...ALL], edit: MANAGERS },
   cargos: { view: [...ALL], edit: MANAGERS },
+  // Chatwoot (administración de la instancia vía API): admin/gerente.
+  chatwoot: { view: MANAGERS, edit: MANAGERS },
   // Integraciones (tokens/keys de servicios): solo admin.
   integraciones: { view: ["admin"], edit: ["admin"] },
   usuarios: { view: ["admin"], edit: ["admin"] },
@@ -148,6 +151,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/je-admin/metricas", label: "Métricas", modulo: "metricas", grupo: "Finanzas" },
   { href: "/je-admin/campanas", label: "Campañas", modulo: "campanas", grupo: "Marketing" },
   { href: "/je-admin/organigrama", label: "Organigrama", modulo: "organizacion", grupo: "Organización" },
+  { href: "/je-admin/chatwoot", label: "Chatwoot", modulo: "chatwoot", grupo: "Sistema" },
   { href: "/je-admin/integraciones", label: "Integraciones", modulo: "integraciones", grupo: "Sistema" },
   { href: "/je-admin/usuarios", label: "Usuarios", modulo: "usuarios", grupo: "Sistema" },
 ];

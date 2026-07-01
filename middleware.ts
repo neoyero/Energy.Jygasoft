@@ -32,6 +32,7 @@ const SECTION_TO_MODULO: Record<string, Modulo> = {
   areas: "areas",
   cargos: "cargos",
   organigrama: "organizacion",
+  chatwoot: "chatwoot",
   integraciones: "integraciones",
   usuarios: "usuarios",
 };

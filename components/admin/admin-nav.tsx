@@ -21,6 +21,7 @@ import {
   Network,
   Building2,
   IdCard,
+  MessagesSquare,
   KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -44,6 +45,7 @@ const ICONS: Record<Modulo, React.ComponentType<{ className?: string }>> = {
   organizacion: Network,
   areas: Building2,
   cargos: IdCard,
+  chatwoot: MessagesSquare,
   integraciones: KeyRound,
   usuarios: UserCog,
 };
