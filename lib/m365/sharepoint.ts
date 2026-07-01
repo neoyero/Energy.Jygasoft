@@ -72,13 +72,13 @@ export async function uploadDocumentoSharePoint(params: {
     return { ok: false, error: "not_configured" };
   }
 
-  const root = safeSeg(d.root);
-  const carpeta = params.carpeta
-    .split("/")
-    .filter(Boolean)
-    .map(safeSeg)
-    .join("/");
-  const path = `${root}/${carpeta}/${safeSeg(params.fileName)}`;
+  // El root puede ser una ruta ANIDADA (p. ej. "JYGASOFT ENERGY/WebSite"): se
+  // trata segmento a segmento (no como un único nombre de carpeta) para no
+  // colapsar las barras. Igual que `carpeta`.
+  const segmentar = (s: string): string => s.split("/").filter(Boolean).map(safeSeg).join("/");
+  const root = segmentar(d.root);
+  const carpeta = segmentar(params.carpeta);
+  const path = [root, carpeta, safeSeg(params.fileName)].filter(Boolean).join("/");
   const size = params.bytes.length;
 
   try {
