@@ -21,6 +21,9 @@ import {
   getDocumentosPage,
   type DocumentosPage,
   type DocumentosFiltros,
+  getCampanasPage,
+  type CampanasPage,
+  type CampanasFiltros,
   getDescendientes,
   type AreasPage,
   type AreasFiltros,
@@ -5598,5 +5601,128 @@ export async function actualizarJerarquiaUsuario(
     return { ok: true };
   } catch {
     return { ok: false, error: "No se pudo actualizar la organización del usuario." };
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * CAMPAÑAS (marketing) — CRUD. Atribución de leads por leads.campana_id.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+const CAMPANAS_PATH = "/je-admin/campanas";
+
+/** numero opcional (>= 0); "" / null -> null. */
+const numeroOpcional = z
+  .union([z.number(), z.string()])
+  .nullish()
+  .transform((v, ctx) => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n) || n < 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Monto no válido." });
+      return z.NEVER;
+    }
+    return n;
+  });
+
+const campanaSchema = z.object({
+  nombre: z.string().trim().min(1, "El nombre es obligatorio.").max(160),
+  plataforma: z.enum(schema.campanaPlataforma.enumValues),
+  estado: z.enum(schema.campanaEstado.enumValues).default("borrador"),
+  segmento: optionalText(120),
+  zona: optionalText(120),
+  objetivo: optionalText(500),
+  presupuesto: numeroOpcional,
+  gasto: numeroOpcional,
+  moneda: z.string().trim().max(8).optional().transform((v) => (v ? v : "MXN")),
+  utmCampaign: optionalText(160),
+  fechaInicio: fechaOpcional,
+  fechaFin: fechaOpcional,
+});
+
+type CampanaInput = z.input<typeof campanaSchema>;
+
+/** Valores comunes de insert/update de campaña (numeric -> string; gasto -> jsonb). */
+function campanaValues(d: z.output<typeof campanaSchema>) {
+  return {
+    nombre: d.nombre,
+    plataforma: d.plataforma,
+    estado: d.estado,
+    segmento: txtOrNull(d.segmento),
+    zona: txtOrNull(d.zona),
+    objetivo: txtOrNull(d.objetivo),
+    presupuesto: d.presupuesto == null ? null : String(d.presupuesto),
+    moneda: d.moneda,
+    utmCampaign: txtOrNull(d.utmCampaign),
+    fechaInicio: d.fechaInicio,
+    fechaFin: d.fechaFin,
+    metricas: d.gasto == null ? {} : { gasto: d.gasto },
+  };
+}
+
+export async function fetchCampanas(input: {
+  filtros?: CampanasFiltros;
+  limit: number;
+  offset: number;
+}): Promise<CampanasPage> {
+  await assertPerm("campanas", "view");
+  const f = input.filtros ?? {};
+  const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
+  const offset = Math.max(0, Math.trunc(input.offset));
+  return getCampanasPage(
+    { estado: f.estado, plataforma: f.plataforma, busqueda: f.busqueda },
+    { limit, offset },
+  );
+}
+
+export async function crearCampana(
+  data: CampanaInput,
+): Promise<ActionResult & { id?: string }> {
+  await assertPerm("campanas", "edit");
+  const parsed = campanaSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  try {
+    const [row] = await db
+      .insert(schema.campanas)
+      .values(campanaValues(parsed.data))
+      .returning({ id: schema.campanas.id });
+    revalidatePath(CAMPANAS_PATH);
+    return { ok: true, id: row.id };
+  } catch {
+    return { ok: false, error: "No se pudo crear la campaña." };
+  }
+}
+
+export async function actualizarCampana(
+  id: string,
+  data: CampanaInput,
+): Promise<ActionResult> {
+  await assertPerm("campanas", "edit");
+  const parsed = campanaSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  try {
+    await db
+      .update(schema.campanas)
+      .set({ ...campanaValues(parsed.data), updatedAt: new Date().toISOString() })
+      .where(eq(schema.campanas.id, id));
+    revalidatePath(CAMPANAS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo actualizar la campaña." };
+  }
+}
+
+export async function eliminarCampana(id: string): Promise<ActionResult> {
+  await assertPerm("campanas", "edit");
+  try {
+    // leads.campana_id es ON DELETE SET NULL: los leads quedan sin campaña.
+    await db.delete(schema.campanas).where(eq(schema.campanas.id, id));
+    revalidatePath(CAMPANAS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo eliminar la campaña." };
   }
 }

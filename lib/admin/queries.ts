@@ -1180,6 +1180,109 @@ export async function getKpisPorArea(scope: DashboardScope): Promise<AreaKpiRow[
   }));
 }
 
+// ===================== CAMPAÑAS (marketing) =====================
+
+export interface CampanaRow {
+  id: string;
+  nombre: string;
+  plataforma: string;
+  estado: string;
+  segmento: string | null;
+  zona: string | null;
+  objetivo: string | null;
+  presupuesto: number | null;
+  gasto: number | null;
+  moneda: string;
+  utmCampaign: string | null;
+  fechaInicio: string | null;
+  fechaFin: string | null;
+  leads: number;
+  cpl: number | null;
+  createdAt: string;
+}
+
+export interface CampanasFiltros {
+  estado?: string;
+  plataforma?: string;
+  busqueda?: string;
+}
+
+export interface CampanasPage {
+  rows: CampanaRow[];
+  total: number;
+}
+
+/**
+ * Página de campañas de marketing con atribución de leads (count de
+ * leads.campana_id) y CPL = gasto/leads. El gasto sale de `metricas->>'gasto'`
+ * (si se registró) o, en su defecto, del presupuesto. No se acota por vendedor:
+ * marketing es global.
+ */
+export async function getCampanasPage(
+  filtros: CampanasFiltros,
+  opts: { limit: number; offset: number },
+): Promise<CampanasPage> {
+  const conds: SQL[] = [];
+  if (filtros.estado) conds.push(sql`c.estado::text = ${filtros.estado}`);
+  if (filtros.plataforma) conds.push(sql`c.plataforma::text = ${filtros.plataforma}`);
+  const q = filtros.busqueda?.trim();
+  if (q) conds.push(sql`c.nombre ILIKE ${"%" + q + "%"}`);
+  const where = conds.length ? sql`WHERE ${sql.join(conds, sql` AND `)}` : sql``;
+
+  const [{ total }] = asRows(
+    await db.execute(sql`SELECT count(*)::int AS total FROM campanas c ${where}`),
+  ).map((r) => ({ total: num(r.total) }));
+
+  const result = await db.execute(sql`
+    SELECT c.id::text AS id,
+           c.nombre,
+           c.plataforma::text AS plataforma,
+           c.estado::text AS estado,
+           c.segmento,
+           c.zona,
+           c.objetivo,
+           c.presupuesto::float8 AS presupuesto,
+           (c.metricas->>'gasto')::float8 AS gasto,
+           c.moneda,
+           c.utm_campaign AS utm_campaign,
+           c.fecha_inicio::text AS fecha_inicio,
+           c.fecha_fin::text AS fecha_fin,
+           (SELECT count(*)::int FROM leads l WHERE l.campana_id = c.id) AS leads,
+           c.created_at AS created_at
+    FROM campanas c
+    ${where}
+    ORDER BY c.created_at DESC
+    LIMIT ${opts.limit} OFFSET ${opts.offset}
+  `);
+
+  const rows: CampanaRow[] = asRows(result).map((r) => {
+    const presupuesto = r.presupuesto == null ? null : num(r.presupuesto);
+    const gasto = r.gasto == null ? presupuesto : num(r.gasto);
+    const leads = num(r.leads);
+    const cpl = gasto != null && leads > 0 ? Math.round((gasto / leads) * 100) / 100 : null;
+    return {
+      id: str(r.id),
+      nombre: str(r.nombre),
+      plataforma: str(r.plataforma),
+      estado: str(r.estado),
+      segmento: strOrNull(r.segmento),
+      zona: strOrNull(r.zona),
+      objetivo: strOrNull(r.objetivo),
+      presupuesto,
+      gasto: gasto,
+      moneda: str(r.moneda) || "MXN",
+      utmCampaign: strOrNull(r.utm_campaign),
+      fechaInicio: strOrNull(r.fecha_inicio),
+      fechaFin: strOrNull(r.fecha_fin),
+      leads,
+      cpl,
+      createdAt: str(r.created_at),
+    };
+  });
+
+  return { rows, total };
+}
+
 /** Nodo del organigrama (usuario con su jefe y área). */
 export interface OrganigramaNodo {
   id: string;
