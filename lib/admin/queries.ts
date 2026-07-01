@@ -1938,6 +1938,106 @@ async function getDocumentosDeEntidad(
   }));
 }
 
+// ===================== DOCUMENTOS (listado global) =====================
+
+/** Fila del listado global de documentos (con entidad y quién subió). */
+export interface DocumentoListRow {
+  id: string;
+  tipo: string;
+  nombre: string;
+  url: string;
+  entidadTipo: string | null;
+  entidadId: string | null;
+  entidadNombre: string | null;
+  subidoPorNombre: string | null;
+  createdAt: string;
+}
+
+export interface DocumentosFiltros {
+  tipo?: string;
+  entidadTipo?: string;
+  busqueda?: string;
+}
+
+export interface DocumentosPage {
+  rows: DocumentoListRow[];
+  total: number;
+  hasMore: boolean;
+}
+
+/**
+ * Página del listado global de documentos (transversal a todas las entidades).
+ * Respeta la visibilidad por subárbol: un rol acotado solo ve documentos cuya
+ * entidad dueña pertenece a su subárbol (por vendedor_id). Resuelve el nombre de
+ * la entidad y de quién subió el documento.
+ */
+export async function getDocumentosPage(
+  scope: DashboardScope,
+  filtros: DocumentosFiltros,
+  opts: { limit: number; offset: number },
+): Promise<DocumentosPage> {
+  const ambito = await idsEnAmbito(scope);
+  const lista = ambito ? sqlIdList(ambito) : null;
+  const conds: SQL[] = [];
+
+  if (lista) {
+    conds.push(sql`(
+      (d.entidad_tipo = 'lead'        AND EXISTS (SELECT 1 FROM leads x         WHERE x.id = d.entidad_id AND x.vendedor_id IN ${lista}))
+   OR (d.entidad_tipo = 'cliente'     AND EXISTS (SELECT 1 FROM clientes x      WHERE x.id = d.entidad_id AND x.vendedor_id IN ${lista}))
+   OR (d.entidad_tipo = 'oportunidad' AND EXISTS (SELECT 1 FROM oportunidades x WHERE x.id = d.entidad_id AND x.vendedor_id IN ${lista}))
+   OR (d.entidad_tipo = 'cotizacion'  AND EXISTS (SELECT 1 FROM cotizaciones x  WHERE x.id = d.entidad_id AND x.vendedor_id IN ${lista}))
+   OR (d.entidad_tipo = 'proyecto'    AND EXISTS (SELECT 1 FROM proyectos x     WHERE x.id = d.entidad_id AND x.vendedor_id IN ${lista}))
+    )`);
+  }
+  if (filtros.tipo) conds.push(sql`d.tipo::text = ${filtros.tipo}`);
+  if (filtros.entidadTipo) conds.push(sql`d.entidad_tipo::text = ${filtros.entidadTipo}`);
+  const q = filtros.busqueda?.trim();
+  if (q) conds.push(sql`d.nombre ILIKE ${"%" + q + "%"}`);
+
+  const where = conds.length ? sql`WHERE ${sql.join(conds, sql` AND `)}` : sql``;
+
+  const [{ total }] = asRows(
+    await db.execute(sql`SELECT count(*)::int AS total FROM documentos d ${where}`),
+  ).map((r) => ({ total: num(r.total) }));
+
+  const result = await db.execute(sql`
+    SELECT d.id::text AS id,
+           d.tipo::text AS tipo,
+           d.nombre,
+           d.url,
+           d.entidad_tipo::text AS entidad_tipo,
+           d.entidad_id::text AS entidad_id,
+           u.nombre AS subido_por_nombre,
+           CASE d.entidad_tipo
+             WHEN 'lead'        THEN (SELECT nombre FROM leads         WHERE id = d.entidad_id)
+             WHEN 'cliente'     THEN (SELECT nombre FROM clientes      WHERE id = d.entidad_id)
+             WHEN 'oportunidad' THEN (SELECT nombre FROM oportunidades WHERE id = d.entidad_id)
+             WHEN 'cotizacion'  THEN (SELECT folio  FROM cotizaciones  WHERE id = d.entidad_id)
+             WHEN 'proyecto'    THEN (SELECT folio  FROM proyectos     WHERE id = d.entidad_id)
+           END AS entidad_nombre,
+           d.created_at AS created_at
+    FROM documentos d
+    LEFT JOIN usuarios u ON u.id = d.subido_por
+    ${where}
+    ORDER BY d.created_at DESC
+    LIMIT ${opts.limit} OFFSET ${opts.offset}
+  `);
+
+  const rows: DocumentoListRow[] = asRows(result).map((row) => ({
+    id: str(row.id),
+    tipo: str(row.tipo),
+    nombre: str(row.nombre),
+    url: str(row.url),
+    entidadTipo: strOrNull(row.entidad_tipo),
+    entidadId: strOrNull(row.entidad_id),
+    entidadNombre: strOrNull(row.entidad_nombre),
+    subidoPorNombre: strOrNull(row.subido_por_nombre),
+    createdAt: str(row.created_at),
+  }));
+
+  return { rows, total, hasMore: opts.offset + rows.length < total };
+}
+
 async function getTimelineDeEntidad(
   entidadTipo: (typeof schema.entidadTipo.enumValues)[number],
   entidadId: string,

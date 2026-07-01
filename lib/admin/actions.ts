@@ -18,6 +18,9 @@ import {
   getDesviacionesPaquetes,
   getMarcasPage,
   getAreasPage,
+  getDocumentosPage,
+  type DocumentosPage,
+  type DocumentosFiltros,
   getDescendientes,
   type AreasPage,
   type AreasFiltros,
@@ -3740,6 +3743,25 @@ type RegistrarDocumentoInput = z.input<typeof registrarDocumentoSchema>;
  * archivo va por una ruta aparte; aquí solo se persiste el registro y se deja
  * traza. `subidoPor` = usuario actual.
  */
+/**
+ * Página del listado global de documentos con scope por rol (server-side).
+ * Roles acotados solo ven documentos de entidades de su subárbol.
+ */
+export async function fetchDocumentos(input: {
+  filtros?: DocumentosFiltros;
+  limit: number;
+  offset: number;
+}): Promise<DocumentosPage> {
+  const user = await assertPerm("documentos", "view");
+  const scope: DashboardScope = {
+    rol: (user.rol ?? "lectura") as Rol,
+    userId: user.id,
+  };
+  const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
+  const offset = Math.max(0, Math.trunc(input.offset));
+  return getDocumentosPage(scope, input.filtros ?? {}, { limit, offset });
+}
+
 export async function registrarDocumento(
   data: RegistrarDocumentoInput,
 ): Promise<ActionResult & { id?: string }> {
