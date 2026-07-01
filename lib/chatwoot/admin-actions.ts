@@ -4,7 +4,8 @@ import { z } from "zod";
 
 import { assertPerm } from "@/lib/admin/guard";
 import type { Accion } from "@/lib/admin/rbac";
-import type { CwResult, ChatwootAgent } from "@/lib/chatwoot/client";
+import { getIntegracion } from "@/lib/config/service";
+import { cwRequest, type CwResult, type ChatwootAgent } from "@/lib/chatwoot/client";
 import type {
   CwInbox,
   CwTeam,
@@ -12,6 +13,7 @@ import type {
   CwLabel,
   CwCustomAttribute,
   CwWebhook,
+  CwDiagnostico,
 } from "@/lib/chatwoot/types";
 import * as cw from "@/lib/chatwoot/admin";
 
@@ -35,6 +37,39 @@ async function autorizado(accion: Accion): Promise<boolean> {
 
 function errorZod(e: z.ZodError): { ok: false; error: string } {
   return { ok: false, error: e.issues[0]?.message ?? "Datos no válidos." };
+}
+
+/* ── Diagnóstico de conexión ──────────────────────────────────────────────── */
+
+/**
+ * Prueba la conexión con Chatwoot y devuelve datos de diagnóstico SIN exponer el
+ * token (solo si está presente y su longitud). Ayuda a distinguir un problema de
+ * config/descifrado (token ausente) de un token inválido (401 con token presente).
+ */
+export async function cwDiagnostico(): Promise<
+  { ok: true; data: CwDiagnostico } | { ok: false; error: string }
+> {
+  if (!(await autorizado("view"))) return NO_AUTORIZADO;
+  const cfg = await getIntegracion("chatwoot");
+  const rawUrl = cfg.ajuste("url") ?? "";
+  const url = rawUrl.trim().replace(/\/+$/, "").replace(/\/api\/v\d+$/, "");
+  const accountId = cfg.ajuste("account_id") ?? "";
+  const token = cfg.secreto("api_token") ?? "";
+  const baseUrl = `${url}/api/v1/accounts/${accountId}`;
+
+  const test = await cwRequest<unknown>("GET", "/agents");
+  return {
+    ok: true,
+    data: {
+      baseUrl,
+      accountId,
+      tokenPresente: token.length > 0,
+      tokenLongitud: token.length,
+      status: test.ok ? 200 : (test.status ?? null),
+      ok: test.ok,
+      mensaje: test.ok ? "Conexión correcta." : test.error,
+    },
+  };
 }
 
 /* ── Agentes ──────────────────────────────────────────────────────────────── */

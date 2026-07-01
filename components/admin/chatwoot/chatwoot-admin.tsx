@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState, useTransition } from "react"
-import { Plus, Pencil, Trash2, Users, RefreshCw } from "lucide-react"
+import { Plus, Pencil, Trash2, Users, RefreshCw, Stethoscope } from "lucide-react"
 
 import type {
   ChatwootAgent,
@@ -12,6 +12,7 @@ import type {
   CwCustomAttribute,
   CwWebhook,
 } from "@/lib/chatwoot/types"
+import type { CwDiagnostico } from "@/lib/chatwoot/types"
 import { WEBHOOK_EVENTOS, CUSTOM_ATTR_TIPOS, CUSTOM_ATTR_MODELOS } from "@/lib/chatwoot/types"
 import {
   cwListAgents,
@@ -43,6 +44,7 @@ import {
   cwCreateWebhook,
   cwUpdateWebhook,
   cwDeleteWebhook,
+  cwDiagnostico,
 } from "@/lib/chatwoot/admin-actions"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -114,9 +116,46 @@ const TABS: { id: TabId; label: string }[] = [
 
 export function ChatwootAdmin({ puedeEditar }: { puedeEditar: boolean }) {
   const [tab, setTab] = useState<TabId>("agentes")
+  const [diag, setDiag] = useState<CwDiagnostico | null>(null)
+  const [probando, startProbar] = useTransition()
+
+  function probar(): void {
+    startProbar(async () => {
+      const r = await cwDiagnostico()
+      setDiag(r.ok ? r.data : { baseUrl: "", accountId: "", tokenPresente: false, tokenLongitud: 0, status: null, ok: false, mensaje: r.error })
+    })
+  }
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">Instancia conectada vía Application API.</span>
+        <Button type="button" size="sm" variant="outline" onClick={probar} disabled={probando}>
+          <Stethoscope className="size-4" aria-hidden /> {probando ? "Probando…" : "Probar conexión"}
+        </Button>
+      </div>
+
+      {diag ? (
+        <div
+          className={cn(
+            "rounded-lg border px-3 py-2 text-xs",
+            diag.ok
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+              : "border-destructive/30 bg-destructive/10 text-destructive",
+          )}
+        >
+          <p className="font-medium">{diag.mensaje}</p>
+          <ul className="mt-1 space-y-0.5 font-mono">
+            <li>URL base: {diag.baseUrl || "—"}</li>
+            <li>Account ID: {diag.accountId || "—"}</li>
+            <li>
+              Token: {diag.tokenPresente ? `presente (${diag.tokenLongitud} caracteres)` : "AUSENTE / no se descifró"}
+            </li>
+            <li>HTTP status: {diag.status ?? "—"}</li>
+          </ul>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-1 border-b border-border">
         {TABS.map((t) => (
           <button

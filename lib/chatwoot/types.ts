@@ -72,6 +72,17 @@ export const WEBHOOK_EVENTOS: string[] = [
   "conversation_typing_off",
 ];
 
+/** Diagnóstico de conexión con Chatwoot (sin exponer el token). */
+export interface CwDiagnostico {
+  baseUrl: string;
+  accountId: string;
+  tokenPresente: boolean;
+  tokenLongitud: number;
+  status: number | null;
+  ok: boolean;
+  mensaje: string;
+}
+
 /** Tipos de dato de un atributo personalizado. */
 export const CUSTOM_ATTR_TIPOS: string[] = ["text", "number", "link", "date", "list", "checkbox"];
 
