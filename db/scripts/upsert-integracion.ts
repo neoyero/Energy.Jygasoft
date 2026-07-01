@@ -43,11 +43,13 @@ async function main(): Promise<void> {
   const c = new Client({ connectionString: env.DATABASE_URL });
   await c.connect();
   try {
+    // Al actualizar una integración existente SOLO se fusionan los secretos
+    // (no se tocan los ajustes ya personalizados desde el panel). Los ajustes de
+    // env solo aplican al crear la fila por primera vez.
     await c.query(
       `INSERT INTO integraciones (clave, nombre, descripcion, activo, ajustes, secretos)
        VALUES ($1, $2, $3, true, $4::jsonb, $5::jsonb)
        ON CONFLICT (clave) DO UPDATE SET
-         ajustes  = integraciones.ajustes  || EXCLUDED.ajustes,
          secretos = integraciones.secretos || EXCLUDED.secretos,
          updated_at = now()`,
       [clave, def.nombre, def.descripcion, JSON.stringify(ajustes), JSON.stringify(secretos)],
