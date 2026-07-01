@@ -1,9 +1,18 @@
 "use client"
 
-import { useMemo, useState } from "react"
-import { ChevronDown, ChevronRight, Building2, Network, List } from "lucide-react"
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  useTransition,
+  type DragEvent,
+} from "react"
+import { useRouter } from "next/navigation"
+import { ChevronDown, ChevronRight, Building2, Network, List, GripVertical } from "lucide-react"
 
 import type { OrganigramaNodo } from "@/lib/admin/queries"
+import { actualizarJerarquiaUsuario } from "@/lib/admin/actions"
 import { StatusBadge, labelFor } from "@/components/admin/ui/status-badge"
 import { EmptyState } from "@/components/admin/ui/empty-state"
 import { cn } from "@/lib/utils"
@@ -14,8 +23,20 @@ interface NodoArbol extends OrganigramaNodo {
 
 type Vista = "arbol" | "lista"
 
+/** Contexto de arrastre del organigrama (evita prop-drilling en el árbol). */
+interface OrgDnd {
+  puedeEditar: boolean
+  overId: string | null
+  pending: boolean
+  setOver: (id: string | null) => void
+  soltar: (draggedId: string, targetId: string | null) => void
+}
+const OrgDndCtx = createContext<OrgDnd | null>(null)
+
 export interface OrganigramaProps {
   nodos: ReadonlyArray<OrganigramaNodo>
+  /** RBAC organizacion:edit -> habilita reasignar jefe arrastrando. */
+  puedeEditar?: boolean
 }
 
 /**
@@ -24,9 +45,41 @@ export interface OrganigramaProps {
  * arman desde la línea de reporte (reportaA); raíces = nodos sin jefe (o cuyo
  * jefe no está en el conjunto, p. ej. inactivo).
  */
-export function Organigrama({ nodos }: OrganigramaProps) {
+export function Organigrama({ nodos, puedeEditar = false }: OrganigramaProps) {
+  const router = useRouter()
   const [vista, setVista] = useState<Vista>("arbol")
+  const [overId, setOverId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [pending, startTransition] = useTransition()
+
   const { raices, total } = useMemo(() => construirArbol(nodos), [nodos])
+  // Mapa id->nodo para conservar cargo/área al reasignar el jefe.
+  const mapa = useMemo(() => {
+    const m = new Map<string, OrganigramaNodo>()
+    for (const n of nodos) m.set(n.id, n)
+    return m
+  }, [nodos])
+
+  /** Reasigna el jefe (reportaA) del nodo arrastrado; null = hacerlo raíz. */
+  function soltar(draggedId: string, targetId: string | null): void {
+    setOverId(null)
+    if (!puedeEditar || draggedId === targetId) return
+    const n = mapa.get(draggedId)
+    if (!n) return
+    if (n.reportaA === targetId) return // sin cambios
+    setError(null)
+    startTransition(async () => {
+      const res = await actualizarJerarquiaUsuario(draggedId, {
+        reportaA: targetId,
+        cargo: n.cargo,
+        areaId: n.areaId,
+      })
+      if (!res.ok) setError(res.error)
+      else router.refresh()
+    })
+  }
+
+  const dnd: OrgDnd = { puedeEditar, overId, pending, setOver: setOverId, soltar }
 
   if (total === 0) {
     return (
@@ -38,31 +91,76 @@ export function Organigrama({ nodos }: OrganigramaProps) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex justify-end">
-        <div
-          className="inline-flex rounded-lg border border-stone-200 p-0.5 dark:border-border"
-          role="group"
-          aria-label="Cambiar vista del organigrama"
-        >
-          <BotonVista activo={vista === "arbol"} onClick={() => setVista("arbol")} label="Árbol">
-            <Network className="size-4" aria-hidden /> Árbol
-          </BotonVista>
-          <BotonVista activo={vista === "lista"} onClick={() => setVista("lista")} label="Lista">
-            <List className="size-4" aria-hidden /> Lista
-          </BotonVista>
+    <OrgDndCtx.Provider value={dnd}>
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-3">
+          {puedeEditar ? (
+            <p className="text-xs text-muted-foreground">
+              Arrastra una tarjeta sobre otra para reasignar su jefe
+              {pending ? " · guardando…" : ""}.
+            </p>
+          ) : (
+            <span />
+          )}
+          <div
+            className="inline-flex rounded-lg border border-stone-200 p-0.5 dark:border-border"
+            role="group"
+            aria-label="Cambiar vista del organigrama"
+          >
+            <BotonVista activo={vista === "arbol"} onClick={() => setVista("arbol")} label="Árbol">
+              <Network className="size-4" aria-hidden /> Árbol
+            </BotonVista>
+            <BotonVista activo={vista === "lista"} onClick={() => setVista("lista")} label="Lista">
+              <List className="size-4" aria-hidden /> Lista
+            </BotonVista>
+          </div>
         </div>
-      </div>
 
-      {vista === "arbol" ? (
-        <OrganigramaArbol raices={raices} />
-      ) : (
-        <div className="flex flex-col gap-2">
-          {raices.map((n) => (
-            <NodoLista key={n.id} nodo={n} nivel={0} />
-          ))}
-        </div>
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+        {/* Zona para soltar y convertir en raíz (quitar jefe). */}
+        {puedeEditar ? <ZonaRaiz /> : null}
+
+        {vista === "arbol" ? (
+          <OrganigramaArbol raices={raices} />
+        ) : (
+          <div className="flex flex-col gap-2">
+            {raices.map((n) => (
+              <NodoLista key={n.id} nodo={n} nivel={0} />
+            ))}
+          </div>
+        )}
+      </div>
+    </OrgDndCtx.Provider>
+  )
+}
+
+/** Zona de drop para quitar el jefe (dejar el nodo como raíz del organigrama). */
+function ZonaRaiz() {
+  const dnd = useContext(OrgDndCtx)
+  const [over, setOver] = useState(false)
+  if (!dnd) return null
+  return (
+    <div
+      onDragOver={(e) => {
+        e.preventDefault()
+        setOver(true)
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setOver(false)
+        const id = e.dataTransfer.getData("text/plain")
+        if (id) dnd.soltar(id, null)
+      }}
+      className={cn(
+        "rounded-lg border border-dashed px-3 py-2 text-center text-xs transition-colors",
+        over
+          ? "border-brand bg-brand/5 text-brand dark:border-primary"
+          : "border-border text-muted-foreground",
       )}
+    >
+      Soltar aquí para quitar el jefe (dejar como raíz)
     </div>
   )
 }
@@ -87,9 +185,53 @@ function OrganigramaArbol({ raices }: { raices: NodoArbol[] }) {
 
 function ArbolNodo({ nodo }: { nodo: NodoArbol }) {
   const tieneHijos = nodo.hijos.length > 0
+  const dnd = useContext(OrgDndCtx)
+  const editable = dnd?.puedeEditar ?? false
+  const isOver = dnd?.overId === nodo.id
+
+  function onDragStart(e: DragEvent<HTMLDivElement>): void {
+    e.dataTransfer.setData("text/plain", nodo.id)
+    e.dataTransfer.effectAllowed = "move"
+  }
+  function onDrop(e: DragEvent<HTMLDivElement>): void {
+    e.preventDefault()
+    const id = e.dataTransfer.getData("text/plain")
+    if (id) dnd?.soltar(id, nodo.id)
+  }
+
   return (
     <li>
-      <div className="org-node inline-flex w-44 flex-col items-center gap-1 rounded-xl border border-border bg-card px-3 py-2.5 text-center shadow-sm">
+      <div
+        draggable={editable}
+        onDragStart={editable ? onDragStart : undefined}
+        onDragOver={
+          editable
+            ? (e) => {
+                e.preventDefault()
+                dnd?.setOver(nodo.id)
+              }
+            : undefined
+        }
+        onDragLeave={
+          editable
+            ? (e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) dnd?.setOver(null)
+              }
+            : undefined
+        }
+        onDrop={editable ? onDrop : undefined}
+        className={cn(
+          "org-node relative inline-flex w-44 flex-col items-center gap-1 rounded-xl border bg-card px-3 py-2.5 text-center shadow-sm transition-colors",
+          editable && "cursor-grab active:cursor-grabbing",
+          isOver ? "border-brand ring-2 ring-brand/40 dark:border-primary" : "border-border",
+        )}
+      >
+        {editable ? (
+          <GripVertical
+            className="absolute right-1 top-1 size-3.5 text-stone-300 dark:text-muted-foreground"
+            aria-hidden
+          />
+        ) : null}
         <span className="grid size-9 place-items-center rounded-full bg-brand/10 text-sm font-semibold text-brand dark:bg-muted dark:text-foreground">
           {nodo.nombre.charAt(0).toUpperCase()}
         </span>

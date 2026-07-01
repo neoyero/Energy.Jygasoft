@@ -4,12 +4,14 @@ import { requirePerm } from "@/lib/admin/guard";
 import { type Rol } from "@/lib/admin/rbac";
 import {
   getMetricasData,
+  getKpisPorArea,
   getVendedores,
   acotarFiltroVendedor,
   type DashboardScope,
 } from "@/lib/admin/queries";
 import { PageHeader } from "@/components/admin/ui/page-header";
 import { MetricasView } from "@/components/admin/metricas/metricas-view";
+import { KpisPorArea } from "@/components/admin/metricas/kpis-por-area";
 
 export const dynamic = "force-dynamic";
 
@@ -32,9 +34,10 @@ export default async function MetricasPage({
     vendedorId: sp.vendedor ?? null,
   };
 
-  const [data, vendedoresAll] = await Promise.all([
+  const [data, vendedoresAll, kpisPorArea] = await Promise.all([
     getMetricasData(scope, filtros),
     getVendedores(),
+    getKpisPorArea(scope),
   ]);
   const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll);
 
@@ -56,6 +59,8 @@ export default async function MetricasPage({
           vendedor: sp.vendedor ?? "",
         }}
       />
+
+      <KpisPorArea rows={kpisPorArea} />
     </div>
   );
 }

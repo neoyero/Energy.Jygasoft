@@ -1112,6 +1112,67 @@ export async function getAreasActivas(): Promise<{ id: string; nombre: string }[
     .orderBy(asc(schema.areas.nombre));
 }
 
+/** KPIs comerciales agregados por área (Fase 4). */
+export interface AreaKpiRow {
+  id: string;
+  nombre: string;
+  miembros: number;
+  leads: number;
+  oportunidadesAbiertas: number;
+  montoPonderado: number;
+  clientes: number;
+  proyectos: number;
+}
+
+/**
+ * KPIs por área (departamento): agrega leads/oportunidades/clientes/proyectos
+ * por el área del vendedor dueño de cada registro. Respeta la visibilidad por
+ * subárbol (idsEnAmbito): admin ve todas las áreas con todo; un rol acotado solo
+ * ve los registros de su subárbol agrupados por área. Áreas activas.
+ */
+export async function getKpisPorArea(scope: DashboardScope): Promise<AreaKpiRow[]> {
+  const ambito = await idsEnAmbito(scope);
+  const lista = ambito ? sqlIdList(ambito) : null;
+  const fUser = lista ? sql`AND u.id IN ${lista}` : sql``;
+  const fLead = lista ? sql`AND l.vendedor_id IN ${lista}` : sql``;
+  const fOport = lista ? sql`AND o.vendedor_id IN ${lista}` : sql``;
+  const fCli = lista ? sql`AND c.vendedor_id IN ${lista}` : sql``;
+  const fProy = lista ? sql`AND p.vendedor_id IN ${lista}` : sql``;
+
+  const result = await db.execute(sql`
+    SELECT
+      ar.id::text AS id,
+      ar.nombre AS nombre,
+      (SELECT count(*)::int FROM usuarios u
+         WHERE u.area_id = ar.id AND u.activo ${fUser}) AS miembros,
+      (SELECT count(*)::int FROM leads l JOIN usuarios u ON u.id = l.vendedor_id
+         WHERE u.area_id = ar.id ${fLead}) AS leads,
+      (SELECT count(*)::int FROM oportunidades o JOIN usuarios u ON u.id = o.vendedor_id
+         WHERE u.area_id = ar.id AND o.etapa NOT IN ('ganada','perdida') ${fOport}) AS oport_abiertas,
+      (SELECT coalesce(sum(o.monto_estimado * o.probabilidad / 100.0), 0)::float8
+         FROM oportunidades o JOIN usuarios u ON u.id = o.vendedor_id
+         WHERE u.area_id = ar.id AND o.etapa NOT IN ('ganada','perdida') ${fOport}) AS monto_ponderado,
+      (SELECT count(*)::int FROM clientes c JOIN usuarios u ON u.id = c.vendedor_id
+         WHERE u.area_id = ar.id ${fCli}) AS clientes,
+      (SELECT count(*)::int FROM proyectos p JOIN usuarios u ON u.id = p.vendedor_id
+         WHERE u.area_id = ar.id ${fProy}) AS proyectos
+    FROM areas ar
+    WHERE ar.activa
+    ORDER BY ar.nombre
+  `);
+
+  return asRows(result).map((r) => ({
+    id: str(r.id),
+    nombre: str(r.nombre),
+    miembros: num(r.miembros),
+    leads: num(r.leads),
+    oportunidadesAbiertas: num(r.oport_abiertas),
+    montoPonderado: num(r.monto_ponderado),
+    clientes: num(r.clientes),
+    proyectos: num(r.proyectos),
+  }));
+}
+
 /** Nodo del organigrama (usuario con su jefe y área). */
 export interface OrganigramaNodo {
   id: string;
