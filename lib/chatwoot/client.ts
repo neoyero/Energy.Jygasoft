@@ -54,7 +54,12 @@ export async function cwRequest<T>(method: Metodo, path: string, body?: unknown)
   const cfg = await getIntegracion("chatwoot");
   if (!cfg.configurada()) return { ok: false, error: "Chatwoot no está configurado." };
 
-  const url = (cfg.ajuste("url") ?? "").replace(/\/+$/, "");
+  // Normaliza la URL configurada: admite el host (https://chat.jygasoft.com) o el
+  // host con sufijo /api/v1 (lo quitamos para no duplicarlo). Sin barra final.
+  const url = (cfg.ajuste("url") ?? "")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api\/v\d+$/, "");
   const base = `${url}/api/v1/accounts/${cfg.ajuste("account_id")}`;
   const token = cfg.secreto("api_token") as string;
 
