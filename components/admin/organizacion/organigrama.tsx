@@ -116,8 +116,8 @@ export function Organigrama({ nodos, areas = [], puedeEditar = false }: Organigr
   return (
     <OrgDndCtx.Provider value={dnd}>
       <div className="flex flex-col gap-4">
-        <div className="flex items-center justify-between gap-3">
-          {puedeEditar ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {puedeEditar && !porArea ? (
             <p className="text-xs text-muted-foreground">
               Arrastra una tarjeta sobre otra para reasignar su jefe
               {pending ? " · guardando…" : ""}.
@@ -125,7 +125,7 @@ export function Organigrama({ nodos, areas = [], puedeEditar = false }: Organigr
           ) : (
             <span />
           )}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Toggle Área/Persona: SOLO en la vista árbol. */}
             {vista === "arbol" ? (
               <div

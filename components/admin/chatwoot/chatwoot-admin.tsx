@@ -128,7 +128,7 @@ export function ChatwootAdmin({ puedeEditar }: { puedeEditar: boolean }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">Instancia conectada vía Application API.</span>
         <Button type="button" size="sm" variant="outline" onClick={probar} disabled={probando}>
           <Stethoscope className="size-4" aria-hidden /> {probando ? "Probando…" : "Probar conexión"}
