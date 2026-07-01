@@ -72,6 +72,107 @@ export const WEBHOOK_EVENTOS: string[] = [
   "conversation_typing_off",
 ];
 
+/* ── Fase 2: Contactos, Conversaciones, Automatizaciones ──────────────────── */
+
+export interface CwContact {
+  id: number
+  name?: string | null
+  email?: string | null
+  phone_number?: string | null
+  identifier?: string | null
+}
+
+export interface CwPagina<T> {
+  items: T[]
+  total: number
+  page: number
+}
+
+/** Estados de una conversación. */
+export const CONVERSACION_ESTADOS = ["open", "pending", "snoozed", "resolved"] as const
+export type ConversacionEstado = (typeof CONVERSACION_ESTADOS)[number]
+
+export const ESTADO_LABEL: Record<string, string> = {
+  open: "Abierta",
+  pending: "Pendiente",
+  snoozed: "Pospuesta",
+  resolved: "Resuelta",
+}
+
+export interface CwConversation {
+  id: number
+  status: string
+  inbox_id?: number
+  created_at?: number
+  contactoNombre?: string | null
+  contactoEmail?: string | null
+  contactoTelefono?: string | null
+  asignadoId?: number | null
+  asignadoNombre?: string | null
+  ultimoMensaje?: string | null
+}
+
+export interface CwMessage {
+  id: number
+  content: string | null
+  /** 0=incoming, 1=outgoing, 2=activity, 3=template. */
+  message_type: number
+  private?: boolean
+  created_at?: number
+  senderNombre?: string | null
+}
+
+export interface CwAutomationCondition {
+  attribute_key: string
+  filter_operator: string
+  values: Array<string | number>
+  query_operator?: "and" | "or" | null
+  custom_attribute_type?: string
+}
+export interface CwAutomationAction {
+  action_name: string
+  action_params: Array<string | number>
+}
+export interface CwAutomationRule {
+  id: number
+  name: string
+  description?: string | null
+  event_name: string
+  active: boolean
+  conditions: CwAutomationCondition[]
+  actions: CwAutomationAction[]
+}
+
+/** Eventos que disparan una automatización. */
+export const AUTOMATION_EVENTOS: { value: string; label: string }[] = [
+  { value: "conversation_created", label: "Conversación creada" },
+  { value: "conversation_updated", label: "Conversación actualizada" },
+  { value: "message_created", label: "Mensaje creado" },
+  { value: "conversation_opened", label: "Conversación abierta" },
+]
+
+/** Operadores de condición más comunes. */
+export const AUTOMATION_OPERADORES: string[] = [
+  "equal_to",
+  "not_equal_to",
+  "contains",
+  "does_not_contain",
+  "is_present",
+  "is_not_present",
+  "starts_with",
+]
+
+/** Acciones más comunes (action_name). */
+export const AUTOMATION_ACCIONES: { value: string; label: string }[] = [
+  { value: "assign_agent", label: "Asignar a agente (id)" },
+  { value: "assign_team", label: "Asignar a equipo (id)" },
+  { value: "add_label", label: "Agregar etiqueta (título)" },
+  { value: "change_status", label: "Cambiar estado (open/resolved/…)" },
+  { value: "send_email_to_team", label: "Enviar correo al equipo (id)" },
+  { value: "mute_conversation", label: "Silenciar conversación" },
+  { value: "snooze_conversation", label: "Posponer conversación" },
+]
+
 /** Diagnóstico de conexión con Chatwoot (sin exponer el token). */
 export interface CwDiagnostico {
   baseUrl: string;

@@ -1,7 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useState, useTransition } from "react"
-import { Plus, Pencil, Trash2, Users, RefreshCw, Stethoscope } from "lucide-react"
+import { useEffect, useState, useTransition } from "react"
+import { Pencil, Trash2, Users, Stethoscope } from "lucide-react"
 
 import type {
   ChatwootAgent,
@@ -52,70 +52,47 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Modal } from "@/components/admin/ui/modal"
 import { DataTable, type DataTableColumn, type DataTableRowAction } from "@/components/admin/ui/data-table"
-
-/* ── Resultado de acción (inferido de las server actions) ─────────────────── */
-type Res<T> = { ok: true; data: T } | { ok: false; error: string }
-
-const SELECT_CLASS =
-  "h-9 w-full rounded-md border border-border bg-background px-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50"
-
-/** Carga un recurso de Chatwoot con estados de carga/error y recarga manual. */
-function useRecurso<T>(cargar: () => Promise<Res<T>>) {
-  const [data, setData] = useState<T | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [token, setToken] = useState(0)
-  const recargar = useCallback(() => setToken((t) => t + 1), [])
-
-  useEffect(() => {
-    let stale = false
-    setLoading(true)
-    setError(null)
-    cargar()
-      .then((r) => {
-        if (stale) return
-        if (r.ok) setData(r.data)
-        else setError(r.error)
-        setLoading(false)
-      })
-      .catch(() => {
-        if (stale) return
-        setError("Error inesperado al consultar Chatwoot.")
-        setLoading(false)
-      })
-    return () => {
-      stale = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token])
-
-  return { data, loading, error, recargar }
-}
-
-function AvisoError({ error }: { error: string }) {
-  return (
-    <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-      {error}
-    </div>
-  )
-}
+import {
+  type Res,
+  SELECT_CLASS,
+  useRecurso,
+  AvisoError,
+  BarraTab,
+  badge,
+} from "@/components/admin/chatwoot/chatwoot-ui"
+import { ContactosTab } from "@/components/admin/chatwoot/chatwoot-contactos"
+import { ConversacionesTab } from "@/components/admin/chatwoot/chatwoot-conversaciones"
+import { AutomatizacionesTab } from "@/components/admin/chatwoot/chatwoot-automatizaciones"
 
 /* ── Shell con pestañas ───────────────────────────────────────────────────── */
 
-type TabId = "agentes" | "inboxes" | "equipos" | "respuestas" | "etiquetas" | "atributos" | "webhooks"
+type TabId =
+  | "agentes"
+  | "inboxes"
+  | "equipos"
+  | "conversaciones"
+  | "contactos"
+  | "respuestas"
+  | "etiquetas"
+  | "atributos"
+  | "automatizaciones"
+  | "webhooks"
 
 const TABS: { id: TabId; label: string }[] = [
+  { id: "conversaciones", label: "Conversaciones" },
+  { id: "contactos", label: "Contactos" },
   { id: "agentes", label: "Agentes" },
   { id: "inboxes", label: "Inboxes" },
   { id: "equipos", label: "Equipos" },
   { id: "respuestas", label: "Respuestas" },
   { id: "etiquetas", label: "Etiquetas" },
   { id: "atributos", label: "Atributos" },
+  { id: "automatizaciones", label: "Automatizaciones" },
   { id: "webhooks", label: "Webhooks" },
 ]
 
 export function ChatwootAdmin({ puedeEditar }: { puedeEditar: boolean }) {
-  const [tab, setTab] = useState<TabId>("agentes")
+  const [tab, setTab] = useState<TabId>("conversaciones")
   const [diag, setDiag] = useState<CwDiagnostico | null>(null)
   const [probando, startProbar] = useTransition()
 
@@ -174,54 +151,17 @@ export function ChatwootAdmin({ puedeEditar }: { puedeEditar: boolean }) {
         ))}
       </div>
 
+      {tab === "conversaciones" ? <ConversacionesTab puedeEditar={puedeEditar} /> : null}
+      {tab === "contactos" ? <ContactosTab puedeEditar={puedeEditar} /> : null}
       {tab === "agentes" ? <AgentesTab puedeEditar={puedeEditar} /> : null}
       {tab === "inboxes" ? <InboxesTab puedeEditar={puedeEditar} /> : null}
       {tab === "equipos" ? <EquiposTab puedeEditar={puedeEditar} /> : null}
       {tab === "respuestas" ? <RespuestasTab puedeEditar={puedeEditar} /> : null}
       {tab === "etiquetas" ? <EtiquetasTab puedeEditar={puedeEditar} /> : null}
       {tab === "atributos" ? <AtributosTab puedeEditar={puedeEditar} /> : null}
+      {tab === "automatizaciones" ? <AutomatizacionesTab puedeEditar={puedeEditar} /> : null}
       {tab === "webhooks" ? <WebhooksTab puedeEditar={puedeEditar} /> : null}
     </div>
-  )
-}
-
-/** Barra superior de una pestaña: botón crear + recargar. */
-function BarraTab({
-  onNuevo,
-  onRecargar,
-  puedeEditar,
-  etiquetaNuevo,
-}: {
-  onNuevo?: () => void
-  onRecargar: () => void
-  puedeEditar: boolean
-  etiquetaNuevo?: string
-}) {
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <Button type="button" size="sm" variant="ghost" onClick={onRecargar}>
-        <RefreshCw className="size-4" aria-hidden /> Recargar
-      </Button>
-      {puedeEditar && onNuevo ? (
-        <Button type="button" size="sm" onClick={onNuevo}>
-          <Plus className="size-4" aria-hidden /> {etiquetaNuevo ?? "Nuevo"}
-        </Button>
-      ) : null}
-    </div>
-  )
-}
-
-function badge(texto: string, tono: "green" | "gray" | "amber" = "gray") {
-  const clase =
-    tono === "green"
-      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
-      : tono === "amber"
-        ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
-        : "bg-stone-100 text-stone-600 dark:bg-muted dark:text-muted-foreground"
-  return (
-    <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium", clase)}>
-      {texto}
-    </span>
   )
 }
 

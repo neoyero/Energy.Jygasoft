@@ -14,6 +14,11 @@ import type {
   CwCustomAttribute,
   CwWebhook,
   CwDiagnostico,
+  CwContact,
+  CwPagina,
+  CwConversation,
+  CwMessage,
+  CwAutomationRule,
 } from "@/lib/chatwoot/types";
 import * as cw from "@/lib/chatwoot/admin";
 
@@ -282,4 +287,133 @@ export async function cwUpdateWebhook(id: number, input: unknown): Promise<CwRes
 export async function cwDeleteWebhook(id: number): Promise<CwResult<null>> {
   if (!(await autorizado("edit"))) return NO_AUTORIZADO;
   return cw.eliminarWebhookCw(id);
+}
+
+/* ── Contactos ────────────────────────────────────────────────────────────── */
+
+export async function cwListContacts(page = 1): Promise<CwResult<CwPagina<CwContact>>> {
+  if (!(await autorizado("view"))) return NO_AUTORIZADO;
+  return cw.listarContactosCw(page);
+}
+export async function cwSearchContacts(q: string, page = 1): Promise<CwResult<CwPagina<CwContact>>> {
+  if (!(await autorizado("view"))) return NO_AUTORIZADO;
+  const term = (q ?? "").trim();
+  if (term === "") return cw.listarContactosCw(page);
+  return cw.buscarContactosCw(term, page);
+}
+const contactoSchema = z
+  .object({
+    name: z.string().trim().max(200).optional(),
+    email: z.string().trim().email("Correo no válido.").optional().or(z.literal("")),
+    phone_number: z.string().trim().max(40).optional(),
+    identifier: z.string().trim().max(120).optional(),
+  })
+  .refine((d) => (d.name && d.name.length > 0) || (d.email && d.email.length > 0) || (d.phone_number && d.phone_number.length > 0), {
+    message: "Indica al menos nombre, correo o teléfono.",
+  });
+export async function cwCreateContact(input: unknown): Promise<CwResult<unknown>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  const p = contactoSchema.safeParse(input);
+  if (!p.success) return errorZod(p.error);
+  return cw.crearContactoCw(p.data);
+}
+export async function cwUpdateContact(id: number, input: unknown): Promise<CwResult<unknown>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  const p = contactoSchema.safeParse(input);
+  if (!p.success) return errorZod(p.error);
+  return cw.actualizarContactoCw(id, p.data);
+}
+export async function cwDeleteContact(id: number): Promise<CwResult<null>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  return cw.eliminarContactoCw(id);
+}
+
+/* ── Conversaciones + mensajes ────────────────────────────────────────────── */
+
+export async function cwListConversations(input: {
+  status?: string;
+  page?: number;
+}): Promise<CwResult<CwConversation[]>> {
+  if (!(await autorizado("view"))) return NO_AUTORIZADO;
+  return cw.listarConversacionesCw(input ?? {});
+}
+export async function cwGetConversation(id: number): Promise<CwResult<CwConversation>> {
+  if (!(await autorizado("view"))) return NO_AUTORIZADO;
+  return cw.getConversacionCw(id);
+}
+export async function cwListMessages(id: number): Promise<CwResult<CwMessage[]>> {
+  if (!(await autorizado("view"))) return NO_AUTORIZADO;
+  return cw.listarMensajesCw(id);
+}
+const mensajeSchema = z.object({
+  content: z.string().trim().min(1, "Escribe un mensaje."),
+  private: z.boolean().optional(),
+});
+export async function cwSendMessage(convId: number, input: unknown): Promise<CwResult<unknown>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  const p = mensajeSchema.safeParse(input);
+  if (!p.success) return errorZod(p.error);
+  return cw.enviarMensajeCw(convId, p.data.content, p.data.private ?? false);
+}
+const estadoSchema = z.enum(["open", "resolved", "pending", "snoozed"]);
+export async function cwSetConversationStatus(convId: number, status: unknown): Promise<CwResult<unknown>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  const p = estadoSchema.safeParse(status);
+  if (!p.success) return errorZod(p.error);
+  return cw.cambiarEstadoConversacionCw(convId, p.data);
+}
+/** assigneeId = 0 libera (sin asignar). */
+export async function cwAssignConversation(convId: number, assigneeId: number): Promise<CwResult<unknown>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  const id = Number.isFinite(assigneeId) ? Math.trunc(assigneeId) : 0;
+  return cw.asignarConversacionCw(convId, { assignee_id: id });
+}
+export async function cwAssignConversationTeam(convId: number, teamId: number): Promise<CwResult<unknown>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  return cw.asignarConversacionCw(convId, { team_id: Math.trunc(teamId) });
+}
+
+/* ── Automatizaciones ─────────────────────────────────────────────────────── */
+
+export async function cwListAutomations(): Promise<CwResult<CwAutomationRule[]>> {
+  if (!(await autorizado("view"))) return NO_AUTORIZADO;
+  return cw.listarAutomationsCw();
+}
+const condicionSchema = z.object({
+  attribute_key: z.string().trim().min(1),
+  filter_operator: z.string().trim().min(1),
+  values: z.array(z.union([z.string(), z.number()])),
+  query_operator: z.enum(["and", "or"]).nullable().optional(),
+});
+const accionSchema = z.object({
+  action_name: z.string().trim().min(1),
+  action_params: z.array(z.union([z.string(), z.number()])),
+});
+const automationSchema = z.object({
+  name: z.string().trim().min(1, "Nombre obligatorio."),
+  description: z.string().trim().max(500).optional(),
+  event_name: z.string().trim().min(1, "Evento obligatorio."),
+  active: z.boolean().optional(),
+  conditions: z.array(condicionSchema).min(1, "Agrega al menos una condición."),
+  actions: z.array(accionSchema).min(1, "Agrega al menos una acción."),
+});
+export async function cwCreateAutomation(input: unknown): Promise<CwResult<CwAutomationRule>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  const p = automationSchema.safeParse(input);
+  if (!p.success) return errorZod(p.error);
+  return cw.crearAutomationCw(p.data);
+}
+export async function cwUpdateAutomation(id: number, input: unknown): Promise<CwResult<CwAutomationRule>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  const p = automationSchema.safeParse(input);
+  if (!p.success) return errorZod(p.error);
+  return cw.actualizarAutomationCw(id, p.data);
+}
+export async function cwToggleAutomation(id: number, active: boolean): Promise<CwResult<CwAutomationRule>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  return cw.actualizarAutomationCw(id, { active });
+}
+export async function cwDeleteAutomation(id: number): Promise<CwResult<null>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  return cw.eliminarAutomationCw(id);
 }
