@@ -63,3 +63,7 @@ scaffold-tmp/
 backups/
 Backup-SQL/
 energydb*.sql
+
+# Claude Code local settings (permisos por maquina)
+.claude/settings.json
+.claude/settings.local.json

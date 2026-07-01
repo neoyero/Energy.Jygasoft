@@ -1,10 +1,11 @@
 "use client"
 
-import { useEffect, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
+import { X } from "lucide-react"
 
 import { crearArea, actualizarArea } from "@/lib/admin/actions"
-import type { AreaRow } from "@/lib/admin/queries"
+import type { AreaLider } from "@/lib/admin/queries"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -12,17 +13,28 @@ import { Label } from "@/components/ui/label"
 const SELECT_CLASS =
   "h-9 w-full rounded-md border border-border bg-background px-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50"
 
+/** Usuario disponible para asignar como líder (incluye su cargo para mostrar). */
+export interface UsuarioOpcion {
+  id: string
+  nombre: string
+  cargo?: string | null
+}
+
 /** Datos mínimos que el formulario necesita para prefilar (fila o nodo de árbol). */
-export type AreaFormArea = Pick<
-  AreaRow,
-  "id" | "nombre" | "descripcion" | "liderId" | "padreId" | "activa"
->
+export interface AreaFormArea {
+  id: string
+  nombre: string
+  descripcion: string | null
+  padreId: string | null
+  activa: boolean
+  lideres: AreaLider[]
+}
 
 export interface AreaFormProps {
   modo: "crear" | "editar"
   area?: AreaFormArea
-  /** Usuarios para el selector de líder. */
-  usuarios: ReadonlyArray<{ id: string; nombre: string }>
+  /** Usuarios para el selector de líderes (con su cargo). */
+  usuarios: ReadonlyArray<UsuarioOpcion>
   /** Áreas para el selector de "área padre" (se excluye la propia al editar). */
   areas: ReadonlyArray<{ id: string; nombre: string }>
   onSuccess?: () => void
@@ -35,24 +47,35 @@ function nullable(v: string): string | null {
   return t === "" ? null : t
 }
 
-/** Alta/edición de un área: nombre, descripción, líder y estado. */
+/** Alta/edición de un área: nombre, descripción, área padre, líderes y estado. */
 export function AreaForm({ modo, area, usuarios, areas, onSuccess, onCancel, onSavingChange }: AreaFormProps) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [nombre, setNombre] = useState(area?.nombre ?? "")
   const [descripcion, setDescripcion] = useState(area?.descripcion ?? "")
-  const [liderId, setLiderId] = useState(area?.liderId ?? "")
   const [padreId, setPadreId] = useState(area?.padreId ?? "")
   const [activa, setActiva] = useState(area?.activa ?? true)
+  // Líderes en orden (el primero es el principal).
+  const [lideres, setLideres] = useState<string[]>(area?.lideres.map((l) => l.id) ?? [])
+  const [porAgregar, setPorAgregar] = useState("")
 
-  // No se puede elegir la propia área como padre (los descendientes los bloquea
-  // el servidor para no depender aquí del árbol completo).
   const areasPadre = areas.filter((a) => a.id !== area?.id)
+  const usuariosPorId = useMemo(() => new Map(usuarios.map((u) => [u.id, u])), [usuarios])
+  const disponibles = usuarios.filter((u) => !lideres.includes(u.id))
 
   useEffect(() => {
     onSavingChange?.(pending)
   }, [pending, onSavingChange])
+
+  function agregarLider(id: string): void {
+    if (!id || lideres.includes(id)) return
+    setLideres((prev) => [...prev, id])
+    setPorAgregar("")
+  }
+  function quitarLider(id: string): void {
+    setLideres((prev) => prev.filter((x) => x !== id))
+  }
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>): void {
     e.preventDefault()
@@ -60,8 +83,8 @@ export function AreaForm({ modo, area, usuarios, areas, onSuccess, onCancel, onS
     const payload = {
       nombre: nombre.trim(),
       descripcion: nullable(descripcion),
-      liderId: nullable(liderId),
       padreId: nullable(padreId),
+      lideres,
       activa,
     }
     startTransition(async () => {
@@ -125,22 +148,64 @@ export function AreaForm({ modo, area, usuarios, areas, onSuccess, onCancel, onS
         </p>
       </div>
 
+      {/* Líderes: varios por área; su rol es el cargo del usuario. */}
       <div className="space-y-1.5">
-        <Label htmlFor="area-lider">Líder del área</Label>
+        <Label htmlFor="area-lider">Líderes del área</Label>
         <select
           id="area-lider"
-          value={liderId}
-          onChange={(e) => setLiderId(e.target.value)}
-          disabled={pending}
+          value={porAgregar}
+          onChange={(e) => agregarLider(e.target.value)}
+          disabled={pending || disponibles.length === 0}
           className={SELECT_CLASS}
         >
-          <option value="">Sin líder</option>
-          {usuarios.map((u) => (
+          <option value="">
+            {disponibles.length === 0 ? "No hay más usuarios" : "Agregar líder…"}
+          </option>
+          {disponibles.map((u) => (
             <option key={u.id} value={u.id}>
               {u.nombre}
+              {u.cargo ? ` — ${u.cargo}` : ""}
             </option>
           ))}
         </select>
+
+        {lideres.length > 0 ? (
+          <ul className="mt-1 flex flex-col gap-1.5">
+            {lideres.map((id, i) => {
+              const u = usuariosPorId.get(id)
+              return (
+                <li
+                  key={id}
+                  className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-sm"
+                >
+                  <span className="min-w-0 truncate">
+                    <span className="font-medium text-foreground">{u?.nombre ?? "—"}</span>
+                    <span className="text-muted-foreground">
+                      {" · "}
+                      {u?.cargo ?? "sin cargo"}
+                      {i === 0 ? " (principal)" : ""}
+                    </span>
+                  </span>
+                  {!pending ? (
+                    <button
+                      type="button"
+                      onClick={() => quitarLider(id)}
+                      className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
+                      title="Quitar líder"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  ) : null}
+                </li>
+              )
+            })}
+          </ul>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            Sin líderes. Puedes asignar varios (p. ej. Director y Subdirectora); el rol de cada uno es su
+            cargo.
+          </p>
+        )}
       </div>
 
       <label className="flex items-center gap-2 text-sm text-foreground">

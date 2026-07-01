@@ -21,6 +21,8 @@ import { cn } from "@/lib/utils"
 export interface UsuariosViewProps {
   usuarios: ReadonlyArray<UsuarioAdminRow>
   areas: ReadonlyArray<{ id: string; nombre: string }>
+  /** Cargos activos del catálogo para el selector del formulario. */
+  cargos: ReadonlyArray<{ id: string; nombre: string }>
   /** RBAC usuarios:edit (solo admin). */
   puedeEditar: boolean
 }
@@ -36,7 +38,7 @@ function rolLabel(rol: string): string {
  * modal (UsuarioForm) y activar/desactivar por fila. El detalle se refresca vía
  * router.refresh() tras cada acción.
  */
-export function UsuariosView({ usuarios, areas, puedeEditar }: UsuariosViewProps) {
+export function UsuariosView({ usuarios, areas, cargos, puedeEditar }: UsuariosViewProps) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [busqueda, setBusqueda] = useState("")
@@ -242,6 +244,7 @@ export function UsuariosView({ usuarios, areas, puedeEditar }: UsuariosViewProps
             usuario={editando ?? undefined}
             usuarios={opciones}
             areas={areas}
+            cargos={cargos}
             onSuccess={cerrar}
             onCancel={cerrar}
             onSavingChange={setSaving}

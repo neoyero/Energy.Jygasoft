@@ -20,6 +20,8 @@ export interface UsuarioFormProps {
   usuarios: ReadonlyArray<{ id: string; nombre: string }>
   /** Áreas activas para el selector. */
   areas: ReadonlyArray<{ id: string; nombre: string }>
+  /** Cargos activos del catálogo para el selector. */
+  cargos: ReadonlyArray<{ id: string; nombre: string }>
   onSuccess?: () => void
   onCancel?: () => void
   onSavingChange?: (saving: boolean) => void
@@ -30,7 +32,7 @@ interface FormState {
   email: string
   rol: string
   telefono: string
-  cargo: string
+  cargoId: string
   reportaA: string
   areaId: string
 }
@@ -51,6 +53,7 @@ export function UsuarioForm({
   usuario,
   usuarios,
   areas,
+  cargos,
   onSuccess,
   onCancel,
   onSavingChange,
@@ -63,7 +66,7 @@ export function UsuarioForm({
     email: usuario?.email ?? "",
     rol: usuario?.rol ?? "vendedor",
     telefono: usuario?.telefono ?? "",
-    cargo: usuario?.cargo ?? "",
+    cargoId: usuario?.cargoId ?? "",
     reportaA: usuario?.reportaA ?? "",
     areaId: usuario?.areaId ?? "",
   })
@@ -83,7 +86,7 @@ export function UsuarioForm({
       nombre: form.nombre.trim(),
       rol: form.rol as Rol,
       telefono: nz(form.telefono),
-      cargo: nz(form.cargo),
+      cargoId: nz(form.cargoId),
       reportaA: nz(form.reportaA),
       areaId: nz(form.areaId),
     }
@@ -164,13 +167,20 @@ export function UsuarioForm({
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="space-y-1.5">
           <Label htmlFor="u-cargo">Cargo</Label>
-          <Input
+          <select
             id="u-cargo"
-            value={form.cargo}
-            onChange={(e) => set("cargo", e.target.value)}
+            value={form.cargoId}
+            onChange={(e) => set("cargoId", e.target.value)}
             disabled={pending}
-            placeholder="Ej. Gerente de Ventas"
-          />
+            className={SELECT_CLASS}
+          >
+            <option value="">Sin cargo</option>
+            {cargos.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nombre}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="u-jefe">Reporta a</Label>

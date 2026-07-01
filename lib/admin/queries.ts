@@ -92,6 +92,7 @@ export async function getUsuarios() {
       telefono: schema.usuarios.telefono,
       activo: schema.usuarios.activo,
       cargo: schema.usuarios.cargo,
+      cargoId: schema.usuarios.cargoId,
       reportaA: schema.usuarios.reportaA,
       jefeNombre: jefe.nombre,
       areaId: schema.usuarios.areaId,
@@ -1036,12 +1037,18 @@ export async function getUsuariosAsignables(
 
 // ===================== ORGANIZACIÓN (áreas + organigrama) =====================
 
+export interface AreaLider {
+  id: string;
+  nombre: string;
+  /** Cargo del usuario (catálogo) = "rol" del líder en el área. */
+  cargo: string | null;
+}
+
 export interface AreaRow {
   id: string;
   nombre: string;
   descripcion: string | null;
-  liderId: string | null;
-  liderNombre: string | null;
+  lideres: AreaLider[];
   padreId: string | null;
   padreNombre: string | null;
   activa: boolean;
@@ -1076,21 +1083,20 @@ export async function getAreasPage(
     .from(schema.areas)
     .where(where);
 
-  const lider = alias(schema.usuarios, "lider");
   const padre = alias(schema.areas, "padre");
   // Conteo de miembros por área (subconsulta correlacionada). `areas.id` se
   // referencia con sql.raw para que no se renderice sin calificar (ambigüedad).
   const miembros = sql<number>`(
     SELECT count(*)::int FROM usuarios m WHERE m.area_id = ${sql.raw("areas.id")}
   )`;
+  const lideres = sqlLideresArea();
 
   const rows = await db
     .select({
       id: schema.areas.id,
       nombre: schema.areas.nombre,
       descripcion: schema.areas.descripcion,
-      liderId: schema.areas.liderId,
-      liderNombre: lider.nombre,
+      lideres,
       padreId: schema.areas.padreId,
       padreNombre: padre.nombre,
       activa: schema.areas.activa,
@@ -1099,7 +1105,6 @@ export async function getAreasPage(
       updatedAt: schema.areas.updatedAt,
     })
     .from(schema.areas)
-    .leftJoin(lider, eq(schema.areas.liderId, lider.id))
     .leftJoin(padre, eq(schema.areas.padreId, padre.id))
     .where(where)
     .orderBy(asc(schema.areas.nombre))
@@ -1107,9 +1112,21 @@ export async function getAreasPage(
     .offset(opts.offset);
 
   return {
-    rows: rows.map((r) => ({ ...r, miembros: Number(r.miembros) })),
+    rows: rows.map((r) => ({ ...r, miembros: Number(r.miembros), lideres: r.lideres ?? [] })),
     total: Number(total),
   };
+}
+
+/** Subconsulta correlacionada: líderes de `areas.id` como JSON [{id,nombre,cargo}]. */
+function sqlLideresArea() {
+  return sql<AreaLider[]>`(
+    SELECT coalesce(
+      json_agg(json_build_object('id', u.id, 'nombre', u.nombre, 'cargo', u.cargo)
+               ORDER BY al.orden, u.nombre),
+      '[]'::json)
+    FROM area_lideres al JOIN usuarios u ON u.id = al.usuario_id
+    WHERE al.area_id = ${sql.raw("areas.id")}
+  )`;
 }
 
 /** Nodo del árbol de áreas (todas, sin paginar) para la vista jerárquica. */
@@ -1117,8 +1134,7 @@ export interface AreaArbolRow {
   id: string;
   nombre: string;
   descripcion: string | null;
-  liderId: string | null;
-  liderNombre: string | null;
+  lideres: AreaLider[];
   padreId: string | null;
   activa: boolean;
   miembros: number;
@@ -1129,25 +1145,23 @@ export interface AreaArbolRow {
  * áreas son pocas); el cliente arma el árbol a partir de `padreId`.
  */
 export async function getAreasArbol(): Promise<AreaArbolRow[]> {
-  const lider = alias(schema.usuarios, "lider");
   const miembros = sql<number>`(
     SELECT count(*)::int FROM usuarios m WHERE m.area_id = ${sql.raw("areas.id")}
   )`;
+  const lideres = sqlLideresArea();
   const rows = await db
     .select({
       id: schema.areas.id,
       nombre: schema.areas.nombre,
       descripcion: schema.areas.descripcion,
-      liderId: schema.areas.liderId,
-      liderNombre: lider.nombre,
+      lideres,
       padreId: schema.areas.padreId,
       activa: schema.areas.activa,
       miembros,
     })
     .from(schema.areas)
-    .leftJoin(lider, eq(schema.areas.liderId, lider.id))
     .orderBy(asc(schema.areas.nombre));
-  return rows.map((r) => ({ ...r, miembros: Number(r.miembros) }));
+  return rows.map((r) => ({ ...r, miembros: Number(r.miembros), lideres: r.lideres ?? [] }));
 }
 
 /** Áreas activas para selects (id + nombre). */
@@ -1157,6 +1171,73 @@ export async function getAreasActivas(): Promise<{ id: string; nombre: string }[
     .from(schema.areas)
     .where(eq(schema.areas.activa, true))
     .orderBy(asc(schema.areas.nombre));
+}
+
+/* ── Cargos (catálogo) ────────────────────────────────────────────────────── */
+
+export interface CargoRow {
+  id: string;
+  nombre: string;
+  activo: boolean;
+  orden: number;
+  miembros: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CargosFiltros {
+  busqueda?: string;
+  soloActivos?: boolean;
+}
+
+export interface CargosPage {
+  rows: CargoRow[];
+  total: number;
+}
+
+/** Página de cargos con conteo de usuarios que lo tienen. */
+export async function getCargosPage(
+  filtros: CargosFiltros,
+  opts: { limit: number; offset: number },
+): Promise<CargosPage> {
+  const conds: SQL[] = [];
+  if (filtros.soloActivos) conds.push(eq(schema.cargos.activo, true));
+  const q = filtros.busqueda?.trim();
+  if (q) conds.push(ilike(schema.cargos.nombre, `%${q}%`));
+  const where = conds.length ? and(...conds) : undefined;
+
+  const [{ total }] = await db.select({ total: count() }).from(schema.cargos).where(where);
+
+  const miembros = sql<number>`(
+    SELECT count(*)::int FROM usuarios m WHERE m.cargo_id = ${sql.raw("cargos.id")}
+  )`;
+
+  const rows = await db
+    .select({
+      id: schema.cargos.id,
+      nombre: schema.cargos.nombre,
+      activo: schema.cargos.activo,
+      orden: schema.cargos.orden,
+      miembros,
+      createdAt: schema.cargos.createdAt,
+      updatedAt: schema.cargos.updatedAt,
+    })
+    .from(schema.cargos)
+    .where(where)
+    .orderBy(asc(schema.cargos.orden), asc(schema.cargos.nombre))
+    .limit(opts.limit)
+    .offset(opts.offset);
+
+  return { rows: rows.map((r) => ({ ...r, miembros: Number(r.miembros) })), total: Number(total) };
+}
+
+/** Cargos activos para selects (id + nombre), ordenados. */
+export async function getCargosActivos(): Promise<{ id: string; nombre: string }[]> {
+  return db
+    .select({ id: schema.cargos.id, nombre: schema.cargos.nombre })
+    .from(schema.cargos)
+    .where(eq(schema.cargos.activo, true))
+    .orderBy(asc(schema.cargos.orden), asc(schema.cargos.nombre));
 }
 
 /** KPIs comerciales agregados por área (Fase 4). */

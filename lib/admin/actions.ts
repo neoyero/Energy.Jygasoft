@@ -20,6 +20,10 @@ import {
   getAreasPage,
   getAreasArbol,
   type AreaArbolRow,
+  getCargosPage,
+  getCargosActivos,
+  type CargosPage,
+  type CargosFiltros,
   getDocumentosPage,
   type DocumentosPage,
   type DocumentosFiltros,
@@ -353,10 +357,21 @@ const rolSchema = z.enum(schema.usuarioRol.enumValues);
 
 /** Campos de organigrama compartidos por alta/edición de usuario. */
 const usuarioOrgFields = {
-  cargo: z.string().trim().max(120).nullish().transform((v) => (v ? v : null)),
+  cargoId: z.string().uuid("Cargo no válido.").nullish().transform((v) => v ?? null),
   reportaA: z.string().uuid("Jefe no válido.").nullish().transform((v) => v ?? null),
   areaId: z.string().uuid("Área no válida.").nullish().transform((v) => v ?? null),
 } as const;
+
+/** Resuelve el nombre de un cargo del catálogo (para denormalizar en usuarios.cargo). */
+async function resolverCargoNombre(cargoId: string | null): Promise<string | null> {
+  if (!cargoId) return null;
+  const [c] = await db
+    .select({ nombre: schema.cargos.nombre })
+    .from(schema.cargos)
+    .where(eq(schema.cargos.id, cargoId))
+    .limit(1);
+  return c?.nombre ?? null;
+}
 
 const createUsuarioSchema = z.object({
   nombre: z.string().trim().min(2, "El nombre debe tener al menos 2 caracteres."),
@@ -405,13 +420,15 @@ export async function createUsuario(data: CreateUsuarioInput): Promise<ActionRes
   }
   const d = parsed.data;
 
+  const cargoNombre = await resolverCargoNombre(d.cargoId);
   try {
     await db.insert(schema.usuarios).values({
       nombre: d.nombre,
       email: d.email,
       rol: d.rol,
       telefono: d.telefono,
-      cargo: d.cargo,
+      cargo: cargoNombre,
+      cargoId: d.cargoId,
       reportaA: d.reportaA,
       areaId: d.areaId,
       activo: true,
@@ -456,6 +473,7 @@ export async function updateUsuario(
     }
   }
 
+  const cargoNombre = await resolverCargoNombre(d.cargoId);
   try {
     await db
       .update(schema.usuarios)
@@ -463,7 +481,8 @@ export async function updateUsuario(
         nombre: d.nombre,
         rol: d.rol,
         telefono: d.telefono,
-        cargo: d.cargo,
+        cargo: cargoNombre,
+        cargoId: d.cargoId,
         reportaA: d.reportaA,
         areaId: d.areaId,
         updatedAt: new Date().toISOString(),
@@ -5589,10 +5608,25 @@ const ORGANIGRAMA_PATH = "/je-admin/organigrama";
 const areaSchema = z.object({
   nombre: z.string().trim().min(1, "El nombre es obligatorio.").max(120),
   descripcion: z.string().trim().max(500).nullable().optional(),
-  liderId: z.string().uuid("Líder no válido.").nullable().optional().transform((v) => v ?? null),
+  // Varios líderes por área (orden = orden del array). El rol de cada líder es su
+  // cargo (del usuario). areas.lider_id se sincroniza con lideres[0].
+  lideres: z
+    .array(z.string().uuid("Líder no válido."))
+    .optional()
+    .transform((v) => (v ? [...new Set(v)] : [])),
   padreId: z.string().uuid("Área padre no válida.").nullable().optional().transform((v) => v ?? null),
   activa: z.boolean().optional(),
 });
+
+/** Reemplaza los líderes de un área (borra e inserta con su orden). */
+async function reemplazarLideresArea(areaId: string, lideres: string[]): Promise<void> {
+  await db.delete(schema.areaLideres).where(eq(schema.areaLideres.areaId, areaId));
+  if (lideres.length > 0) {
+    await db
+      .insert(schema.areaLideres)
+      .values(lideres.map((usuarioId, i) => ({ areaId, usuarioId, orden: i })));
+  }
+}
 
 /**
  * ¿`posiblePadre` es la propia área o una descendiente suya? Evita ciclos al
@@ -5650,11 +5684,12 @@ export async function crearArea(
         nombre: d.nombre,
         nombreNormalizado: normalizarNombre(d.nombre),
         descripcion: txtOrNull(d.descripcion),
-        liderId: d.liderId,
+        liderId: d.lideres[0] ?? null,
         padreId: d.padreId,
         activa: d.activa ?? true,
       })
       .returning({ id: schema.areas.id });
+    await reemplazarLideresArea(row.id, d.lideres);
     revalidatePath(AREAS_PATH);
     revalidatePath(ORGANIGRAMA_PATH);
     return { ok: true, id: row.id };
@@ -5684,12 +5719,13 @@ export async function actualizarArea(
         nombre: d.nombre,
         nombreNormalizado: normalizarNombre(d.nombre),
         descripcion: txtOrNull(d.descripcion),
-        liderId: d.liderId,
+        liderId: d.lideres[0] ?? null,
         padreId: d.padreId,
         activa: d.activa ?? true,
         updatedAt: new Date().toISOString(),
       })
       .where(eq(schema.areas.id, id));
+    await reemplazarLideresArea(id, d.lideres);
     revalidatePath(AREAS_PATH);
     revalidatePath(ORGANIGRAMA_PATH);
     return { ok: true };
@@ -5722,6 +5758,126 @@ export async function eliminarArea(id: string): Promise<ActionResult> {
     return { ok: true };
   } catch {
     return { ok: false, error: "No se pudo eliminar el área." };
+  }
+}
+
+/* ───────────────────────────── Cargos (catálogo) ───────────────────────────── */
+
+const CARGOS_PATH = "/je-admin/cargos";
+
+const cargoSchema = z.object({
+  nombre: z.string().trim().min(1, "El nombre es obligatorio.").max(120),
+  activo: z.boolean().optional(),
+  orden: z.coerce.number().int().min(0).max(9999).optional(),
+});
+
+function mensajeCargoConflicto(e: unknown): string {
+  const msg = e instanceof Error ? e.message : "";
+  if (msg.includes("ux_cargos_nombre_norm")) return "Ya existe un cargo con ese nombre.";
+  return "No se pudo guardar el cargo.";
+}
+
+export async function fetchCargos(input: {
+  filtros?: CargosFiltros;
+  limit: number;
+  offset: number;
+}): Promise<CargosPage> {
+  await assertPerm("cargos", "view");
+  const f = input.filtros ?? {};
+  const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
+  const offset = Math.max(0, Math.trunc(input.offset));
+  return getCargosPage({ busqueda: f.busqueda, soloActivos: f.soloActivos }, { limit, offset });
+}
+
+/** Cargos activos (id + nombre) para los selects de usuario. */
+export async function fetchCargosActivos(): Promise<{ id: string; nombre: string }[]> {
+  await assertPerm("cargos", "view");
+  return getCargosActivos();
+}
+
+export async function crearCargo(
+  data: z.input<typeof cargoSchema>,
+): Promise<ActionResult & { id?: string }> {
+  await assertPerm("cargos", "edit");
+  const parsed = cargoSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  const d = parsed.data;
+  try {
+    const [row] = await db
+      .insert(schema.cargos)
+      .values({
+        nombre: d.nombre,
+        nombreNormalizado: normalizarNombre(d.nombre),
+        activo: d.activo ?? true,
+        orden: d.orden ?? 0,
+      })
+      .returning({ id: schema.cargos.id });
+    revalidatePath(CARGOS_PATH);
+    return { ok: true, id: row.id };
+  } catch (e) {
+    return { ok: false, error: mensajeCargoConflicto(e) };
+  }
+}
+
+export async function actualizarCargo(
+  id: string,
+  data: z.input<typeof cargoSchema>,
+): Promise<ActionResult> {
+  await assertPerm("cargos", "edit");
+  const parsed = cargoSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  }
+  const d = parsed.data;
+  try {
+    await db
+      .update(schema.cargos)
+      .set({
+        nombre: d.nombre,
+        nombreNormalizado: normalizarNombre(d.nombre),
+        activo: d.activo ?? true,
+        orden: d.orden ?? 0,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.cargos.id, id));
+    // Mantiene sincronizado el texto denormalizado en usuarios.
+    await db.update(schema.usuarios).set({ cargo: d.nombre }).where(eq(schema.usuarios.cargoId, id));
+    revalidatePath(CARGOS_PATH);
+    revalidatePath("/je-admin/usuarios");
+    revalidatePath(ORGANIGRAMA_PATH);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: mensajeCargoConflicto(e) };
+  }
+}
+
+export async function toggleCargoActivo(id: string, activo: boolean): Promise<ActionResult> {
+  await assertPerm("cargos", "edit");
+  try {
+    await db
+      .update(schema.cargos)
+      .set({ activo, updatedAt: new Date().toISOString() })
+      .where(eq(schema.cargos.id, id));
+    revalidatePath(CARGOS_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo actualizar el cargo." };
+  }
+}
+
+export async function eliminarCargo(id: string): Promise<ActionResult> {
+  await assertPerm("cargos", "edit");
+  try {
+    // usuarios.cargo_id es ON DELETE SET NULL: quedan sin cargo del catálogo
+    // (conservan el texto denormalizado como histórico).
+    await db.delete(schema.cargos).where(eq(schema.cargos.id, id));
+    revalidatePath(CARGOS_PATH);
+    revalidatePath("/je-admin/usuarios");
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo eliminar el cargo." };
   }
 }
 

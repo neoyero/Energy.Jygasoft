@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic"
 export default async function AreasPage() {
   const user = await requirePerm("areas", "view")
   const puedeEditar = can(user.rol, "areas", "edit")
-  const usuarios = (await getUsuarios()).map((u) => ({ id: u.id, nombre: u.nombre }))
+  const usuarios = (await getUsuarios()).map((u) => ({ id: u.id, nombre: u.nombre, cargo: u.cargo }))
 
   return (
     <div className="flex flex-col gap-6">

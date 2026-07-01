@@ -15,7 +15,7 @@ import {
   Users,
 } from "lucide-react"
 
-import type { AreaRow, AreasFiltros, AreasPage, AreaArbolRow } from "@/lib/admin/queries"
+import type { AreaRow, AreasFiltros, AreasPage, AreaArbolRow, AreaLider } from "@/lib/admin/queries"
 import { fetchAreas, fetchAreasArbol, toggleAreaActiva, eliminarArea } from "@/lib/admin/actions"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -26,14 +26,20 @@ import {
   type DataTableColumn,
   type DataTableRowAction,
 } from "@/components/admin/ui/data-table"
-import { AreaForm, type AreaFormArea } from "@/components/admin/areas/area-form"
+import { AreaForm, type AreaFormArea, type UsuarioOpcion } from "@/components/admin/areas/area-form"
 
 const PAGE_SIZE = 15
 
 export interface AreasViewProps {
   puedeEditar: boolean
-  /** Usuarios para el selector de líder en el formulario. */
-  usuarios: ReadonlyArray<{ id: string; nombre: string }>
+  /** Usuarios (con su cargo) para el selector de líderes en el formulario. */
+  usuarios: ReadonlyArray<UsuarioOpcion>
+}
+
+/** Texto compacto de líderes para tablas/tarjetas. */
+function lideresTexto(lideres: AreaLider[]): string {
+  if (!lideres || lideres.length === 0) return "—"
+  return lideres.map((l) => (l.cargo ? `${l.nombre} (${l.cargo})` : l.nombre)).join(", ")
 }
 
 type Modo = "arbol" | "lista"
@@ -190,12 +196,12 @@ export function AreasView({ puedeEditar, usuarios }: AreasViewProps) {
       ),
     },
     {
-      id: "lider",
-      header: "Líder",
-      accessor: (r) => r.liderNombre ?? "",
+      id: "lideres",
+      header: "Líderes",
+      accessor: (r) => lideresTexto(r.lideres),
       hideOnMobile: true,
       render: (r) => (
-        <span className="text-stone-600 dark:text-muted-foreground">{r.liderNombre ?? "—"}</span>
+        <span className="text-stone-600 dark:text-muted-foreground">{lideresTexto(r.lideres)}</span>
       ),
     },
     {
@@ -362,7 +368,8 @@ export function AreasView({ puedeEditar, usuarios }: AreasViewProps) {
                 <span className="font-medium text-stone-800 dark:text-foreground">{r.nombre}</span>
                 <span className="text-xs text-stone-600 dark:text-muted-foreground">
                   {r.padreNombre ? `${r.padreNombre} · ` : ""}
-                  {r.liderNombre ?? "Sin líder"} · {r.miembros} miembro{r.miembros === 1 ? "" : "s"}
+                  {r.lideres.length ? lideresTexto(r.lideres) : "Sin líder"} · {r.miembros} miembro
+                  {r.miembros === 1 ? "" : "s"}
                 </span>
               </div>
               {estadoBadge(r.activa)}
@@ -423,9 +430,9 @@ function AreaNodo({
     id: nodo.id,
     nombre: nodo.nombre,
     descripcion: nodo.descripcion,
-    liderId: nodo.liderId,
     padreId: nodo.padreId,
     activa: nodo.activa,
+    lideres: nodo.lideres,
   }
 
   return (
@@ -458,7 +465,7 @@ function AreaNodo({
             ) : null}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-            <span>Líder: {nodo.liderNombre ?? "—"}</span>
+            <span>{nodo.lideres.length > 1 ? "Líderes" : "Líder"}: {lideresTexto(nodo.lideres)}</span>
             <span className="inline-flex items-center gap-1">
               <Users className="size-3" aria-hidden /> {nodo.miembros}
             </span>
