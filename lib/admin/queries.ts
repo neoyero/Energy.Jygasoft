@@ -105,6 +105,9 @@ export async function getUsuarios() {
     .limit(500);
 }
 
+/** Fila de usuario para la gestión del equipo (con jefe/área resueltos). */
+export type UsuarioAdminRow = Awaited<ReturnType<typeof getUsuarios>>[number];
+
 /* ─────────────────────────────────────────────────────────────────────────
  * DASHBOARD je-admin — capa de datos
  *

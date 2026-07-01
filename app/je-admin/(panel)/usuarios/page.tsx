@@ -1,22 +1,16 @@
+import { UserCog } from "lucide-react";
+
 import { requirePerm } from "@/lib/admin/guard";
 import { can } from "@/lib/admin/rbac";
 import { getUsuarios, getAsesores, getAreasActivas } from "@/lib/admin/queries";
-import {
-  UsuarioCreateForm,
-  UsuarioRowActions,
-} from "@/components/admin/usuario-form";
-import { UsuarioJerarquiaButton } from "@/components/admin/usuarios/usuario-jerarquia-button";
+import { PageHeader } from "@/components/admin/ui/page-header";
+import { UsuariosView } from "@/components/admin/usuarios/usuarios-view";
 import {
   AsesorCreateForm,
   AsesorRowActions,
 } from "@/components/admin/asesor-form";
 
 export const dynamic = "force-dynamic";
-
-function fmtFecha(v: string | null) {
-  if (!v) return "—";
-  return new Date(v).toLocaleString("es-MX");
-}
 
 /** Lista vacía -> "Todas/Ambos"; si no, las etiquetas unidas. */
 function listOrAll(items: string[], vacio: string): string {
@@ -31,91 +25,17 @@ export default async function UsuariosPage() {
     getAreasActivas(),
   ]);
   const usuarioOptions = usuarios.map((u) => ({ id: u.id, nombre: u.nombre }));
-  const puedeEditarOrg = can(user.rol, "organizacion", "edit");
+  const puedeEditar = can(user.rol, "usuarios", "edit");
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Usuarios / Equipo</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Da de alta a los miembros del equipo. Entran al panel con un código que
-          se envía a su correo (sin contraseña).
-        </p>
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Usuarios / Equipo"
+        description="Alta y edición de miembros del equipo (rol, cargo, jefe y área). Entran al panel con un código enviado a su correo."
+        icon={<UserCog className="size-6" aria-hidden />}
+      />
 
-      <UsuarioCreateForm />
-
-      <div className="overflow-x-auto rounded-xl border border-border">
-        <table className="w-full text-sm">
-          <thead className="border-b border-border bg-muted/40 text-left">
-            <tr>
-              <th className="px-4 py-2 font-medium">Nombre</th>
-              <th className="px-4 py-2 font-medium">Correo</th>
-              <th className="px-4 py-2 font-medium">Rol</th>
-              <th className="px-4 py-2 font-medium">Cargo</th>
-              <th className="px-4 py-2 font-medium">Reporta a</th>
-              <th className="px-4 py-2 font-medium">Área</th>
-              <th className="px-4 py-2 font-medium">Activo</th>
-              <th className="px-4 py-2 font-medium text-right">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {usuarios.map((u) => (
-              <tr key={u.id} className="border-b border-border last:border-0">
-                <td className="px-4 py-2 font-medium">{u.nombre}</td>
-                <td className="px-4 py-2 text-muted-foreground">{u.email}</td>
-                <td className="px-4 py-2 text-muted-foreground">
-                  {u.rol.replace(/_/g, " ")}
-                </td>
-                <td className="px-4 py-2 text-muted-foreground">
-                  {u.cargo ?? "—"}
-                </td>
-                <td className="px-4 py-2 text-muted-foreground">
-                  {u.jefeNombre ?? "—"}
-                </td>
-                <td className="px-4 py-2 text-muted-foreground">
-                  {u.areaNombre ?? "—"}
-                </td>
-                <td className="px-4 py-2 text-muted-foreground">
-                  {u.activo ? "Sí" : "No"}
-                </td>
-                <td className="px-4 py-2">
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    {puedeEditarOrg ? (
-                      <UsuarioJerarquiaButton
-                        id={u.id}
-                        nombre={u.nombre}
-                        cargo={u.cargo}
-                        reportaA={u.reportaA}
-                        areaId={u.areaId}
-                        usuarios={usuarioOptions}
-                        areas={areas}
-                      />
-                    ) : null}
-                    <UsuarioRowActions
-                      id={u.id}
-                      nombre={u.nombre}
-                      rol={u.rol}
-                      telefono={u.telefono}
-                      activo={u.activo}
-                    />
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {usuarios.length === 0 && (
-              <tr>
-                <td
-                  colSpan={8}
-                  className="px-4 py-8 text-center text-muted-foreground"
-                >
-                  Aún no hay usuarios. Agrega al primer miembro del equipo arriba.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <UsuariosView usuarios={usuarios} areas={areas} puedeEditar={puedeEditar} />
 
       {/* ── Asesores ── */}
       <div className="pt-2">

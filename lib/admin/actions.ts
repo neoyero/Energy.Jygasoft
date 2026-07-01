@@ -346,6 +346,13 @@ async function puedeAccederEntidad(
 
 const rolSchema = z.enum(schema.usuarioRol.enumValues);
 
+/** Campos de organigrama compartidos por alta/edición de usuario. */
+const usuarioOrgFields = {
+  cargo: z.string().trim().max(120).nullish().transform((v) => (v ? v : null)),
+  reportaA: z.string().uuid("Jefe no válido.").nullish().transform((v) => v ?? null),
+  areaId: z.string().uuid("Área no válida.").nullish().transform((v) => v ?? null),
+} as const;
+
 const createUsuarioSchema = z.object({
   nombre: z.string().trim().min(2, "El nombre debe tener al menos 2 caracteres."),
   email: z.string().trim().toLowerCase().email("Correo no válido."),
@@ -354,8 +361,9 @@ const createUsuarioSchema = z.object({
     .string()
     .trim()
     .max(40, "Teléfono demasiado largo.")
-    .optional()
+    .nullish()
     .transform((v) => (v ? v : null)),
+  ...usuarioOrgFields,
 });
 
 const updateUsuarioSchema = z.object({
@@ -365,9 +373,13 @@ const updateUsuarioSchema = z.object({
     .string()
     .trim()
     .max(40, "Teléfono demasiado largo.")
-    .optional()
+    .nullish()
     .transform((v) => (v ? v : null)),
+  ...usuarioOrgFields,
 });
+
+type CreateUsuarioInput = z.input<typeof createUsuarioSchema>;
+type UpdateUsuarioInput = z.input<typeof updateUsuarioSchema>;
 
 function isUniqueEmailViolation(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error);
@@ -375,28 +387,28 @@ function isUniqueEmailViolation(error: unknown): boolean {
 }
 
 /**
- * Da de alta a un miembro del equipo. No fija contraseña: entran por OTP al
- * correo. NO escribe en `eventos` (el enum entidad_tipo no incluye 'usuario').
+ * Da de alta a un miembro del equipo (incluye posición en el organigrama:
+ * cargo, jefe y área). No fija contraseña: entran por OTP al correo. NO escribe
+ * en `eventos` (el enum entidad_tipo no incluye 'usuario').
  */
-export async function createUsuario(data: {
-  nombre: string;
-  email: string;
-  rol: string;
-  telefono?: string;
-}): Promise<ActionResult> {
+export async function createUsuario(data: CreateUsuarioInput): Promise<ActionResult> {
   await assertPerm("usuarios", "edit");
 
   const parsed = createUsuarioSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
   }
+  const d = parsed.data;
 
   try {
     await db.insert(schema.usuarios).values({
-      nombre: parsed.data.nombre,
-      email: parsed.data.email,
-      rol: parsed.data.rol,
-      telefono: parsed.data.telefono,
+      nombre: d.nombre,
+      email: d.email,
+      rol: d.rol,
+      telefono: d.telefono,
+      cargo: d.cargo,
+      reportaA: d.reportaA,
+      areaId: d.areaId,
       activo: true,
     });
   } catch (error: unknown) {
@@ -407,13 +419,14 @@ export async function createUsuario(data: {
   }
 
   revalidatePath("/je-admin/usuarios");
+  revalidatePath("/je-admin/organigrama");
   return { ok: true };
 }
 
-/** Actualiza nombre, rol y teléfono de un usuario. */
+/** Actualiza nombre, rol, teléfono y organigrama (cargo/jefe/área) de un usuario. */
 export async function updateUsuario(
   id: string,
-  data: { nombre: string; rol: string; telefono?: string },
+  data: UpdateUsuarioInput,
 ): Promise<ActionResult> {
   await assertPerm("usuarios", "edit");
 
@@ -421,14 +434,33 @@ export async function updateUsuario(
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
   }
+  const d = parsed.data;
+
+  // Anti-ciclos en la línea de reporte: no puede reportar a sí mismo ni a un
+  // descendiente suyo.
+  if (d.reportaA) {
+    if (d.reportaA === id) {
+      return { ok: false, error: "Un usuario no puede reportarse a sí mismo." };
+    }
+    const descendientes = await getDescendientes(id);
+    if (descendientes.includes(d.reportaA)) {
+      return {
+        ok: false,
+        error: "No puedes asignar como jefe a alguien que depende de este usuario.",
+      };
+    }
+  }
 
   try {
     await db
       .update(schema.usuarios)
       .set({
-        nombre: parsed.data.nombre,
-        rol: parsed.data.rol,
-        telefono: parsed.data.telefono,
+        nombre: d.nombre,
+        rol: d.rol,
+        telefono: d.telefono,
+        cargo: d.cargo,
+        reportaA: d.reportaA,
+        areaId: d.areaId,
         updatedAt: new Date().toISOString(),
       })
       .where(eq(schema.usuarios.id, id));
@@ -437,6 +469,7 @@ export async function updateUsuario(
   }
 
   revalidatePath("/je-admin/usuarios");
+  revalidatePath("/je-admin/organigrama");
   return { ok: true };
 }
 
