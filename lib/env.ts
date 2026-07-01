@@ -64,6 +64,16 @@ const serverSchema = z.object({
   // Carpeta raíz dentro del drive donde se guardan los documentos del CRM.
   M365_DOCS_ROOT: z.string().default("CRM"),
 
+  // je-admin — Chatwoot (conversaciones, self-hosted). Administración de agentes
+  // desde el panel. Si faltan, el módulo de asesores degrada al modo manual.
+  CHATWOOT_URL: z.string().url().optional(),
+  CHATWOOT_ACCOUNT_ID: z.string().optional(),
+  CHATWOOT_API_TOKEN: z.string().optional(),
+  // Opcional (Fase 2): Platform App token para alta sin invitación por correo.
+  CHATWOOT_PLATFORM_TOKEN: z.string().optional(),
+  // Secreto propio para validar el webhook inbound de Chatwoot (Fase 3).
+  CHATWOOT_WEBHOOK_SECRET: z.string().optional(),
+
   // je-admin — Login passwordless por código (OTP)
   OTP_TTL_MINUTES: z.coerce.number().int().positive().default(5),
   OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),

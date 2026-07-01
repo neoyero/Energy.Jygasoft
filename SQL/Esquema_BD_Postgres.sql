@@ -590,7 +590,11 @@ CREATE TABLE asesores (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   usuario_id uuid REFERENCES usuarios(id) ON DELETE SET NULL,
   nombre text NOT NULL,
-  chatwoot_agent_id integer NOT NULL,
+  chatwoot_agent_id integer,                 -- id del agente en Chatwoot (nullable: pendiente de aprovisionar)
+  email text,                                -- correo del agente (invitar/reconciliar por correo)
+  chatwoot_estado text NOT NULL DEFAULT 'no_sincronizado',  -- no_sincronizado|invitado|activo|error
+  chatwoot_sync_at timestamptz,
+  chatwoot_error text,
   ms_email text,
   telefono text,
   zonas text[] NOT NULL DEFAULT '{}',       -- municipios o CP que cubre (vacío = todas)
@@ -601,6 +605,7 @@ CREATE TABLE asesores (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_asesores_activo ON asesores (activo);
+CREATE INDEX ix_asesores_email ON asesores (lower(email));
 CREATE TRIGGER trg_asesores_upd BEFORE UPDATE ON asesores FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- =====================================================================

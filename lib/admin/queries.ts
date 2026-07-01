@@ -1356,7 +1356,11 @@ export interface AsesorRow {
   id: string;
   usuarioId: string | null;
   nombre: string;
-  chatwootAgentId: number;
+  email: string | null;
+  chatwootAgentId: number | null;
+  chatwootEstado: string;
+  chatwootSyncAt: string | null;
+  chatwootError: string | null;
   msEmail: string | null;
   telefono: string | null;
   zonas: string[];
@@ -1404,7 +1408,11 @@ export async function getAsesores(): Promise<AsesorRow[]> {
       id: schema.asesores.id,
       usuarioId: schema.asesores.usuarioId,
       nombre: schema.asesores.nombre,
+      email: schema.asesores.email,
       chatwootAgentId: schema.asesores.chatwootAgentId,
+      chatwootEstado: schema.asesores.chatwootEstado,
+      chatwootSyncAt: schema.asesores.chatwootSyncAt,
+      chatwootError: schema.asesores.chatwootError,
       msEmail: schema.asesores.msEmail,
       telefono: schema.asesores.telefono,
       zonas: schema.asesores.zonas,

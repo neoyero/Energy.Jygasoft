@@ -60,6 +60,7 @@ import {
 } from "@/lib/admin/cotizacion-dimensionado";
 import { sendMail } from "@/lib/email";
 import { deleteDriveItem } from "@/lib/m365/sharepoint";
+import { chatwootConfigurado, listarAgentes, crearAgente } from "@/lib/chatwoot/client";
 import { serverEnv, clientEnv } from "@/lib/env";
 import {
   renderCotizacionPdf,
@@ -869,9 +870,16 @@ const asesorSchema = z.object({
       "Usuario no válido.",
     ),
   nombre: z.string().trim().min(2, "El nombre del asesor es obligatorio."),
+  // Correo del agente en Chatwoot (para invitar/reconciliar). Opcional: si se
+  // vincula un usuario y se deja vacío, se usa el correo del usuario.
+  email: emailOpcional,
+  // Id del agente en Chatwoot: opcional (puede quedar pendiente o vincularse por
+  // reconciliación). "" / ausente -> null.
   chatwootAgentId: z
     .union([z.string(), z.number()])
+    .nullish()
     .transform((v, ctx) => {
+      if (v === null || v === undefined || v === "") return null;
       const n = typeof v === "number" ? v : Number(String(v).trim());
       if (!Number.isInteger(n) || n < 0) {
         ctx.addIssue({
@@ -889,11 +897,12 @@ const asesorSchema = z.object({
   activo: z.boolean().default(true),
 });
 
-/** Valores comunes para INSERT/UPDATE de un asesor. */
+/** Valores comunes para INSERT/UPDATE de un asesor (sin campos de sync). */
 function asesorValues(d: z.output<typeof asesorSchema>) {
   return {
     usuarioId: d.usuarioId,
     nombre: d.nombre,
+    email: d.email,
     chatwootAgentId: d.chatwootAgentId,
     msEmail: d.msEmail,
     telefono: d.telefono,
@@ -903,7 +912,27 @@ function asesorValues(d: z.output<typeof asesorSchema>) {
   };
 }
 
-/** Registra un asesor (habilita a un usuario para recibir/atender leads). */
+/** Correo efectivo del asesor: el del form o, si falta, el del usuario vinculado. */
+async function resolverEmailAsesor(
+  email: string | null,
+  usuarioId: string | null,
+): Promise<string | null> {
+  if (email) return email;
+  if (!usuarioId) return null;
+  const [u] = await db
+    .select({ email: schema.usuarios.email })
+    .from(schema.usuarios)
+    .where(eq(schema.usuarios.id, usuarioId))
+    .limit(1);
+  return u?.email ?? null;
+}
+
+/**
+ * Registra un asesor. Si Chatwoot está configurado, no se capturó un agente y
+ * hay correo, invita al agente en Chatwoot (Application API) y guarda su id +
+ * estado. Si no, queda en modo manual/pendiente. Nunca falla el alta por un
+ * error de Chatwoot: se guarda con estado 'error' y se puede reintentar.
+ */
 export async function crearAsesor(
   data: z.input<typeof asesorSchema>,
 ): Promise<ActionResult> {
@@ -915,8 +944,35 @@ export async function crearAsesor(
       error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
     };
   }
+  const d = parsed.data;
+  const email = await resolverEmailAsesor(d.email, d.usuarioId);
+
+  let chatwootAgentId = d.chatwootAgentId;
+  let chatwootEstado = chatwootAgentId != null ? "activo" : "no_sincronizado";
+  let chatwootError: string | null = null;
+
+  // Aprovisionamiento por invitación (solo si hay correo, no hay id previo y
+  // Chatwoot está configurado).
+  if (chatwootConfigurado() && chatwootAgentId == null && email) {
+    const res = await crearAgente({ name: d.nombre, email, role: "agent" });
+    if (res.ok && res.data?.id) {
+      chatwootAgentId = res.data.id;
+      chatwootEstado = "invitado";
+    } else {
+      chatwootEstado = "error";
+      chatwootError = res.ok ? "Respuesta inesperada de Chatwoot." : res.error;
+    }
+  }
+
   try {
-    await db.insert(schema.asesores).values(asesorValues(parsed.data));
+    await db.insert(schema.asesores).values({
+      ...asesorValues(d),
+      email,
+      chatwootAgentId,
+      chatwootEstado,
+      chatwootError,
+      chatwootSyncAt: chatwootAgentId != null ? new Date().toISOString() : null,
+    });
   } catch {
     return { ok: false, error: "No se pudo crear el asesor." };
   }
@@ -925,7 +981,7 @@ export async function crearAsesor(
   return { ok: true };
 }
 
-/** Actualiza los datos de un asesor. */
+/** Actualiza los datos de un asesor (no re-invita en Chatwoot; eso va por sync). */
 export async function actualizarAsesor(
   id: string,
   data: z.input<typeof asesorSchema>,
@@ -938,10 +994,16 @@ export async function actualizarAsesor(
       error: parsed.error.issues[0]?.message ?? "Datos no válidos.",
     };
   }
+  const d = parsed.data;
+  const email = await resolverEmailAsesor(d.email, d.usuarioId);
   try {
     await db
       .update(schema.asesores)
-      .set({ ...asesorValues(parsed.data), updatedAt: new Date().toISOString() })
+      .set({
+        ...asesorValues(d),
+        email,
+        updatedAt: new Date().toISOString(),
+      })
       .where(eq(schema.asesores.id, id));
   } catch {
     return { ok: false, error: "No se pudo actualizar el asesor." };
@@ -949,6 +1011,56 @@ export async function actualizarAsesor(
   revalidatePath("/je-admin/usuarios");
   revalidatePath("/je-admin/leads");
   return { ok: true };
+}
+
+/**
+ * Reconciliación con Chatwoot: trae los agentes de la cuenta y enlaza por correo
+ * (case-insensitive) los asesores que no tengan chatwoot_agent_id. Evita
+ * re-crear agentes que ya existen en el Chatwoot del droplet.
+ */
+export async function sincronizarAsesoresChatwoot(): Promise<
+  ActionResult & { enlazados?: number; sinMatch?: number }
+> {
+  await assertPerm("usuarios", "edit");
+  if (!chatwootConfigurado()) {
+    return { ok: false, error: "Chatwoot no está configurado." };
+  }
+  const res = await listarAgentes();
+  if (!res.ok) return { ok: false, error: res.error };
+
+  const porEmail = new Map<string, number>();
+  for (const a of res.data) {
+    if (a.email) porEmail.set(a.email.toLowerCase(), a.id);
+  }
+
+  const asesores = await db
+    .select({ id: schema.asesores.id, email: schema.asesores.email, agentId: schema.asesores.chatwootAgentId })
+    .from(schema.asesores);
+
+  let enlazados = 0;
+  let sinMatch = 0;
+  for (const a of asesores) {
+    if (a.agentId != null) continue; // ya enlazado
+    const agentId = a.email ? porEmail.get(a.email.toLowerCase()) : undefined;
+    if (agentId == null) {
+      sinMatch += 1;
+      continue;
+    }
+    await db
+      .update(schema.asesores)
+      .set({
+        chatwootAgentId: agentId,
+        chatwootEstado: "activo",
+        chatwootError: null,
+        chatwootSyncAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.asesores.id, a.id));
+    enlazados += 1;
+  }
+
+  revalidatePath("/je-admin/usuarios");
+  return { ok: true, enlazados, sinMatch };
 }
 
 /** Activa o desactiva un asesor (desactivado = no asignable a leads). */

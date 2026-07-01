@@ -12,6 +12,18 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0017 — Asesores especializados con Chatwoot (Fase 1) · 2026-06-30
+
+**Migración:** `db/migrations/0017_asesor_chatwoot.sql`
+
+- `asesores.chatwoot_agent_id` pasa a **nullable** (un asesor puede existir antes
+  de aprovisionarse/enlazarse en Chatwoot).
+- Nuevos: `asesores.email` (invitar/reconciliar por correo), `chatwoot_estado`
+  (`no_sincronizado|invitado|activo|error`, default `no_sincronizado`),
+  `chatwoot_sync_at`, `chatwoot_error`. Índice `ix_asesores_email (lower(email))`.
+
+---
+
 ## 0016 — Estructura organizacional (Fase 1) · 2026-06-29
 
 **Migración:** `db/migrations/0016_organizacion.sql`

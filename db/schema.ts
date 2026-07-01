@@ -847,7 +847,14 @@ export const asesores = pgTable("asesores", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	usuarioId: uuid("usuario_id"),
 	nombre: text().notNull(),
-	chatwootAgentId: integer("chatwoot_agent_id").notNull(),
+	// Id del agente en Chatwoot (nullable: puede estar pendiente de aprovisionar).
+	chatwootAgentId: integer("chatwoot_agent_id"),
+	// Correo del agente (para invitar/reconciliar por correo con Chatwoot).
+	email: text(),
+	// Estado de sincronización con Chatwoot: no_sincronizado|invitado|activo|error.
+	chatwootEstado: text("chatwoot_estado").default('no_sincronizado').notNull(),
+	chatwootSyncAt: timestamp("chatwoot_sync_at", { withTimezone: true, mode: 'string' }),
+	chatwootError: text("chatwoot_error"),
 	msEmail: text("ms_email"),
 	telefono: text(),
 	// Municipios o CP que cubre (vacío = todas).
@@ -861,6 +868,7 @@ export const asesores = pgTable("asesores", {
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	index("ix_asesores_activo").using("btree", table.activo.asc().nullsLast().op("bool_ops")),
+	index("ix_asesores_email").using("btree", sql`lower(email)`),
 	foreignKey({
 			columns: [table.usuarioId],
 			foreignColumns: [usuarios.id],
