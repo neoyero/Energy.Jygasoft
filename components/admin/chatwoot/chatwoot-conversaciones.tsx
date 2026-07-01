@@ -67,9 +67,22 @@ export function ConversacionesTab({ puedeEditar }: { puedeEditar: boolean }) {
     cwListAgents().then((r) => {
       if (r.ok) setAgentes(r.data)
     })
+    // Auto-conecta el tiempo real al abrir la vista: si el webhook no está
+    // registrado en Chatwoot, lo registra solo (idempotente). Sin botón.
     cwEstadoTiempoReal().then((r) => {
-      if (r.ok) setRtRegistrado(r.data.registrado)
+      if (!r.ok) return
+      if (r.data.registrado) {
+        setRtRegistrado(true)
+      } else if (puedeEditar) {
+        startRt(async () => {
+          const res = await cwConectarTiempoReal()
+          setRtRegistrado(res.ok)
+        })
+      } else {
+        setRtRegistrado(false)
+      }
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Tiempo real: al llegar un evento, refresca la lista y (si es de la
@@ -148,12 +161,13 @@ export function ConversacionesTab({ puedeEditar }: { puedeEditar: boolean }) {
             {conectado ? "En vivo" : "Sin conexión"}
           </span>
 
-          {puedeEditar && rtRegistrado === false ? (
-            <Button type="button" size="sm" variant="outline" onClick={conectarRT} disabled={rtPending}>
-              {rtPending ? "Conectando…" : "Conectar tiempo real"}
+          {rtPending ? (
+            <span className="text-xs text-muted-foreground">Activando tiempo real…</span>
+          ) : rtRegistrado === false && puedeEditar ? (
+            <Button type="button" size="sm" variant="outline" onClick={conectarRT}>
+              Reintentar tiempo real
             </Button>
           ) : null}
-          {rtRegistrado === true ? badge("Webhook activo", "green") : null}
 
           <Button type="button" size="sm" variant="ghost" onClick={() => setReload((n) => n + 1)}>
             Recargar
@@ -223,24 +237,36 @@ function ConversacionDetalle({
   const [pending, startTransition] = useTransition()
   const finRef = useRef<HTMLDivElement | null>(null)
 
-  function cargarMensajes(): void {
-    setCargando(true)
-    setError(null)
+  // `silencioso`: refresco en segundo plano (tiempo real) SIN mostrar "Cargando…"
+  // para no encoger/parpadear el modal. Solo la carga inicial usa el estado.
+  function cargarMensajes(silencioso = false): void {
+    if (!silencioso) setCargando(true)
     cwListMessages(conv.id).then((r) => {
       if (r.ok) setMensajes(r.data)
-      else setError(r.error)
-      setCargando(false)
+      else if (!silencioso) setError(r.error)
+      if (!silencioso) setCargando(false)
     })
   }
 
+  // Carga inicial (con estado) al abrir la conversación.
   useEffect(() => {
-    cargarMensajes()
+    setError(null)
+    cargarMensajes(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conv.id, recargarSenal])
+  }, [conv.id])
 
+  // Refresco por evento en vivo: silencioso (no toca el estado de carga).
+  useEffect(() => {
+    if (recargarSenal > 0) cargarMensajes(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recargarSenal])
+
+  // Auto-scroll al final solo cuando cambia la CANTIDAD de mensajes (no en cada
+  // refresco silencioso con el mismo contenido), para evitar saltos.
+  const numMensajes = mensajes.length
   useEffect(() => {
     finRef.current?.scrollIntoView({ block: "end" })
-  }, [mensajes])
+  }, [numMensajes])
 
   function accion(fn: () => Promise<Res<unknown>>, tras?: () => void): void {
     setError(null)
@@ -262,7 +288,7 @@ function ConversacionDetalle({
       () => cwSendMessage(conv.id, { content, private: privada }),
       () => {
         setTexto("")
-        cargarMensajes()
+        cargarMensajes(true)
       },
     )
   }
@@ -326,8 +352,9 @@ function ConversacionDetalle({
 
         {error ? <AvisoError error={error} /> : null}
 
-        {/* Hilo de mensajes */}
-        <div className="max-h-[45vh] min-h-40 overflow-y-auto rounded-lg border border-border bg-muted/20 p-3">
+        {/* Hilo de mensajes — ALTO FIJO para que el modal no cambie de tamaño
+            al cargar/refrescar (evita el parpadeo). El contenido hace scroll. */}
+        <div className="h-[52vh] overflow-y-auto rounded-lg border border-border bg-muted/20 p-3">
           {cargando ? (
             <p className="text-sm text-muted-foreground">Cargando mensajes…</p>
           ) : mensajes.length === 0 ? (
