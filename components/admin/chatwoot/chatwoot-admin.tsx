@@ -298,6 +298,20 @@ function AgentesTab({ puedeEditar }: { puedeEditar: boolean }) {
         rowKey={(r) => String(r.id)}
         rowActions={acciones}
         loading={loading}
+        mobileCard={(r) => (
+          <div className="flex flex-col gap-1">
+            <span className="font-medium text-foreground">{r.name}</span>
+            <span className="text-xs text-muted-foreground">{r.email}</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {badge(
+                r.role === "administrator" ? "Administrador" : "Agente",
+                r.role === "administrator" ? "amber" : "gray",
+              )}
+              {r.availability_status ? badge(r.availability_status) : null}
+              {r.confirmed ? badge("Confirmado", "green") : badge("Pendiente", "amber")}
+            </div>
+          </div>
+        )}
         empty={{ title: "Sin agentes", description: "Agrega el primer agente." }}
       />
 
@@ -536,6 +550,14 @@ function InboxesTab({ puedeEditar }: { puedeEditar: boolean }) {
         rowKey={(r) => String(r.id)}
         rowActions={acciones}
         loading={loading}
+        mobileCard={(r) => (
+          <div className="flex flex-col gap-0.5">
+            <span className="font-medium text-foreground">{r.name}</span>
+            <span className="text-xs text-muted-foreground">
+              {r.channel_type ?? "—"} · ID {r.id}
+            </span>
+          </div>
+        )}
         empty={{ title: "Sin inboxes", description: "Crea un inbox en Chatwoot." }}
       />
       {miembrosDe ? (
@@ -604,6 +626,13 @@ function EquiposTab({ puedeEditar }: { puedeEditar: boolean }) {
         rowKey={(r) => String(r.id)}
         rowActions={acciones}
         loading={loading}
+        mobileCard={(r) => (
+          <div className="flex flex-col gap-1">
+            <span className="font-medium text-foreground">{r.name}</span>
+            {r.description ? <span className="text-xs text-muted-foreground">{r.description}</span> : null}
+            <div>{r.allow_auto_assign ? badge("Auto-asignar", "green") : badge("Sin auto-asignar")}</div>
+          </div>
+        )}
         empty={{ title: "Sin equipos", description: "Crea el primer equipo." }}
       />
 
@@ -739,7 +768,20 @@ function RespuestasTab({ puedeEditar }: { puedeEditar: boolean }) {
       <BarraTab puedeEditar={puedeEditar} onRecargar={recargar} onNuevo={() => setCrear(true)} etiquetaNuevo="Nueva respuesta" />
       {error ? <AvisoError error={error} /> : null}
       {accErr ? <AvisoError error={accErr} /> : null}
-      <DataTable<CwCannedResponse> data={data ?? []} columns={cols} rowKey={(r) => String(r.id)} rowActions={acciones} loading={loading} empty={{ title: "Sin respuestas", description: "Crea la primera respuesta rápida." }} />
+      <DataTable<CwCannedResponse>
+        data={data ?? []}
+        columns={cols}
+        rowKey={(r) => String(r.id)}
+        rowActions={acciones}
+        loading={loading}
+        mobileCard={(r) => (
+          <div className="flex flex-col gap-1">
+            <span className="font-mono text-sm">/{r.short_code}</span>
+            <span className="line-clamp-2 text-xs text-muted-foreground">{r.content}</span>
+          </div>
+        )}
+        empty={{ title: "Sin respuestas", description: "Crea la primera respuesta rápida." }}
+      />
       {puedeEditar ? (
         <CannedModal
           open={crear || editar !== null}
@@ -866,7 +908,27 @@ function EtiquetasTab({ puedeEditar }: { puedeEditar: boolean }) {
       <BarraTab puedeEditar={puedeEditar} onRecargar={recargar} onNuevo={() => setCrear(true)} etiquetaNuevo="Nueva etiqueta" />
       {error ? <AvisoError error={error} /> : null}
       {accErr ? <AvisoError error={accErr} /> : null}
-      <DataTable<CwLabel> data={data ?? []} columns={cols} rowKey={(r) => String(r.id)} rowActions={acciones} loading={loading} empty={{ title: "Sin etiquetas", description: "Crea la primera etiqueta." }} />
+      <DataTable<CwLabel>
+        data={data ?? []}
+        columns={cols}
+        rowKey={(r) => String(r.id)}
+        rowActions={acciones}
+        loading={loading}
+        mobileCard={(r) => (
+          <div className="flex flex-col gap-1">
+            <span className="inline-flex items-center gap-2 font-medium">
+              <span
+                className="size-3 rounded-full border border-border"
+                style={{ backgroundColor: r.color ?? "transparent" }}
+              />
+              {r.title}
+            </span>
+            {r.description ? <span className="text-xs text-muted-foreground">{r.description}</span> : null}
+            <div>{r.show_on_sidebar ? badge("En barra", "green") : badge("Oculta")}</div>
+          </div>
+        )}
+        empty={{ title: "Sin etiquetas", description: "Crea la primera etiqueta." }}
+      />
       {puedeEditar ? (
         <LabelModal
           open={crear || editar !== null}
@@ -998,7 +1060,26 @@ function AtributosTab({ puedeEditar }: { puedeEditar: boolean }) {
       <BarraTab puedeEditar={puedeEditar} onRecargar={recargar} onNuevo={() => setCrear(true)} etiquetaNuevo="Nuevo atributo" />
       {error ? <AvisoError error={error} /> : null}
       {accErr ? <AvisoError error={accErr} /> : null}
-      <DataTable<CwCustomAttribute> data={data ?? []} columns={cols} rowKey={(r) => String(r.id)} rowActions={acciones} loading={loading} empty={{ title: "Sin atributos", description: "Crea el primer atributo personalizado." }} />
+      <DataTable<CwCustomAttribute>
+        data={data ?? []}
+        columns={cols}
+        rowKey={(r) => String(r.id)}
+        rowActions={acciones}
+        loading={loading}
+        mobileCard={(r) => (
+          <div className="flex flex-col gap-1">
+            <span className="font-medium text-foreground">{r.attribute_display_name}</span>
+            <span className="font-mono text-xs text-muted-foreground">{r.attribute_key}</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {badge(r.attribute_display_type)}
+              <span className="text-xs text-muted-foreground">
+                {r.attribute_model === "contact_attribute" ? "Contacto" : "Conversación"}
+              </span>
+            </div>
+          </div>
+        )}
+        empty={{ title: "Sin atributos", description: "Crea el primer atributo personalizado." }}
+      />
       {puedeEditar ? (
         <AtributoModal
           open={crear || editar !== null}
@@ -1161,7 +1242,20 @@ function WebhooksTab({ puedeEditar }: { puedeEditar: boolean }) {
       <BarraTab puedeEditar={puedeEditar} onRecargar={recargar} onNuevo={() => setCrear(true)} etiquetaNuevo="Nuevo webhook" />
       {error ? <AvisoError error={error} /> : null}
       {accErr ? <AvisoError error={accErr} /> : null}
-      <DataTable<CwWebhook> data={data ?? []} columns={cols} rowKey={(r) => String(r.id)} rowActions={acciones} loading={loading} empty={{ title: "Sin webhooks", description: "Crea el primer webhook." }} />
+      <DataTable<CwWebhook>
+        data={data ?? []}
+        columns={cols}
+        rowKey={(r) => String(r.id)}
+        rowActions={acciones}
+        loading={loading}
+        mobileCard={(r) => (
+          <div className="flex flex-col gap-1">
+            <span className="break-all font-mono text-xs">{r.url}</span>
+            <div>{badge(`${r.subscriptions?.length ?? 0} eventos`)}</div>
+          </div>
+        )}
+        empty={{ title: "Sin webhooks", description: "Crea el primer webhook." }}
+      />
       {puedeEditar ? (
         <WebhookModal
           open={crear || editar !== null}
