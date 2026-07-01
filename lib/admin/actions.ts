@@ -18,6 +18,8 @@ import {
   getDesviacionesPaquetes,
   getMarcasPage,
   getAreasPage,
+  getAreasArbol,
+  type AreaArbolRow,
   getDocumentosPage,
   type DocumentosPage,
   type DocumentosFiltros,
@@ -5588,8 +5590,26 @@ const areaSchema = z.object({
   nombre: z.string().trim().min(1, "El nombre es obligatorio.").max(120),
   descripcion: z.string().trim().max(500).nullable().optional(),
   liderId: z.string().uuid("Líder no válido.").nullable().optional().transform((v) => v ?? null),
+  padreId: z.string().uuid("Área padre no válida.").nullable().optional().transform((v) => v ?? null),
   activa: z.boolean().optional(),
 });
+
+/**
+ * ¿`posiblePadre` es la propia área o una descendiente suya? Evita ciclos al
+ * asignar el área padre (un área no puede colgar de su propio subárbol).
+ */
+async function generariaCicloArea(areaId: string, posiblePadre: string): Promise<boolean> {
+  if (areaId === posiblePadre) return true;
+  const res = await db.execute(sql`
+    WITH RECURSIVE descendientes AS (
+      SELECT id FROM areas WHERE padre_id = ${areaId}
+      UNION ALL
+      SELECT a.id FROM areas a JOIN descendientes d ON a.padre_id = d.id
+    )
+    SELECT 1 FROM descendientes WHERE id = ${posiblePadre} LIMIT 1
+  `);
+  return (res as unknown as { rows: unknown[] }).rows.length > 0;
+}
 
 function mensajeAreaConflicto(e: unknown): string {
   const msg = e instanceof Error ? e.message : "";
@@ -5609,6 +5629,11 @@ export async function fetchAreas(input: {
   return getAreasPage({ busqueda: f.busqueda, soloActivas: f.soloActivas }, { limit, offset });
 }
 
+export async function fetchAreasArbol(): Promise<AreaArbolRow[]> {
+  await assertPerm("areas", "view");
+  return getAreasArbol();
+}
+
 export async function crearArea(
   data: z.input<typeof areaSchema>,
 ): Promise<ActionResult & { id?: string }> {
@@ -5626,6 +5651,7 @@ export async function crearArea(
         nombreNormalizado: normalizarNombre(d.nombre),
         descripcion: txtOrNull(d.descripcion),
         liderId: d.liderId,
+        padreId: d.padreId,
         activa: d.activa ?? true,
       })
       .returning({ id: schema.areas.id });
@@ -5647,6 +5673,10 @@ export async function actualizarArea(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
   }
   const d = parsed.data;
+  // Guard anti-ciclos: el área no puede colgar de sí misma ni de una descendiente.
+  if (d.padreId && (await generariaCicloArea(id, d.padreId))) {
+    return { ok: false, error: "El área no puede colgar de sí misma ni de una subárea suya." };
+  }
   try {
     await db
       .update(schema.areas)
@@ -5655,6 +5685,7 @@ export async function actualizarArea(
         nombreNormalizado: normalizarNombre(d.nombre),
         descripcion: txtOrNull(d.descripcion),
         liderId: d.liderId,
+        padreId: d.padreId,
         activa: d.activa ?? true,
         updatedAt: new Date().toISOString(),
       })

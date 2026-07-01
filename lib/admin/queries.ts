@@ -1042,6 +1042,8 @@ export interface AreaRow {
   descripcion: string | null;
   liderId: string | null;
   liderNombre: string | null;
+  padreId: string | null;
+  padreNombre: string | null;
   activa: boolean;
   miembros: number;
   createdAt: string;
@@ -1075,6 +1077,7 @@ export async function getAreasPage(
     .where(where);
 
   const lider = alias(schema.usuarios, "lider");
+  const padre = alias(schema.areas, "padre");
   // Conteo de miembros por área (subconsulta correlacionada). `areas.id` se
   // referencia con sql.raw para que no se renderice sin calificar (ambigüedad).
   const miembros = sql<number>`(
@@ -1088,6 +1091,8 @@ export async function getAreasPage(
       descripcion: schema.areas.descripcion,
       liderId: schema.areas.liderId,
       liderNombre: lider.nombre,
+      padreId: schema.areas.padreId,
+      padreNombre: padre.nombre,
       activa: schema.areas.activa,
       miembros,
       createdAt: schema.areas.createdAt,
@@ -1095,6 +1100,7 @@ export async function getAreasPage(
     })
     .from(schema.areas)
     .leftJoin(lider, eq(schema.areas.liderId, lider.id))
+    .leftJoin(padre, eq(schema.areas.padreId, padre.id))
     .where(where)
     .orderBy(asc(schema.areas.nombre))
     .limit(opts.limit)
@@ -1104,6 +1110,44 @@ export async function getAreasPage(
     rows: rows.map((r) => ({ ...r, miembros: Number(r.miembros) })),
     total: Number(total),
   };
+}
+
+/** Nodo del árbol de áreas (todas, sin paginar) para la vista jerárquica. */
+export interface AreaArbolRow {
+  id: string;
+  nombre: string;
+  descripcion: string | null;
+  liderId: string | null;
+  liderNombre: string | null;
+  padreId: string | null;
+  activa: boolean;
+  miembros: number;
+}
+
+/**
+ * Todas las áreas con su líder, padre y conteo de miembros. Sin paginar (las
+ * áreas son pocas); el cliente arma el árbol a partir de `padreId`.
+ */
+export async function getAreasArbol(): Promise<AreaArbolRow[]> {
+  const lider = alias(schema.usuarios, "lider");
+  const miembros = sql<number>`(
+    SELECT count(*)::int FROM usuarios m WHERE m.area_id = ${sql.raw("areas.id")}
+  )`;
+  const rows = await db
+    .select({
+      id: schema.areas.id,
+      nombre: schema.areas.nombre,
+      descripcion: schema.areas.descripcion,
+      liderId: schema.areas.liderId,
+      liderNombre: lider.nombre,
+      padreId: schema.areas.padreId,
+      activa: schema.areas.activa,
+      miembros,
+    })
+    .from(schema.areas)
+    .leftJoin(lider, eq(schema.areas.liderId, lider.id))
+    .orderBy(asc(schema.areas.nombre));
+  return rows.map((r) => ({ ...r, miembros: Number(r.miembros) }));
 }
 
 /** Áreas activas para selects (id + nombre). */

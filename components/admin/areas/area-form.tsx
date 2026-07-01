@@ -12,11 +12,19 @@ import { Label } from "@/components/ui/label"
 const SELECT_CLASS =
   "h-9 w-full rounded-md border border-border bg-background px-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50"
 
+/** Datos mínimos que el formulario necesita para prefilar (fila o nodo de árbol). */
+export type AreaFormArea = Pick<
+  AreaRow,
+  "id" | "nombre" | "descripcion" | "liderId" | "padreId" | "activa"
+>
+
 export interface AreaFormProps {
   modo: "crear" | "editar"
-  area?: AreaRow
+  area?: AreaFormArea
   /** Usuarios para el selector de líder. */
   usuarios: ReadonlyArray<{ id: string; nombre: string }>
+  /** Áreas para el selector de "área padre" (se excluye la propia al editar). */
+  areas: ReadonlyArray<{ id: string; nombre: string }>
   onSuccess?: () => void
   onCancel?: () => void
   onSavingChange?: (saving: boolean) => void
@@ -28,14 +36,19 @@ function nullable(v: string): string | null {
 }
 
 /** Alta/edición de un área: nombre, descripción, líder y estado. */
-export function AreaForm({ modo, area, usuarios, onSuccess, onCancel, onSavingChange }: AreaFormProps) {
+export function AreaForm({ modo, area, usuarios, areas, onSuccess, onCancel, onSavingChange }: AreaFormProps) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [nombre, setNombre] = useState(area?.nombre ?? "")
   const [descripcion, setDescripcion] = useState(area?.descripcion ?? "")
   const [liderId, setLiderId] = useState(area?.liderId ?? "")
+  const [padreId, setPadreId] = useState(area?.padreId ?? "")
   const [activa, setActiva] = useState(area?.activa ?? true)
+
+  // No se puede elegir la propia área como padre (los descendientes los bloquea
+  // el servidor para no depender aquí del árbol completo).
+  const areasPadre = areas.filter((a) => a.id !== area?.id)
 
   useEffect(() => {
     onSavingChange?.(pending)
@@ -48,6 +61,7 @@ export function AreaForm({ modo, area, usuarios, onSuccess, onCancel, onSavingCh
       nombre: nombre.trim(),
       descripcion: nullable(descripcion),
       liderId: nullable(liderId),
+      padreId: nullable(padreId),
       activa,
     }
     startTransition(async () => {
@@ -88,6 +102,27 @@ export function AreaForm({ modo, area, usuarios, onSuccess, onCancel, onSavingCh
           rows={2}
           className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
         />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="area-padre">Área padre</Label>
+        <select
+          id="area-padre"
+          value={padreId}
+          onChange={(e) => setPadreId(e.target.value)}
+          disabled={pending}
+          className={SELECT_CLASS}
+        >
+          <option value="">Sin padre (área raíz)</option>
+          {areasPadre.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.nombre}
+            </option>
+          ))}
+        </select>
+        <p className="text-[11px] text-muted-foreground">
+          Deja &ldquo;sin padre&rdquo; para un área raíz. Ej.: Ventas y Preventas cuelgan de Comercial.
+        </p>
       </div>
 
       <div className="space-y-1.5">

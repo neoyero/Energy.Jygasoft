@@ -12,6 +12,19 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0019 — Áreas anidadas (árbol de departamentos) · 2026-06-30
+
+**Migración:** `db/migrations/0019_areas_arbol.sql`
+
+- `areas.padre_id` (uuid, FK→areas ON DELETE SET NULL): convierte las áreas en un
+  árbol. Un área raíz (Comercial) tiene sub-áreas (Ventas, Preventas) que a su vez
+  pueden tener las suyas (Finanzas → Cuentas por Pagar / por Cobrar). NULL = raíz.
+- Índice `ix_areas_padre`. Al borrar un padre, sus hijas quedan como raíz.
+- El guard anti-ciclos vive en la acción `actualizarArea` (un área no puede colgar
+  de sí misma ni de una descendiente suya).
+
+---
+
 ## 0018 — Integraciones/configuraciones en BD (secretos cifrados) · 2026-06-30
 
 **Migración:** `db/migrations/0018_integraciones.sql`

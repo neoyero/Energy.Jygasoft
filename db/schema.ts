@@ -60,16 +60,25 @@ export const areas = pgTable("areas", {
 	nombreNormalizado: text("nombre_normalizado").notNull(),
 	descripcion: text(),
 	liderId: uuid("lider_id"),
+	// Árbol de departamentos: área padre (NULL = raíz). La FK auto-referenciada
+	// vive en la BD (ver más abajo) para evitar la referencia adelantada.
+	padreId: uuid("padre_id"),
 	activa: boolean().default(true).notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	uniqueIndex("ux_areas_nombre_norm").using("btree", table.nombreNormalizado.asc().nullsLast().op("text_ops")),
 	index("ix_areas_lider").using("btree", table.liderId.asc().nullsLast().op("uuid_ops")),
+	index("ix_areas_padre").using("btree", table.padreId.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
 			columns: [table.liderId],
 			foreignColumns: [usuarios.id],
 			name: "areas_lider_id_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.padreId],
+			foreignColumns: [table.id],
+			name: "areas_padre_id_fkey"
 		}).onDelete("set null"),
 ]);
 

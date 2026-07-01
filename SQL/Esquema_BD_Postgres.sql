@@ -65,12 +65,16 @@ CREATE TABLE areas (
   nombre_normalizado text NOT NULL,
   descripcion text,
   lider_id uuid REFERENCES usuarios(id) ON DELETE SET NULL,
+  -- Árbol de departamentos: área padre (NULL = raíz). ON DELETE SET NULL: al
+  -- borrar un padre, sus hijas quedan como raíz (no cascada).
+  padre_id uuid REFERENCES areas(id) ON DELETE SET NULL,
   activa boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX ux_areas_nombre_norm ON areas (nombre_normalizado);
 CREATE INDEX ix_areas_lider ON areas (lider_id);
+CREATE INDEX ix_areas_padre ON areas (padre_id);
 CREATE TRIGGER trg_areas_upd BEFORE UPDATE ON areas FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 ALTER TABLE usuarios ADD CONSTRAINT usuarios_area_id_fkey
