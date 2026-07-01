@@ -205,12 +205,16 @@ export interface CampoAjusteAdmin {
   label: string;
   valor: string;
   fromEnv: boolean;
+  /** Campos en claro NO son sensibles (no se enmascaran). */
+  sensible: false;
 }
 export interface CampoSecretoAdmin {
   campo: string;
   label: string;
   configurado: boolean;
   fromEnv: boolean;
+  /** Los secretos SÍ son sensibles: se enmascaran en la UI y se cifran en BD. */
+  sensible: true;
 }
 export interface IntegracionAdmin {
   clave: string;
@@ -218,6 +222,8 @@ export interface IntegracionAdmin {
   descripcion: string;
   activo: boolean;
   configurada: boolean;
+  /** true = integración creada a mano (no del REGISTRO): campos dinámicos. */
+  custom: boolean;
   ajustes: CampoAjusteAdmin[];
   secretos: CampoSecretoAdmin[];
 }
@@ -229,6 +235,8 @@ export interface IntegracionAdmin {
  */
 export async function getIntegracionesAdmin(): Promise<IntegracionAdmin[]> {
   const out: IntegracionAdmin[] = [];
+
+  // 1) Integraciones del REGISTRO (campos fijos, con fallback a env).
   for (const def of REGISTRO) {
     const fila = await cargar(def.clave);
     const res = await getIntegracion(def.clave);
@@ -241,13 +249,20 @@ export async function getIntegracionesAdmin(): Promise<IntegracionAdmin[]> {
         label: c.label,
         valor: enDb ? (dbVal as string) : (envFallback(c.env) ?? ""),
         fromEnv: !enDb && envFallback(c.env) != null,
+        sensible: false,
       };
     });
 
     const secretos: CampoSecretoAdmin[] = def.secretos.map((c) => {
       const enDb = esSecretoCifrado(fila.secretos[c.campo]);
       const enEnv = envFallback(c.env) != null;
-      return { campo: c.campo, label: c.label, configurado: enDb || enEnv, fromEnv: !enDb && enEnv };
+      return {
+        campo: c.campo,
+        label: c.label,
+        configurado: enDb || enEnv,
+        fromEnv: !enDb && enEnv,
+        sensible: true,
+      };
     });
 
     out.push({
@@ -256,9 +271,66 @@ export async function getIntegracionesAdmin(): Promise<IntegracionAdmin[]> {
       descripcion: def.descripcion,
       activo: res.activo,
       configurada: res.configurada(),
+      custom: false,
       ajustes,
       secretos,
     });
   }
+
+  // 2) Integraciones creadas a mano (claves fuera del REGISTRO): campos dinámicos
+  //    derivados de las llaves del jsonb. Los secretos nunca exponen su valor.
+  try {
+    const filas = await db
+      .select({
+        clave: schema.integraciones.clave,
+        nombre: schema.integraciones.nombre,
+        descripcion: schema.integraciones.descripcion,
+        activo: schema.integraciones.activo,
+        ajustes: schema.integraciones.ajustes,
+        secretos: schema.integraciones.secretos,
+      })
+      .from(schema.integraciones);
+
+    for (const f of filas) {
+      if (DEF_POR_CLAVE.has(f.clave)) continue; // ya cubierta arriba
+
+      const ajObj = (f.ajustes as Record<string, unknown>) ?? {};
+      const seObj = (f.secretos as Record<string, unknown>) ?? {};
+
+      const ajustes: CampoAjusteAdmin[] = Object.entries(ajObj)
+        .filter(([, v]) => typeof v === "string")
+        .map(([campo, v]) => ({
+          campo,
+          label: campo,
+          valor: v as string,
+          fromEnv: false,
+          sensible: false,
+        }));
+
+      const secretos: CampoSecretoAdmin[] = Object.keys(seObj)
+        .filter((campo) => esSecretoCifrado(seObj[campo]))
+        .map((campo) => ({
+          campo,
+          label: campo,
+          configurado: true,
+          fromEnv: false,
+          sensible: true,
+        }));
+
+      out.push({
+        clave: f.clave,
+        nombre: f.nombre,
+        descripcion: f.descripcion ?? "",
+        activo: f.activo,
+        configurada: ajustes.length + secretos.length > 0,
+        custom: true,
+        ajustes,
+        secretos,
+      });
+    }
+  } catch {
+    // Sin BD: solo devolvemos las del REGISTRO.
+  }
+
   return out;
 }

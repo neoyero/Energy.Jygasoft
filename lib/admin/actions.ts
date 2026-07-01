@@ -61,7 +61,7 @@ import {
 import { sendMail } from "@/lib/email";
 import { deleteDriveItem } from "@/lib/m365/sharepoint";
 import { chatwootConfigurado, listarAgentes, crearAgente } from "@/lib/chatwoot/client";
-import { REGISTRO, invalidarConfig } from "@/lib/config/service";
+import { REGISTRO, invalidarConfig, getIntegracion } from "@/lib/config/service";
 import { cifrarSecreto } from "@/lib/config/crypto";
 import { serverEnv, clientEnv } from "@/lib/env";
 import {
@@ -5898,42 +5898,54 @@ export async function guardarIntegracion(
 ): Promise<ActionResult> {
   const user = await assertPerm("integraciones", "edit");
   const def = REGISTRO.find((d) => d.clave === clave);
-  if (!def) return { ok: false, error: "Integración no válida." };
 
-  // Ajustes: solo los campos declarados en el registro.
-  const ajustes: Record<string, string> = {};
-  for (const c of def.ajustes) {
-    const v = input.ajustes?.[c.campo];
-    if (typeof v === "string" && v.trim() !== "") ajustes[c.campo] = v.trim();
-  }
-
-  // Secretos: parte de los existentes; cifra solo los provistos no vacíos.
+  // Fila previa (para conservar nombre/descripción de custom y secretos anteriores).
   const [prev] = await db
-    .select({ secretos: schema.integraciones.secretos })
+    .select({
+      nombre: schema.integraciones.nombre,
+      descripcion: schema.integraciones.descripcion,
+      secretos: schema.integraciones.secretos,
+    })
     .from(schema.integraciones)
     .where(eq(schema.integraciones.clave, clave))
     .limit(1);
+
+  if (!def && !prev) return { ok: false, error: "Integración no válida." };
+
+  // Ajustes: campos del registro, o (custom) todas las llaves provistas.
+  const ajustes: Record<string, string> = {};
+  const camposAjuste = def ? def.ajustes.map((c) => c.campo) : Object.keys(input.ajustes ?? {});
+  for (const campo of camposAjuste) {
+    const v = input.ajustes?.[campo];
+    if (typeof v === "string" && v.trim() !== "") ajustes[campo] = v.trim();
+  }
+
+  // Secretos: parte de los existentes; cifra solo los provistos no vacíos.
   const secretos: Record<string, unknown> = {
     ...((prev?.secretos as Record<string, unknown>) ?? {}),
   };
+  const camposSecreto = def ? def.secretos.map((c) => c.campo) : Object.keys(input.secretos ?? {});
   try {
-    for (const c of def.secretos) {
-      const v = input.secretos?.[c.campo];
+    for (const campo of camposSecreto) {
+      const v = input.secretos?.[campo];
       if (typeof v === "string" && v.trim() !== "") {
-        secretos[c.campo] = cifrarSecreto(`${clave}:${c.campo}`, v.trim());
+        secretos[campo] = cifrarSecreto(`${clave}:${campo}`, v.trim());
       }
     }
   } catch {
     return { ok: false, error: "No se pudo cifrar (¿falta CONFIG_ENC_KEY?)." };
   }
 
+  const nombre = def ? def.nombre : (prev?.nombre ?? clave);
+  const descripcion = def ? def.descripcion : (prev?.descripcion ?? "");
+
   try {
     await db
       .insert(schema.integraciones)
       .values({
         clave,
-        nombre: def.nombre,
-        descripcion: def.descripcion,
+        nombre,
+        descripcion,
         activo: input.activo,
         ajustes,
         secretos,
@@ -5942,8 +5954,8 @@ export async function guardarIntegracion(
       .onConflictDoUpdate({
         target: schema.integraciones.clave,
         set: {
-          nombre: def.nombre,
-          descripcion: def.descripcion,
+          nombre,
+          descripcion,
           activo: input.activo,
           ajustes,
           secretos,
@@ -5955,6 +5967,111 @@ export async function guardarIntegracion(
     return { ok: false, error: "No se pudo guardar la integración." };
   }
 
+  invalidarConfig(clave);
+  revalidatePath("/je-admin/integraciones");
+  return { ok: true };
+}
+
+/* ── Crear / revelar / eliminar integraciones ─────────────────────────────── */
+
+export interface CrearIntegracionInput {
+  clave: string;
+  nombre: string;
+  descripcion?: string;
+  /** Campos: sensible=true → cifrado y enmascarado; false → en claro. */
+  campos: Array<{ campo: string; valor: string; sensible: boolean }>;
+}
+
+const RE_CLAVE = /^[a-z][a-z0-9_-]{1,39}$/;
+const RE_CAMPO = /^[a-z][a-z0-9_]{0,39}$/;
+
+/**
+ * Crea una integración a mano (fuera del REGISTRO). Cada campo se guarda en
+ * `ajustes` (claro) o `secretos` (cifrado) según su flag `sensible`.
+ */
+export async function crearIntegracion(input: CrearIntegracionInput): Promise<ActionResult> {
+  const user = await assertPerm("integraciones", "edit");
+
+  const clave = input.clave?.trim().toLowerCase() ?? "";
+  const nombre = input.nombre?.trim() ?? "";
+  if (!RE_CLAVE.test(clave)) {
+    return { ok: false, error: "Clave inválida (minúsculas, letras/números/-/_, 2-40)." };
+  }
+  if (!nombre) return { ok: false, error: "El nombre es obligatorio." };
+  if (REGISTRO.some((d) => d.clave === clave)) {
+    return { ok: false, error: "Esa clave es una integración del sistema." };
+  }
+
+  const [existe] = await db
+    .select({ clave: schema.integraciones.clave })
+    .from(schema.integraciones)
+    .where(eq(schema.integraciones.clave, clave))
+    .limit(1);
+  if (existe) return { ok: false, error: "Ya existe una integración con esa clave." };
+
+  const ajustes: Record<string, string> = {};
+  const secretos: Record<string, unknown> = {};
+  try {
+    for (const c of input.campos ?? []) {
+      const campo = c.campo?.trim().toLowerCase() ?? "";
+      const valor = typeof c.valor === "string" ? c.valor.trim() : "";
+      if (!RE_CAMPO.test(campo) || valor === "") continue;
+      if (c.sensible) secretos[campo] = cifrarSecreto(`${clave}:${campo}`, valor);
+      else ajustes[campo] = valor;
+    }
+  } catch {
+    return { ok: false, error: "No se pudo cifrar (¿falta CONFIG_ENC_KEY?)." };
+  }
+
+  try {
+    await db.insert(schema.integraciones).values({
+      clave,
+      nombre,
+      descripcion: input.descripcion?.trim() || null,
+      activo: true,
+      ajustes,
+      secretos,
+      actualizadoPor: user.id ?? null,
+    });
+  } catch {
+    return { ok: false, error: "No se pudo crear la integración." };
+  }
+
+  invalidarConfig(clave);
+  revalidatePath("/je-admin/integraciones");
+  return { ok: true };
+}
+
+/**
+ * Revela el valor efectivo de un secreto (BD descifrada o fallback a env) para
+ * verlo/copiarlo en la UI. Acción explícita, solo admin (integraciones:edit).
+ */
+export async function revelarSecretoIntegracion(
+  clave: string,
+  campo: string,
+): Promise<{ ok: true; valor: string } | { ok: false; error: string }> {
+  await assertPerm("integraciones", "edit");
+  try {
+    const integ = await getIntegracion(clave);
+    const valor = integ.secreto(campo);
+    if (valor == null) return { ok: false, error: "Sin valor (no configurado)." };
+    return { ok: true, valor };
+  } catch {
+    return { ok: false, error: "No se pudo revelar (¿falta CONFIG_ENC_KEY?)." };
+  }
+}
+
+/** Elimina una integración creada a mano (las del REGISTRO no se borran). */
+export async function eliminarIntegracion(clave: string): Promise<ActionResult> {
+  await assertPerm("integraciones", "edit");
+  if (REGISTRO.some((d) => d.clave === clave)) {
+    return { ok: false, error: "Las integraciones del sistema no se pueden eliminar." };
+  }
+  try {
+    await db.delete(schema.integraciones).where(eq(schema.integraciones.clave, clave));
+  } catch {
+    return { ok: false, error: "No se pudo eliminar la integración." };
+  }
   invalidarConfig(clave);
   revalidatePath("/je-admin/integraciones");
   return { ok: true };

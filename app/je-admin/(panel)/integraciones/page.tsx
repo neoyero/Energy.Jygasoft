@@ -10,9 +10,9 @@ export const dynamic = "force-dynamic"
 
 /**
  * Integraciones: administración de conexiones externas (Chatwoot, M365, Meta,
- * n8n, Gemini, Turnstile) con sus tokens/keys cifrados en BD. Solo admin. Los
- * secretos nunca se muestran (write-only); la vista solo indica si están
- * configurados y de qué fuente (BD/env).
+ * n8n, Gemini, Turnstile + personalizadas) con sus tokens/keys cifrados en BD.
+ * Solo admin. Los secretos se guardan cifrados y se muestran enmascarados; se
+ * pueden revelar bajo demanda (acción explícita) para verificarlos/copiarlos.
  */
 export default async function IntegracionesPage() {
   const user = await requirePerm("integraciones", "view")
@@ -23,7 +23,7 @@ export default async function IntegracionesPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Integraciones"
-        description="Conexiones externas y sus credenciales (cifradas en BD). Los secretos no se muestran: escribe uno nuevo para reemplazarlo."
+        description="Conexiones externas y sus credenciales (cifradas en BD). Los campos sensibles van enmascarados; puedes revelarlos o crear una integración nueva."
         icon={<KeyRound className="size-6" aria-hidden />}
       />
       <IntegracionesView integraciones={integraciones} puedeEditar={puedeEditar} />
