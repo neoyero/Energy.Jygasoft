@@ -63,7 +63,9 @@ export function Organigrama({ nodos, puedeEditar = false }: OrganigramaProps) {
   /** Reasigna el jefe (reportaA) del nodo arrastrado; null = hacerlo raíz. */
   function soltar(draggedId: string, targetId: string | null): void {
     setOverId(null)
-    if (!puedeEditar || draggedId === targetId) return
+    // Evita despachar una segunda reasignación con un snapshot (cargo/área) que
+    // podría quedar stale mientras la anterior aún está en curso.
+    if (!puedeEditar || pending || draggedId === targetId) return
     const n = mapa.get(draggedId)
     if (!n) return
     if (n.reportaA === targetId) return // sin cambios
@@ -186,7 +188,8 @@ function OrganigramaArbol({ raices }: { raices: NodoArbol[] }) {
 function ArbolNodo({ nodo }: { nodo: NodoArbol }) {
   const tieneHijos = nodo.hijos.length > 0
   const dnd = useContext(OrgDndCtx)
-  const editable = dnd?.puedeEditar ?? false
+  // Deshabilita el arrastre/soltar mientras hay una reasignación en curso.
+  const editable = (dnd?.puedeEditar ?? false) && !(dnd?.pending ?? false)
   const isOver = dnd?.overId === nodo.id
 
   function onDragStart(e: DragEvent<HTMLDivElement>): void {

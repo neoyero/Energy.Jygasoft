@@ -1128,7 +1128,9 @@ export interface AreaKpiRow {
  * KPIs por área (departamento): agrega leads/oportunidades/clientes/proyectos
  * por el área del vendedor dueño de cada registro. Respeta la visibilidad por
  * subárbol (idsEnAmbito): admin ve todas las áreas con todo; un rol acotado solo
- * ve los registros de su subárbol agrupados por área. Áreas activas.
+ * ve las áreas donde trabaja su subárbol, y los conteos (incl. `miembros`) están
+ * acotados a su subárbol (no reflejan el total real del área para roles
+ * acotados). Áreas activas.
  */
 export async function getKpisPorArea(scope: DashboardScope): Promise<AreaKpiRow[]> {
   const ambito = await idsEnAmbito(scope);
@@ -1138,6 +1140,11 @@ export async function getKpisPorArea(scope: DashboardScope): Promise<AreaKpiRow[
   const fOport = lista ? sql`AND o.vendedor_id IN ${lista}` : sql``;
   const fCli = lista ? sql`AND c.vendedor_id IN ${lista}` : sql``;
   const fProy = lista ? sql`AND p.vendedor_id IN ${lista}` : sql``;
+  // Un rol acotado solo debe ver las áreas donde hay alguien de su subárbol
+  // (no el catálogo completo de áreas de la empresa con ceros).
+  const fArea = lista
+    ? sql`AND ar.id IN (SELECT DISTINCT area_id FROM usuarios WHERE area_id IS NOT NULL AND id IN ${lista})`
+    : sql``;
 
   const result = await db.execute(sql`
     SELECT
@@ -1157,7 +1164,7 @@ export async function getKpisPorArea(scope: DashboardScope): Promise<AreaKpiRow[
       (SELECT count(*)::int FROM proyectos p JOIN usuarios u ON u.id = p.vendedor_id
          WHERE u.area_id = ar.id ${fProy}) AS proyectos
     FROM areas ar
-    WHERE ar.activa
+    WHERE ar.activa ${fArea}
     ORDER BY ar.nombre
   `);
 

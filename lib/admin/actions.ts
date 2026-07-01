@@ -5538,6 +5538,9 @@ export async function actualizarJerarquiaUsuario(
   data: z.input<typeof jerarquiaSchema>,
 ): Promise<ActionResult> {
   await assertPerm("organizacion", "edit");
+  if (!z.string().uuid().safeParse(userId).success) {
+    return { ok: false, error: "Usuario no válido." };
+  }
   const parsed = jerarquiaSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
