@@ -3417,6 +3417,51 @@ export interface PagosData {
   totales: PagosTotales;
 }
 
+/** Punto de flujo de cobranza mensual (programado vs pagado). */
+export interface PagoFlujoPunto {
+  mes: string;
+  programado: number;
+  pagado: number;
+}
+
+/**
+ * Flujo de cobranza de los últimos 6 meses (por mes de fecha_programada):
+ * `programado` = suma de montos con vencimiento ese mes; `pagado` = suma de los
+ * ya cobrados. Respeta el scope por subárbol (vía el proyecto dueño). Incluye
+ * meses sin pagos (en cero) para una serie continua.
+ */
+export async function getPagosFlujo(scope: DashboardScope): Promise<PagoFlujoPunto[]> {
+  const ambito = await idsEnAmbito(scope);
+  const own = ambito
+    ? sql`AND EXISTS (SELECT 1 FROM proyectos pr WHERE pr.id = p.proyecto_id AND pr.vendedor_id IN ${sqlIdList(ambito)})`
+    : sql``;
+
+  const result = await db.execute(sql`
+    WITH meses AS (
+      SELECT date_trunc('month', d)::date AS m, to_char(d, 'YYYY-MM') AS mes
+      FROM generate_series(
+        date_trunc('month', now()) - interval '5 months',
+        date_trunc('month', now()),
+        interval '1 month'
+      ) d
+    )
+    SELECT meses.mes AS mes,
+           coalesce(sum(p.monto), 0)::float8 AS programado,
+           coalesce(sum(p.monto) FILTER (WHERE p.estado = 'pagado'), 0)::float8 AS pagado
+    FROM meses
+    LEFT JOIN pagos p
+      ON date_trunc('month', p.fecha_programada) = meses.m ${own}
+    GROUP BY meses.mes, meses.m
+    ORDER BY meses.m
+  `);
+
+  return asRows(result).map((r) => ({
+    mes: str(r.mes),
+    programado: num(r.programado),
+    pagado: num(r.pagado),
+  }));
+}
+
 /**
  * Pagos filtrados (con folio del proyecto y nombre del cliente vía leftJoin) +
  * totales por estado. Scoping para roles acotados vía EXISTS sobre el proyecto

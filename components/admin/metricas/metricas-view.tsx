@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Wallet, FolderKanban, TrendingUp, Percent, X } from "lucide-react";
+import { Wallet, FolderKanban, TrendingUp, Percent, X, Download } from "lucide-react";
 
 import { formatMXN, formatInt, toneToHex } from "@/lib/admin/format";
 import type { MetricasData, VendedorOption } from "@/lib/admin/queries";
@@ -86,6 +86,46 @@ export function MetricasView({
 
   const { resumen, ventasMensuales, conversionPipeline, proyectosPorFase, cobranza } =
     data;
+
+  /** Exporta los reportes visibles a un CSV (una sección por reporte). */
+  function exportarCSV(): void {
+    const esc = (v: string | number): string => {
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lineas: string[] = [];
+    lineas.push("Resumen");
+    lineas.push("Métrica,Valor");
+    lineas.push(`Ingresos del periodo,${resumen.ingresosPeriodo}`);
+    lineas.push(`Proyectos nuevos,${resumen.proyectosNuevos}`);
+    lineas.push(`Tasa de conversión (%),${resumen.tasaConversion ?? ""}`);
+    lineas.push(`Cobranza pendiente,${resumen.cobranzaPendiente}`);
+    lineas.push("");
+    lineas.push("Ingresos mensuales");
+    lineas.push("Mes,Ingresos");
+    ventasMensuales.forEach((r) => lineas.push(`${esc(r.mes)},${r.ingresos}`));
+    lineas.push("");
+    lineas.push("Conversión por etapa");
+    lineas.push("Etapa,Oportunidades");
+    conversionPipeline.forEach((r) => lineas.push(`${esc(labelFor(r.etapa))},${r.conteo}`));
+    lineas.push("");
+    lineas.push("Proyectos por fase");
+    lineas.push("Fase,Proyectos");
+    proyectosPorFase.forEach((r) => lineas.push(`${esc(labelFor(r.fase))},${r.conteo}`));
+    lineas.push("");
+    lineas.push("Cobranza");
+    lineas.push("Estado,Monto");
+    cobranza.forEach((r) => lineas.push(`${esc(labelFor(r.estado))},${r.monto}`));
+
+    const blob = new Blob(["﻿" + lineas.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const sufijo = [filtros.desde, filtros.hasta].filter(Boolean).join("_");
+    a.download = `metricas${sufijo ? "_" + sufijo : ""}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   // ── Series para las gráficas (etiquetas crudas mapeadas con labelFor) ──
   const ventasData: ChartDatum[] = ventasMensuales.map((row) => ({
@@ -175,6 +215,19 @@ export function MetricasView({
         >
           <X className="size-3.5" aria-hidden />
           Limpiar
+        </button>
+
+        <button
+          type="button"
+          onClick={exportarCSV}
+          className={cn(
+            "ml-auto inline-flex h-9 items-center gap-1.5 rounded-lg border border-stone-200 px-3 text-sm font-medium text-stone-600 transition-colors",
+            "hover:bg-stone-50 hover:text-stone-800 dark:border-border dark:text-muted-foreground dark:hover:bg-muted dark:hover:text-foreground",
+            "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+          )}
+        >
+          <Download className="size-3.5" aria-hidden />
+          Exportar CSV
         </button>
       </div>
 
