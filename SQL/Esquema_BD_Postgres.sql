@@ -46,8 +46,9 @@ CREATE TABLE usuarios (
   activo boolean NOT NULL DEFAULT true,
   -- Estructura organizacional (Fase 1): línea de reporte + cargo + área.
   reporta_a uuid REFERENCES usuarios(id) ON DELETE SET NULL,
-  cargo text,
-  area_id uuid,  -- FK -> areas, agregada tras crear `areas` (más abajo).
+  cargo text,           -- valor denormalizado para mostrar (fuente: cargo_id)
+  cargo_id uuid,        -- FK -> cargos, agregada tras crear `cargos` (más abajo).
+  area_id uuid,         -- FK -> areas, agregada tras crear `areas` (más abajo).
   ultimo_acceso timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -55,6 +56,7 @@ CREATE TABLE usuarios (
 CREATE UNIQUE INDEX ux_usuarios_email ON usuarios (lower(email));
 CREATE INDEX ix_usuarios_reporta_a ON usuarios (reporta_a);
 CREATE INDEX ix_usuarios_area ON usuarios (area_id);
+CREATE INDEX ix_usuarios_cargo ON usuarios (cargo_id);
 CREATE TRIGGER trg_usuarios_upd BEFORE UPDATE ON usuarios FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- Áreas / departamentos (organigrama). Se crea tras `usuarios` (la referencia) y
@@ -79,6 +81,34 @@ CREATE TRIGGER trg_areas_upd BEFORE UPDATE ON areas FOR EACH ROW EXECUTE FUNCTIO
 
 ALTER TABLE usuarios ADD CONSTRAINT usuarios_area_id_fkey
   FOREIGN KEY (area_id) REFERENCES areas(id) ON DELETE SET NULL;
+
+-- Catálogo de cargos (Director, Subdirector, Gerente…). Fuente de usuarios.cargo_id
+-- y "rol" de cada líder de área. `cargo` (texto) queda como denormalizado a mostrar.
+CREATE TABLE cargos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre text NOT NULL,
+  nombre_normalizado text NOT NULL,
+  activo boolean NOT NULL DEFAULT true,
+  orden int NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX ux_cargos_nombre_norm ON cargos (nombre_normalizado);
+CREATE TRIGGER trg_cargos_upd BEFORE UPDATE ON cargos FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+ALTER TABLE usuarios ADD CONSTRAINT usuarios_cargo_id_fkey
+  FOREIGN KEY (cargo_id) REFERENCES cargos(id) ON DELETE SET NULL;
+
+-- Líderes de un área (varios por área). El "rol" de cada líder es su cargo (del
+-- usuario). areas.lider_id conserva el principal (= lideres[0]).
+CREATE TABLE area_lideres (
+  area_id    uuid NOT NULL REFERENCES areas(id) ON DELETE CASCADE,
+  usuario_id uuid NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  orden      int  NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (area_id, usuario_id)
+);
+CREATE INDEX ix_area_lideres_usuario ON area_lideres (usuario_id);
 
 -- Códigos de un solo uso (OTP) para login passwordless por correo (je-admin).
 CREATE TABLE login_codes (

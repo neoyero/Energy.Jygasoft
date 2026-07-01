@@ -20,6 +20,7 @@ import {
   UserCog,
   Network,
   Building2,
+  IdCard,
   KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -42,6 +43,7 @@ const ICONS: Record<Modulo, React.ComponentType<{ className?: string }>> = {
   campanas: Megaphone,
   organizacion: Network,
   areas: Building2,
+  cargos: IdCard,
   integraciones: KeyRound,
   usuarios: UserCog,
 };

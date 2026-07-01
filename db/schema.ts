@@ -1,4 +1,4 @@
-import { pgTable, uniqueIndex, unique, uuid, text, boolean, timestamp, foreignKey, bigint, index, numeric, jsonb, date, check, integer, inet, pgEnum } from "drizzle-orm/pg-core"
+import { pgTable, uniqueIndex, unique, uuid, text, boolean, timestamp, foreignKey, bigint, index, numeric, jsonb, date, check, integer, inet, pgEnum, primaryKey } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 export const actividadEstado = pgEnum("actividad_estado", ['pendiente', 'completada', 'cancelada'])
@@ -35,7 +35,10 @@ export const usuarios = pgTable("usuarios", {
 	activo: boolean().default(true).notNull(),
 	// Estructura organizacional (Fase 1): línea de reporte + cargo + área.
 	reportaA: uuid("reporta_a"),
+	// `cargo` (texto) queda como valor denormalizado para mostrar; la fuente es
+	// `cargoId` → catálogo `cargos`. La FK vive en la BD (referencia adelantada).
 	cargo: text(),
+	cargoId: uuid("cargo_id"),
 	// area_id referencia `areas` (declarada más abajo); la FK vive en la BD para
 	// evitar la referencia adelantada en el modelo.
 	areaId: uuid("area_id"),
@@ -47,6 +50,7 @@ export const usuarios = pgTable("usuarios", {
 	unique("usuarios_folio_vendedor_key").on(table.folioVendedor),
 	index("ix_usuarios_reporta_a").using("btree", table.reportaA.asc().nullsLast().op("uuid_ops")),
 	index("ix_usuarios_area").using("btree", table.areaId.asc().nullsLast().op("uuid_ops")),
+	index("ix_usuarios_cargo").using("btree", table.cargoId.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
 			columns: [table.reportaA],
 			foreignColumns: [table.id],
@@ -80,6 +84,42 @@ export const areas = pgTable("areas", {
 			foreignColumns: [table.id],
 			name: "areas_padre_id_fkey"
 		}).onDelete("set null"),
+]);
+
+// Líderes de un área (varios por área). El "rol" de cada líder es el cargo del
+// usuario (catálogo cargos). areas.lider_id conserva el principal (lideres[0]).
+export const areaLideres = pgTable("area_lideres", {
+	areaId: uuid("area_id").notNull(),
+	usuarioId: uuid("usuario_id").notNull(),
+	orden: integer().default(0).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	primaryKey({ columns: [table.areaId, table.usuarioId], name: "area_lideres_pkey" }),
+	index("ix_area_lideres_usuario").using("btree", table.usuarioId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.areaId],
+			foreignColumns: [areas.id],
+			name: "area_lideres_area_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.usuarioId],
+			foreignColumns: [usuarios.id],
+			name: "area_lideres_usuario_id_fkey"
+		}).onDelete("cascade"),
+]);
+
+// Catálogo de cargos (Director, Subdirector, Gerente…). Referenciado por
+// usuarios.cargo_id; usado también como "rol" de cada líder de área.
+export const cargos = pgTable("cargos", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	nombre: text().notNull(),
+	nombreNormalizado: text("nombre_normalizado").notNull(),
+	activo: boolean().default(true).notNull(),
+	orden: integer().default(0).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	uniqueIndex("ux_cargos_nombre_norm").using("btree", table.nombreNormalizado.asc().nullsLast().op("text_ops")),
 ]);
 
 /**

@@ -12,6 +12,34 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0021 — Varios líderes por área · 2026-07-01
+
+**Migración:** `db/migrations/0021_area_lideres.sql`
+
+- Nueva tabla `area_lideres` (PK area_id+usuario_id, `orden`): permite N líderes por
+  área (p. ej. Operaciones = Director + Subdirectora). El "rol" de cada líder es el
+  cargo del usuario (catálogo `cargos`). FK a areas/usuarios ON DELETE CASCADE.
+- `areas.lider_id` se conserva como **líder principal** (= lideres[0]) por
+  compatibilidad; se sincroniza al guardar los líderes.
+- Backfill: el `lider_id` existente se copia como líder principal (orden 0).
+
+---
+
+## 0020 — Catálogo de Cargos · 2026-07-01
+
+**Migración:** `db/migrations/0020_cargos.sql`
+
+- Nueva tabla `cargos` (catálogo administrable): `nombre`, `nombre_normalizado`
+  (unique, anti-duplicados), `activo`, `orden`, trigger `updated_at`.
+- `usuarios.cargo_id` (uuid, FK→cargos ON DELETE SET NULL) + índice `ix_usuarios_cargo`.
+  El cargo del usuario pasa a elegirse del catálogo; la columna de texto
+  `usuarios.cargo` se conserva como valor **denormalizado** para mostrar (se
+  mantiene sincronizada al guardar).
+- Backfill: los valores distintos de `usuarios.cargo` se insertan en `cargos` y se
+  enlaza `cargo_id` por nombre normalizado (sin acentos, minúsculas).
+
+---
+
 ## 0019 — Áreas anidadas (árbol de departamentos) · 2026-06-30
 
 **Migración:** `db/migrations/0019_areas_arbol.sql`
