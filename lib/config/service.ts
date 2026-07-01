@@ -207,6 +207,8 @@ export interface CampoAjusteAdmin {
   fromEnv: boolean;
   /** Campos en claro NO son sensibles (no se enmascaran). */
   sensible: false;
+  /** true = declarado por el sistema (REGISTRO): fijo, no se puede eliminar. */
+  sistema: boolean;
 }
 export interface CampoSecretoAdmin {
   campo: string;
@@ -215,6 +217,8 @@ export interface CampoSecretoAdmin {
   fromEnv: boolean;
   /** Los secretos SÍ son sensibles: se enmascaran en la UI y se cifran en BD. */
   sensible: true;
+  /** true = declarado por el sistema (REGISTRO): fijo, no se puede eliminar. */
+  sistema: boolean;
 }
 export interface IntegracionAdmin {
   clave: string;
@@ -250,6 +254,7 @@ export async function getIntegracionesAdmin(): Promise<IntegracionAdmin[]> {
         valor: enDb ? (dbVal as string) : (envFallback(c.env) ?? ""),
         fromEnv: !enDb && envFallback(c.env) != null,
         sensible: false,
+        sistema: true,
       };
     });
 
@@ -262,8 +267,22 @@ export async function getIntegracionesAdmin(): Promise<IntegracionAdmin[]> {
         configurado: enDb || enEnv,
         fromEnv: !enDb && enEnv,
         sensible: true,
+        sistema: true,
       };
     });
+
+    // Campos extra agregados a mano a una integración del sistema (fuera del
+    // REGISTRO): se muestran para poder editarlos/quitarlos (sistema: false).
+    const ajusteDecl = new Set(def.ajustes.map((c) => c.campo));
+    for (const [campo, v] of Object.entries(fila.ajustes)) {
+      if (ajusteDecl.has(campo) || typeof v !== "string") continue;
+      ajustes.push({ campo, label: campo, valor: v, fromEnv: false, sensible: false, sistema: false });
+    }
+    const secretoDecl = new Set(def.secretos.map((c) => c.campo));
+    for (const campo of Object.keys(fila.secretos)) {
+      if (secretoDecl.has(campo) || !esSecretoCifrado(fila.secretos[campo])) continue;
+      secretos.push({ campo, label: campo, configurado: true, fromEnv: false, sensible: true, sistema: false });
+    }
 
     out.push({
       clave: def.clave,
@@ -305,6 +324,7 @@ export async function getIntegracionesAdmin(): Promise<IntegracionAdmin[]> {
           valor: v as string,
           fromEnv: false,
           sensible: false,
+          sistema: false,
         }));
 
       const secretos: CampoSecretoAdmin[] = Object.keys(seObj)
@@ -315,6 +335,7 @@ export async function getIntegracionesAdmin(): Promise<IntegracionAdmin[]> {
           configurado: true,
           fromEnv: false,
           sensible: true,
+          sistema: false,
         }));
 
       out.push({
