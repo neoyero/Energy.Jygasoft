@@ -21,6 +21,7 @@
     "db:apply-sql": "tsx db/scripts/apply-sql.ts",
     "db:seed-integraciones": "tsx db/scripts/seed-integraciones.ts",
     "db:gen-seed": "tsx db/scripts/gen-seed-esencial.ts",
+    "db:upsert-integracion": "tsx db/scripts/upsert-integracion.ts",
     "db:import-cp": "tsx db/scripts/import-cp.ts",
     "db:set-password": "tsx db/scripts/set-password.ts",
     "m365:onedrive": "tsx db/scripts/m365-onedrive-id.ts",
