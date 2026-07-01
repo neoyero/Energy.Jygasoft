@@ -62,7 +62,7 @@ import { sendMail } from "@/lib/email";
 import { deleteDriveItem } from "@/lib/m365/sharepoint";
 import { chatwootConfigurado, listarAgentes, crearAgente } from "@/lib/chatwoot/client";
 import { REGISTRO, invalidarConfig, getIntegracion } from "@/lib/config/service";
-import { cifrarSecreto } from "@/lib/config/crypto";
+import { cifrarSecreto, esSecretoCifrado } from "@/lib/config/crypto";
 import { serverEnv, clientEnv } from "@/lib/env";
 import {
   renderCotizacionPdf,
@@ -5879,18 +5879,25 @@ export async function eliminarCampana(id: string): Promise<ActionResult> {
  * Solo admin (RBAC integraciones:edit). Nunca se devuelven valores de secretos.
  * ───────────────────────────────────────────────────────────────────────── */
 
+export interface CampoGuardar {
+  campo: string;
+  /** Sensible: ""=conservar el existente, no vacío=reemplazar. Claro: el valor. */
+  valor: string;
+  sensible: boolean;
+}
 export interface GuardarIntegracionInput {
   activo: boolean;
-  /** Ajustes en claro (urls, ids, flags). */
-  ajustes: Record<string, string>;
-  /** Secretos a establecer/reemplazar. Campos ausentes o vacíos = sin cambio. */
-  secretos: Record<string, string>;
+  /** Conjunto de campos deseado. Un campo omitido se ELIMINA (permite quitar campos). */
+  campos: CampoGuardar[];
 }
 
 /**
- * Guarda una integración: ajustes en claro + secretos cifrados (AES-256-GCM).
- * Solo cifra/actualiza los secretos con valor no vacío; los demás se conservan.
- * Upsert por clave. Invalida la caché del servicio de config.
+ * Guarda una integración a partir del conjunto de campos deseado: los campos en
+ * claro van a `ajustes`, los sensibles cifrados a `secretos` (AES-256-GCM). Un
+ * campo ausente en `campos` se elimina (así se pueden quitar campos). Los
+ * secretos con valor vacío conservan su valor cifrado previo (write-only). Para
+ * integraciones del REGISTRO el flag `sensible` lo fija el sistema (no el
+ * cliente) y sus campos declarados no se pueden convertir. Upsert por clave.
  */
 export async function guardarIntegracion(
   clave: string,
@@ -5912,24 +5919,29 @@ export async function guardarIntegracion(
 
   if (!def && !prev) return { ok: false, error: "Integración no válida." };
 
-  // Ajustes: campos del registro, o (custom) todas las llaves provistas.
-  const ajustes: Record<string, string> = {};
-  const camposAjuste = def ? def.ajustes.map((c) => c.campo) : Object.keys(input.ajustes ?? {});
-  for (const campo of camposAjuste) {
-    const v = input.ajustes?.[campo];
-    if (typeof v === "string" && v.trim() !== "") ajustes[campo] = v.trim();
+  const prevSecretos = (prev?.secretos as Record<string, unknown>) ?? {};
+  // Flag sensible declarado por el sistema (REGISTRO): no se deja cambiar.
+  const sensibleDeclarado = new Map<string, boolean>();
+  if (def) {
+    for (const c of def.ajustes) sensibleDeclarado.set(c.campo, false);
+    for (const c of def.secretos) sensibleDeclarado.set(c.campo, true);
   }
 
-  // Secretos: parte de los existentes; cifra solo los provistos no vacíos.
-  const secretos: Record<string, unknown> = {
-    ...((prev?.secretos as Record<string, unknown>) ?? {}),
-  };
-  const camposSecreto = def ? def.secretos.map((c) => c.campo) : Object.keys(input.secretos ?? {});
+  const ajustes: Record<string, string> = {};
+  const secretos: Record<string, unknown> = {};
   try {
-    for (const campo of camposSecreto) {
-      const v = input.secretos?.[campo];
-      if (typeof v === "string" && v.trim() !== "") {
-        secretos[campo] = cifrarSecreto(`${clave}:${campo}`, v.trim());
+    for (const c of input.campos ?? []) {
+      const campo = c.campo?.trim().toLowerCase() ?? "";
+      if (!RE_CAMPO.test(campo)) continue;
+      const sensible = sensibleDeclarado.has(campo)
+        ? (sensibleDeclarado.get(campo) as boolean)
+        : c.sensible;
+      const valor = typeof c.valor === "string" ? c.valor.trim() : "";
+      if (sensible) {
+        if (valor !== "") secretos[campo] = cifrarSecreto(`${clave}:${campo}`, valor);
+        else if (esSecretoCifrado(prevSecretos[campo])) secretos[campo] = prevSecretos[campo];
+      } else if (valor !== "") {
+        ajustes[campo] = valor;
       }
     }
   } catch {

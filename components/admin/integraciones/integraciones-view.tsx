@@ -68,7 +68,9 @@ export function IntegracionesView({ integraciones, puedeEditar }: IntegracionesV
         </div>
       ) : null}
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      {/* items-start: cada tarjeta mide solo su contenido (no se estira al alto
+          de la fila cuando la vecina está expandida). */}
+      <div className="grid items-start gap-3 lg:grid-cols-2">
         {integraciones.map((i) => (
           <IntegracionCard key={i.clave} integracion={i} puedeEditar={puedeEditar} />
         ))}
@@ -85,14 +87,12 @@ function EstadoBadge({ activo, configurada }: { activo: boolean; configurada: bo
   const { texto, clase } = !activo
     ? {
         texto: "Deshabilitada",
-        clase:
-          "bg-stone-100 text-stone-600 dark:bg-muted dark:text-muted-foreground",
+        clase: "bg-stone-100 text-stone-600 dark:bg-muted dark:text-muted-foreground",
       }
     : configurada
       ? {
           texto: "Activa",
-          clase:
-            "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+          clase: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
         }
       : {
           texto: "Incompleta",
@@ -105,7 +105,24 @@ function EstadoBadge({ activo, configurada }: { activo: boolean; configurada: bo
   )
 }
 
-/* ── Tarjeta colapsable ───────────────────────────────────────────────────── */
+/* ── Estado de edición de un campo ────────────────────────────────────────── */
+
+interface EditCampo {
+  id: number
+  campo: string
+  valor: string
+  sensible: boolean
+  /** Campo ya existente: no se renombra ni se cambia su flag sensible. */
+  campoLocked: boolean
+  /** Se puede quitar (los campos del sistema requeridos no). */
+  removable: boolean
+  /** Secreto ya guardado (para revelar/placeholder). */
+  configurado: boolean
+  fromEnv: boolean
+  label: string
+}
+
+/* ── Tarjeta colapsable con editor de campos ──────────────────────────────── */
 
 function IntegracionCard({
   integracion,
@@ -120,33 +137,79 @@ function IntegracionCard({
   const [msg, setMsg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activo, setActivo] = useState(integracion.activo)
-  const [ajustes, setAjustes] = useState<Record<string, string>>(
-    Object.fromEntries(integracion.ajustes.map((a) => [a.campo, a.valor])),
-  )
-  // Los secretos arrancan vacíos (write-only): vacío = no cambiar.
-  const [secretos, setSecretos] = useState<Record<string, string>>({})
   const [confirmarBorrar, setConfirmarBorrar] = useState(false)
+  const [seq, setSeq] = useState(1000)
+  const [campos, setCampos] = useState<EditCampo[]>(() => [
+    ...integracion.ajustes.map((a, i) => ({
+      id: i + 1,
+      campo: a.campo,
+      valor: a.valor,
+      sensible: false,
+      campoLocked: true,
+      removable: integracion.custom,
+      configurado: false,
+      fromEnv: a.fromEnv,
+      label: a.label,
+    })),
+    ...integracion.secretos.map((s, i) => ({
+      id: 500 + i,
+      campo: s.campo,
+      valor: "",
+      sensible: true,
+      campoLocked: true,
+      removable: integracion.custom,
+      configurado: s.configurado,
+      fromEnv: s.fromEnv,
+      label: s.label,
+    })),
+  ])
 
   const Icono = iconoDe(integracion.clave)
+
+  function actualizar(id: number, patch: Partial<EditCampo>): void {
+    setCampos((p) => p.map((c) => (c.id === id ? { ...c, ...patch } : c)))
+  }
+  function quitar(id: number): void {
+    setCampos((p) => p.filter((c) => c.id !== id))
+  }
+  function agregar(): void {
+    setCampos((p) => [
+      ...p,
+      {
+        id: seq,
+        campo: "",
+        valor: "",
+        sensible: true,
+        campoLocked: false,
+        removable: true,
+        configurado: false,
+        fromEnv: false,
+        label: "",
+      },
+    ])
+    setSeq((n) => n + 1)
+  }
 
   function guardar(): void {
     setMsg(null)
     setError(null)
-    const secretosNoVacios: Record<string, string> = {}
-    for (const [k, v] of Object.entries(secretos)) {
-      if (v.trim() !== "") secretosNoVacios[k] = v.trim()
-    }
+    const payload = campos
+      .filter((c) => c.campo.trim() !== "")
+      .map((c) => ({ campo: c.campo.trim(), valor: c.valor, sensible: c.sensible }))
     startTransition(async () => {
-      const res = await guardarIntegracion(integracion.clave, {
-        activo,
-        ajustes,
-        secretos: secretosNoVacios,
-      })
+      const res = await guardarIntegracion(integracion.clave, { activo, campos: payload })
       if (!res.ok) {
         setError(res.error)
         return
       }
-      setSecretos({})
+      // Limpia los valores de secretos escritos y marca como configurados.
+      setCampos((p) =>
+        p.map((c) =>
+          c.sensible
+            ? { ...c, configurado: c.configurado || c.valor.trim() !== "", valor: "" }
+            : c,
+        ),
+      )
       setMsg("Guardado.")
       router.refresh()
     })
@@ -200,87 +263,77 @@ function IntegracionCard({
       {abierto ? (
         <div className="border-t border-border px-4 py-4">
           <div className="grid gap-3">
-            {integracion.ajustes.map((a) => (
-              <div key={a.campo} className="space-y-1">
-                <Label htmlFor={`${integracion.clave}-${a.campo}`}>{a.label}</Label>
-                <Input
-                  id={`${integracion.clave}-${a.campo}`}
-                  value={ajustes[a.campo] ?? ""}
-                  onChange={(e) => setAjustes((p) => ({ ...p, [a.campo]: e.target.value }))}
-                  disabled={!puedeEditar || pending}
-                />
-                {a.fromEnv ? (
-                  <p className="text-[11px] text-muted-foreground">
-                    Valor actual desde variable de entorno.
-                  </p>
-                ) : null}
-              </div>
-            ))}
-
-            {integracion.secretos.map((s) => (
-              <SecretoField
-                key={s.campo}
+            {campos.map((c) => (
+              <CampoRow
+                key={c.id}
                 clave={integracion.clave}
-                campo={s.campo}
-                label={s.label}
-                configurado={s.configurado}
-                fromEnv={s.fromEnv}
-                value={secretos[s.campo] ?? ""}
-                onChange={(v) => setSecretos((p) => ({ ...p, [s.campo]: v }))}
+                row={c}
                 disabled={!puedeEditar || pending}
+                onChange={(patch) => actualizar(c.id, patch)}
+                onRemove={() => quitar(c.id)}
               />
             ))}
 
-            {integracion.ajustes.length + integracion.secretos.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Esta integración no tiene campos.</p>
+            {campos.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Esta integración no tiene campos aún.</p>
             ) : null}
 
             {puedeEditar ? (
-              <div className="flex flex-wrap items-center gap-3 pt-1">
-                <label className="flex items-center gap-2 text-sm text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={activo}
-                    onChange={(e) => setActivo(e.target.checked)}
-                    disabled={pending}
-                    className="size-4 rounded border-border"
-                  />
-                  Activa
-                </label>
-                <Button size="sm" onClick={guardar} disabled={pending}>
-                  {pending ? "Guardando…" : "Guardar"}
-                </Button>
-                {integracion.custom ? (
-                  confirmarBorrar ? (
-                    <span className="flex items-center gap-2 text-sm">
-                      <span className="text-muted-foreground">¿Eliminar?</span>
-                      <Button size="sm" variant="destructive" onClick={borrar} disabled={pending}>
-                        Sí, eliminar
-                      </Button>
+              <>
+                <div>
+                  <Button size="xs" variant="outline" onClick={agregar} disabled={pending}>
+                    <Plus className="size-3" aria-hidden /> Agregar campo
+                  </Button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
+                  <label className="flex items-center gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={activo}
+                      onChange={(e) => setActivo(e.target.checked)}
+                      disabled={pending}
+                      className="size-4 rounded border-border"
+                    />
+                    Activa
+                  </label>
+                  <Button size="sm" onClick={guardar} disabled={pending}>
+                    {pending ? "Guardando…" : "Guardar"}
+                  </Button>
+                  {integracion.custom ? (
+                    confirmarBorrar ? (
+                      <span className="flex items-center gap-2 text-sm">
+                        <span className="text-muted-foreground">¿Eliminar?</span>
+                        <Button size="sm" variant="destructive" onClick={borrar} disabled={pending}>
+                          Sí, eliminar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setConfirmarBorrar(false)}
+                          disabled={pending}
+                        >
+                          Cancelar
+                        </Button>
+                      </span>
+                    ) : (
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => setConfirmarBorrar(false)}
+                        onClick={() => setConfirmarBorrar(true)}
                         disabled={pending}
+                        className="text-destructive"
                       >
-                        Cancelar
+                        <Trash2 className="size-4" aria-hidden /> Eliminar
                       </Button>
-                    </span>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setConfirmarBorrar(true)}
-                      disabled={pending}
-                      className="text-destructive"
-                    >
-                      <Trash2 className="size-4" aria-hidden /> Eliminar
-                    </Button>
-                  )
-                ) : null}
-                {msg ? <span className="text-sm text-emerald-600 dark:text-emerald-400">{msg}</span> : null}
-                {error ? <span className="text-sm text-destructive">{error}</span> : null}
-              </div>
+                    )
+                  ) : null}
+                  {msg ? (
+                    <span className="text-sm text-emerald-600 dark:text-emerald-400">{msg}</span>
+                  ) : null}
+                  {error ? <span className="text-sm text-destructive">{error}</span> : null}
+                </div>
+              </>
             ) : null}
           </div>
         </div>
@@ -289,26 +342,20 @@ function IntegracionCard({
   )
 }
 
-/* ── Campo secreto: enmascarado con ojo (revela lo escrito o el valor guardado) ── */
+/* ── Fila de campo (existente o nuevo) ────────────────────────────────────── */
 
-function SecretoField({
+function CampoRow({
   clave,
-  campo,
-  label,
-  configurado,
-  fromEnv,
-  value,
-  onChange,
+  row,
   disabled,
+  onChange,
+  onRemove,
 }: {
   clave: string
-  campo: string
-  label: string
-  configurado: boolean
-  fromEnv: boolean
-  value: string
-  onChange: (v: string) => void
+  row: EditCampo
   disabled: boolean
+  onChange: (patch: Partial<EditCampo>) => void
+  onRemove: () => void
 }) {
   const [visible, setVisible] = useState(false)
   const [cargando, setCargando] = useState(false)
@@ -316,8 +363,7 @@ function SecretoField({
 
   async function alternarVisible(): Promise<void> {
     setErrRevelar(null)
-    // Si ya hay algo escrito, solo alterna la máscara.
-    if (value.trim() !== "") {
+    if (row.valor.trim() !== "") {
       setVisible((v) => !v)
       return
     }
@@ -325,58 +371,135 @@ function SecretoField({
       setVisible(false)
       return
     }
-    // Vacío + configurado → revela el valor guardado (acción admin explícita).
-    if (!configurado) return
+    if (!row.configurado) return
     setCargando(true)
-    const res = await revelarSecretoIntegracion(clave, campo)
+    const res = await revelarSecretoIntegracion(clave, row.campo)
     setCargando(false)
     if (!res.ok) {
       setErrRevelar(res.error)
       return
     }
-    onChange(res.valor)
+    onChange({ valor: res.valor })
     setVisible(true)
   }
 
-  return (
-    <div className="space-y-1">
-      <Label htmlFor={`${clave}-${campo}`} className="flex items-center gap-1.5">
-        {label}
-        <span
-          title="Campo sensible: se guarda cifrado y se muestra enmascarado."
-          className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-1.5 py-0.5 text-[10px] font-medium text-stone-500 dark:bg-muted dark:text-muted-foreground"
-        >
-          <Lock className="size-3" aria-hidden /> Enmascarado
-        </span>
-      </Label>
-      <div className="relative">
-        <Input
-          id={`${clave}-${campo}`}
-          type={visible ? "text" : "password"}
-          autoComplete="new-password"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          disabled={disabled}
-          className="pr-9"
-          placeholder={
-            configurado
-              ? fromEnv
-                ? "•••••• configurado (env) — escribe para reemplazar"
-                : "•••••• configurado — escribe para reemplazar"
-              : "sin definir"
-          }
-        />
-        <button
-          type="button"
-          onClick={alternarVisible}
-          disabled={cargando || (!configurado && value.trim() === "")}
-          title={visible ? "Ocultar" : configurado && value.trim() === "" ? "Revelar valor guardado" : "Mostrar"}
-          className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
-        >
-          {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-        </button>
+  // Campo existente (nombre y flag fijos): etiqueta + input.
+  if (row.campoLocked) {
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor={`${clave}-${row.campo}`} className="flex items-center gap-1.5">
+            {row.label || row.campo}
+            {row.sensible ? (
+              <span
+                title="Campo sensible: se guarda cifrado y se muestra enmascarado."
+                className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-1.5 py-0.5 text-[10px] font-medium text-stone-500 dark:bg-muted dark:text-muted-foreground"
+              >
+                <Lock className="size-3" aria-hidden /> Enmascarado
+              </span>
+            ) : null}
+          </Label>
+          {row.removable && !disabled ? (
+            <button
+              type="button"
+              onClick={onRemove}
+              className="text-muted-foreground transition-colors hover:text-destructive"
+              title="Quitar campo"
+            >
+              <Trash2 className="size-4" />
+            </button>
+          ) : null}
+        </div>
+
+        {row.sensible ? (
+          <div className="relative">
+            <Input
+              id={`${clave}-${row.campo}`}
+              type={visible ? "text" : "password"}
+              autoComplete="new-password"
+              value={row.valor}
+              onChange={(e) => onChange({ valor: e.target.value })}
+              disabled={disabled}
+              className="pr-9"
+              placeholder={
+                row.configurado
+                  ? row.fromEnv
+                    ? "•••••• configurado (env) — escribe para reemplazar"
+                    : "•••••• configurado — escribe para reemplazar"
+                  : "sin definir"
+              }
+            />
+            <button
+              type="button"
+              onClick={alternarVisible}
+              disabled={cargando || (!row.configurado && row.valor.trim() === "")}
+              title={
+                visible
+                  ? "Ocultar"
+                  : row.configurado && row.valor.trim() === ""
+                    ? "Revelar valor guardado"
+                    : "Mostrar"
+              }
+              className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+            >
+              {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
+          </div>
+        ) : (
+          <Input
+            id={`${clave}-${row.campo}`}
+            value={row.valor}
+            onChange={(e) => onChange({ valor: e.target.value })}
+            disabled={disabled}
+          />
+        )}
+        {row.fromEnv ? (
+          <p className="text-[11px] text-muted-foreground">Valor actual desde variable de entorno.</p>
+        ) : null}
+        {errRevelar ? <p className="text-[11px] text-destructive">{errRevelar}</p> : null}
       </div>
-      {errRevelar ? <p className="text-[11px] text-destructive">{errRevelar}</p> : null}
+    )
+  }
+
+  // Campo nuevo: editor completo (nombre + valor + sensible + quitar).
+  return (
+    <div className="grid gap-2 rounded-lg border border-dashed border-border p-2 sm:grid-cols-[1fr_1fr_auto]">
+      <Input
+        value={row.campo}
+        onChange={(e) => onChange({ campo: e.target.value })}
+        placeholder="campo (p. ej. api_key)"
+        disabled={disabled}
+      />
+      <Input
+        type={row.sensible && !visible ? "password" : "text"}
+        autoComplete="new-password"
+        value={row.valor}
+        onChange={(e) => onChange({ valor: e.target.value })}
+        placeholder="valor"
+        disabled={disabled}
+      />
+      <div className="flex items-center gap-2">
+        <label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-foreground">
+          <input
+            type="checkbox"
+            checked={row.sensible}
+            onChange={(e) => onChange({ sensible: e.target.checked })}
+            disabled={disabled}
+            className="size-4 rounded border-border"
+          />
+          <Lock className="size-3 text-muted-foreground" aria-hidden />
+          Enmascarado
+        </label>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          onClick={onRemove}
+          disabled={disabled}
+          title="Quitar campo"
+        >
+          <X className="size-4" />
+        </Button>
+      </div>
     </div>
   )
 }
@@ -505,7 +628,10 @@ function NuevaIntegracionModal({
           </div>
 
           {campos.map((c) => (
-            <div key={c.id} className="grid gap-2 rounded-lg border border-border p-2 sm:grid-cols-[1fr_1fr_auto]">
+            <div
+              key={c.id}
+              className="grid gap-2 rounded-lg border border-border p-2 sm:grid-cols-[1fr_1fr_auto]"
+            >
               <Input
                 value={c.campo}
                 onChange={(e) => actualizarCampo(c.id, { campo: e.target.value })}
