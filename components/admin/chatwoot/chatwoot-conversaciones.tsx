@@ -11,12 +11,15 @@ import {
   cwSetConversationStatus,
   cwAssignConversation,
   cwListAgents,
+  cwConectarTiempoReal,
+  cwEstadoTiempoReal,
 } from "@/lib/chatwoot/admin-actions"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/admin/ui/modal"
 import { DataTable, type DataTableColumn } from "@/components/admin/ui/data-table"
 import { AvisoError, badge, SELECT_CLASS, type Res } from "@/components/admin/chatwoot/chatwoot-ui"
+import { useChatwootRealtime } from "@/components/admin/chatwoot/use-realtime"
 
 const SELECT_FILTRO = "h-8 rounded-md border border-border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
 
@@ -40,7 +43,10 @@ export function ConversacionesTab({ puedeEditar }: { puedeEditar: boolean }) {
   const [error, setError] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
   const [sel, setSel] = useState<CwConversation | null>(null)
+  const [senal, setSenal] = useState(0)
   const [agentes, setAgentes] = useState<ChatwootAgent[]>([])
+  const [rtRegistrado, setRtRegistrado] = useState<boolean | null>(null)
+  const [rtPending, startRt] = useTransition()
 
   useEffect(() => {
     let stale = false
@@ -61,7 +67,26 @@ export function ConversacionesTab({ puedeEditar }: { puedeEditar: boolean }) {
     cwListAgents().then((r) => {
       if (r.ok) setAgentes(r.data)
     })
+    cwEstadoTiempoReal().then((r) => {
+      if (r.ok) setRtRegistrado(r.data.registrado)
+    })
   }, [])
+
+  // Tiempo real: al llegar un evento, refresca la lista y (si es de la
+  // conversación abierta) su hilo de mensajes.
+  const { conectado } = useChatwootRealtime((e) => {
+    setReload((n) => n + 1)
+    if (sel && e.conversationId && e.conversationId === sel.id) setSenal((s) => s + 1)
+  })
+
+  function conectarRT(): void {
+    setError(null)
+    startRt(async () => {
+      const r = await cwConectarTiempoReal()
+      if (r.ok) setRtRegistrado(true)
+      else setError(r.error)
+    })
+  }
 
   const cols: DataTableColumn<CwConversation>[] = [
     {
@@ -110,9 +135,30 @@ export function ConversacionesTab({ puedeEditar }: { puedeEditar: boolean }) {
             <option value="all">Todas</option>
           </select>
         </label>
-        <Button type="button" size="sm" variant="ghost" onClick={() => setReload((n) => n + 1)}>
-          Recargar
-        </Button>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            title={conectado ? "Recibiendo eventos en vivo" : "Sin conexión en vivo (reconectando)"}
+            className={cn(
+              "inline-flex items-center gap-1.5 text-xs font-medium",
+              conectado ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
+            )}
+          >
+            <span className={cn("size-2 rounded-full", conectado ? "bg-emerald-500" : "bg-stone-300 dark:bg-muted")} />
+            {conectado ? "En vivo" : "Sin conexión"}
+          </span>
+
+          {puedeEditar && rtRegistrado === false ? (
+            <Button type="button" size="sm" variant="outline" onClick={conectarRT} disabled={rtPending}>
+              {rtPending ? "Conectando…" : "Conectar tiempo real"}
+            </Button>
+          ) : null}
+          {rtRegistrado === true ? badge("Webhook activo", "green") : null}
+
+          <Button type="button" size="sm" variant="ghost" onClick={() => setReload((n) => n + 1)}>
+            Recargar
+          </Button>
+        </div>
       </div>
 
       {error ? <AvisoError error={error} /> : null}
@@ -141,6 +187,7 @@ export function ConversacionesTab({ puedeEditar }: { puedeEditar: boolean }) {
           conv={sel}
           agentes={agentes}
           puedeEditar={puedeEditar}
+          recargarSenal={senal}
           onClose={() => setSel(null)}
           onCambio={() => setReload((n) => n + 1)}
         />
@@ -155,12 +202,14 @@ function ConversacionDetalle({
   conv,
   agentes,
   puedeEditar,
+  recargarSenal,
   onClose,
   onCambio,
 }: {
   conv: CwConversation
   agentes: ChatwootAgent[]
   puedeEditar: boolean
+  recargarSenal: number
   onClose: () => void
   onCambio: () => void
 }) {
@@ -187,7 +236,7 @@ function ConversacionDetalle({
   useEffect(() => {
     cargarMensajes()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conv.id])
+  }, [conv.id, recargarSenal])
 
   useEffect(() => {
     finRef.current?.scrollIntoView({ block: "end" })

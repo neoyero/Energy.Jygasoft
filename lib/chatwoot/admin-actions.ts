@@ -1,10 +1,15 @@
 "use server";
 
 import { z } from "zod";
+import { randomBytes } from "crypto";
+import { eq } from "drizzle-orm";
+import { headers } from "next/headers";
 
+import { db, schema } from "@/db";
 import { assertPerm } from "@/lib/admin/guard";
 import type { Accion } from "@/lib/admin/rbac";
-import { getIntegracion } from "@/lib/config/service";
+import { getIntegracion, invalidarConfig } from "@/lib/config/service";
+import { cifrarSecreto } from "@/lib/config/crypto";
 import { cwRequest, type CwResult, type ChatwootAgent } from "@/lib/chatwoot/client";
 import type {
   CwInbox,
@@ -416,4 +421,102 @@ export async function cwToggleAutomation(id: number, active: boolean): Promise<C
 export async function cwDeleteAutomation(id: number): Promise<CwResult<null>> {
   if (!(await autorizado("edit"))) return NO_AUTORIZADO;
   return cw.eliminarAutomationCw(id);
+}
+
+/* ── Tiempo real (webhook entrante) ───────────────────────────────────────── */
+
+const RT_EVENTOS = [
+  "message_created",
+  "message_updated",
+  "conversation_created",
+  "conversation_status_changed",
+  "conversation_updated",
+];
+const RT_PATH = "/api/webhooks/chatwoot";
+
+/** URL pública base de la app (desde las cabeceras de la petición). */
+async function baseUrlApp(): Promise<string> {
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  return `${proto}://${host}`;
+}
+
+/** Devuelve el secreto del webhook entrante; lo genera y guarda cifrado si falta. */
+async function asegurarWebhookSecret(): Promise<string | null> {
+  const integ = await getIntegracion("chatwoot");
+  const actual = integ.secreto("webhook_secret");
+  if (actual && actual.length > 0) return actual;
+  try {
+    const secret = randomBytes(24).toString("hex");
+    const blob = cifrarSecreto("chatwoot:webhook_secret", secret);
+    const [row] = await db
+      .select({ secretos: schema.integraciones.secretos })
+      .from(schema.integraciones)
+      .where(eq(schema.integraciones.clave, "chatwoot"))
+      .limit(1);
+    if (!row) return null; // la integración chatwoot debe existir
+    const secretos = { ...((row.secretos as Record<string, unknown>) ?? {}), webhook_secret: blob };
+    await db
+      .update(schema.integraciones)
+      .set({ secretos, updatedAt: new Date().toISOString() })
+      .where(eq(schema.integraciones.clave, "chatwoot"));
+    invalidarConfig("chatwoot");
+    return secret;
+  } catch {
+    return null;
+  }
+}
+
+/** Estado del tiempo real: si ya existe un webhook apuntando a nuestra ruta. */
+export async function cwEstadoTiempoReal(): Promise<
+  { ok: true; data: { registrado: boolean; url: string } } | { ok: false; error: string }
+> {
+  if (!(await autorizado("view"))) return { ok: false, error: "No autorizado." };
+  const base = await baseUrlApp();
+  const prefijo = `${base}${RT_PATH}`;
+  const list = await cw.listarWebhooksCw();
+  if (!list.ok) return list;
+  const existe = list.data.some((w) => (w.url ?? "").startsWith(prefijo));
+  return { ok: true, data: { registrado: existe, url: prefijo } };
+}
+
+/**
+ * Conecta el tiempo real: asegura el secreto, arma la URL entrante y registra (o
+ * actualiza) el webhook en Chatwoot vía API con los eventos relevantes.
+ */
+export async function cwConectarTiempoReal(): Promise<
+  { ok: true; data: { url: string } } | { ok: false; error: string }
+> {
+  if (!(await autorizado("edit"))) return { ok: false, error: "No autorizado." };
+  const secret = await asegurarWebhookSecret();
+  if (!secret) return { ok: false, error: "No se pudo preparar el secreto (¿falta CONFIG_ENC_KEY?)." };
+
+  const base = await baseUrlApp();
+  const prefijo = `${base}${RT_PATH}`;
+  const url = `${prefijo}?token=${encodeURIComponent(secret)}`;
+
+  const list = await cw.listarWebhooksCw();
+  if (list.ok) {
+    const existente = list.data.find((w) => (w.url ?? "").startsWith(prefijo));
+    if (existente) {
+      const r = await cw.actualizarWebhookCw(existente.id, { url, subscriptions: RT_EVENTOS });
+      return r.ok ? { ok: true, data: { url: prefijo } } : r;
+    }
+  }
+  const r = await cw.crearWebhookCw({ url, subscriptions: RT_EVENTOS });
+  return r.ok ? { ok: true, data: { url: prefijo } } : r;
+}
+
+/** Desconecta el tiempo real: elimina los webhooks que apuntan a nuestra ruta. */
+export async function cwDesconectarTiempoReal(): Promise<CwResult<null>> {
+  if (!(await autorizado("edit"))) return NO_AUTORIZADO;
+  const base = await baseUrlApp();
+  const prefijo = `${base}${RT_PATH}`;
+  const list = await cw.listarWebhooksCw();
+  if (!list.ok) return list;
+  for (const w of list.data.filter((x) => (x.url ?? "").startsWith(prefijo))) {
+    await cw.eliminarWebhookCw(w.id);
+  }
+  return { ok: true, data: null };
 }
