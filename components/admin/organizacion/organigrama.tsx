@@ -15,6 +15,7 @@ import type { OrganigramaNodo } from "@/lib/admin/queries"
 import { actualizarJerarquiaUsuario } from "@/lib/admin/actions"
 import { StatusBadge, labelFor } from "@/components/admin/ui/status-badge"
 import { EmptyState } from "@/components/admin/ui/empty-state"
+import { Modal } from "@/components/admin/ui/modal"
 import { cn } from "@/lib/utils"
 
 interface NodoArbol extends OrganigramaNodo {
@@ -64,6 +65,7 @@ export function Organigrama({ nodos, areas = [], puedeEditar = false }: Organigr
   const router = useRouter()
   const [vista, setVista] = useState<Vista>("arbol")
   const [modoArbol, setModoArbol] = useState<ModoArbol>("persona")
+  const [verSinArea, setVerSinArea] = useState(false)
   const [overId, setOverId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
@@ -162,7 +164,20 @@ export function Organigrama({ nodos, areas = [], puedeEditar = false }: Organigr
 
         {vista === "arbol" ? (
           porArea ? (
-            <OrganigramaAreas raices={raicesAreas} sinArea={sinArea} />
+            <div className="flex flex-col gap-3">
+              {sinArea.length > 0 ? (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setVerSinArea(true)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+                  >
+                    <Users className="size-3.5" aria-hidden /> Sin asignar · {sinArea.length}
+                  </button>
+                </div>
+              ) : null}
+              <OrganigramaAreas raices={raicesAreas} />
+            </div>
           ) : (
             <OrganigramaArbol raices={raices} />
           )
@@ -173,6 +188,22 @@ export function Organigrama({ nodos, areas = [], puedeEditar = false }: Organigr
             ))}
           </div>
         )}
+
+        {/* Modal con las personas sin área asignada. */}
+        <Modal open={verSinArea} onOpenChange={setVerSinArea} title="Personas sin área" size="md">
+          {sinArea.length > 0 ? (
+            <div className="flex flex-col divide-y divide-border">
+              {sinArea.map((p) => (
+                <div key={p.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                  <span className="font-medium text-foreground">{p.nombre}</span>
+                  <span className="text-muted-foreground">{p.cargo ?? labelFor(p.rol)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Todas las personas tienen un área asignada.</p>
+          )}
+        </Modal>
       </div>
     </OrgDndCtx.Provider>
   )
@@ -303,14 +334,8 @@ function ArbolNodo({ nodo }: { nodo: NodoArbol }) {
 
 /* ── Vista ÁRBOL POR ÁREAS (áreas anidadas con personas dentro) ──────────── */
 
-function OrganigramaAreas({
-  raices,
-  sinArea,
-}: {
-  raices: AreaNodoArbol[]
-  sinArea: OrganigramaNodo[]
-}) {
-  if (raices.length === 0 && sinArea.length === 0) {
+function OrganigramaAreas({ raices }: { raices: AreaNodoArbol[] }) {
+  if (raices.length === 0) {
     return (
       <EmptyState
         title="Sin áreas"
@@ -326,12 +351,6 @@ function OrganigramaAreas({
           {raices.map((a) => (
             <AreaOrgNodo key={a.id} nodo={a} />
           ))}
-          {/* Personas sin área asignada: su propio recuadro. */}
-          {sinArea.length > 0 ? (
-            <li>
-              <AreaCaja nombre="Sin área" personas={sinArea} dashed />
-            </li>
-          ) : null}
         </ul>
       </div>
     </div>
@@ -389,21 +408,21 @@ function AreaCaja({
       </div>
 
       {personas.length > 0 ? (
-        <ul className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-0.5">
           {personas.map((p) => {
             const cargo = p.cargo ?? labelFor(p.rol)
             return (
-              <li
+              <div
                 key={p.id}
                 title={cargo ? `${p.nombre} · ${cargo}` : p.nombre}
                 className="truncate rounded-md bg-card/80 px-2 py-1 text-left text-xs text-foreground"
               >
                 <span className="font-medium">{p.nombre}</span>
                 {cargo ? <span className="text-muted-foreground"> · {cargo}</span> : null}
-              </li>
+              </div>
             )
           })}
-        </ul>
+        </div>
       ) : (
         <span className="text-[11px] italic text-muted-foreground">Sin personas</span>
       )}
