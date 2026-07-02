@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 
 import { db, schema } from "@/db";
-import { assertPerm } from "@/lib/admin/guard";
+import { accionTenant } from "@/lib/admin/guard";
 import type { Accion } from "@/lib/admin/rbac";
 import { getIntegracion, invalidarConfig } from "@/lib/config/service";
 import { cifrarSecreto } from "@/lib/config/crypto";
@@ -38,7 +38,11 @@ const NO_AUTORIZADO = { ok: false, error: "No autorizado." } as const;
 
 async function autorizado(accion: Accion): Promise<boolean> {
   try {
-    await assertPerm("chatwoot", accion);
+    // Valida permiso chatwoot y entra al contexto de tenant (backstop RLS). El
+    // callback es trivial: `accionTenant` internamente llama a `assertPerm`, que
+    // además fija el tenant a nivel de app (empresaActualId) para el resto de la
+    // acción vía `establecerTenant`.
+    await accionTenant("chatwoot", accion, async () => true);
     return true;
   } catch {
     return false;

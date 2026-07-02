@@ -84,7 +84,7 @@ type LeadEstado = (typeof schema.leadEstado.enumValues)[number];
 type OportEtapa = (typeof schema.oportunidadEtapa.enumValues)[number];
 
 export async function updateLeadEstado(id: string, estado: LeadEstado) {
-  const user = await assertPerm("leads", "edit");
+  return accionTenant("leads", "edit", async (user) => {
   if (!(await puedeAccederLead(user, id))) throw new Error(SIN_ACCESO);
   const actor = actorOf(user);
   await db.transaction(async (tx) => {
@@ -119,10 +119,11 @@ export async function updateLeadEstado(id: string, estado: LeadEstado) {
   });
   revalidatePath("/je-admin/leads");
   revalidatePath(`/je-admin/leads/${id}`);
+  });
 }
 
 export async function updateOportunidadEtapa(id: string, etapa: OportEtapa) {
-  const user = await assertPerm("oportunidades", "edit");
+  return accionTenant("oportunidades", "edit", async (user) => {
   if (!(await puedeAccederOportunidad(user, id))) throw new Error(SIN_ACCESO);
   const actor = actorOf(user);
 
@@ -149,11 +150,12 @@ export async function updateOportunidadEtapa(id: string, etapa: OportEtapa) {
     });
   });
   revalidatePath("/je-admin/oportunidades");
+  });
 }
 
 /** Convierte un lead en cliente + oportunidad (deal). */
 export async function convertLead(id: string) {
-  const user = await assertPerm("leads", "edit");
+  return accionTenant("leads", "edit", async (user) => {
   if (!(await puedeAccederLead(user, id))) throw new Error(SIN_ACCESO);
   const actor = actorOf(user);
 
@@ -246,6 +248,7 @@ export async function convertLead(id: string) {
   revalidatePath("/je-admin/leads");
   revalidatePath(`/je-admin/leads/${id}`);
   revalidatePath("/je-admin/oportunidades");
+  });
 }
 
 /* ──────────────────────────── Usuarios / Equipo ──────────────────────────── */
@@ -446,7 +449,7 @@ async function empresaPorEmail(email: string): Promise<string | null> {
  * en `eventos` (el enum entidad_tipo no incluye 'usuario').
  */
 export async function createUsuario(data: CreateUsuarioInput): Promise<ActionResult> {
-  await assertPerm("usuarios", "edit");
+  return accionTenant("usuarios", "edit", async () => {
 
   const parsed = createUsuarioSchema.safeParse(data);
   if (!parsed.success) {
@@ -482,6 +485,7 @@ export async function createUsuario(data: CreateUsuarioInput): Promise<ActionRes
   revalidatePath("/je-admin/usuarios");
   revalidatePath("/je-admin/organigrama");
   return { ok: true };
+  });
 }
 
 /** Actualiza nombre, rol, teléfono y organigrama (cargo/jefe/área) de un usuario. */
@@ -489,7 +493,7 @@ export async function updateUsuario(
   id: string,
   data: UpdateUsuarioInput,
 ): Promise<ActionResult> {
-  await assertPerm("usuarios", "edit");
+  return accionTenant("usuarios", "edit", async () => {
 
   const parsed = updateUsuarioSchema.safeParse(data);
   if (!parsed.success) {
@@ -538,6 +542,7 @@ export async function updateUsuario(
   revalidatePath("/je-admin/usuarios");
   revalidatePath("/je-admin/organigrama");
   return { ok: true };
+  });
 }
 
 /** Activa o desactiva el acceso de un usuario. */
@@ -545,7 +550,7 @@ export async function toggleUsuarioActivo(
   id: string,
   activo: boolean,
 ): Promise<ActionResult> {
-  await assertPerm("usuarios", "edit");
+  return accionTenant("usuarios", "edit", async () => {
 
   try {
     await db
@@ -558,6 +563,7 @@ export async function toggleUsuarioActivo(
 
   revalidatePath("/je-admin/usuarios");
   return { ok: true };
+  });
 }
 
 /* ──────────────────────────── Leads / Pipeline (D3) ──────────────────────── */
@@ -608,7 +614,7 @@ export async function asignarLead(
   leadId: string,
   vendedorId: string | null,
 ): Promise<void> {
-  const user = await assertPerm("leads", "edit");
+  return accionTenant("leads", "edit", async (user) => {
   const actor = actorOf(user);
 
   const parsed = asignarLeadSchema.safeParse({ leadId, vendedorId });
@@ -688,6 +694,7 @@ export async function asignarLead(
 
   revalidatePath("/je-admin/leads");
   revalidatePath(`/je-admin/leads/${id}`);
+  });
 }
 
 /* ── Alta / edición manual de leads ── */
@@ -788,7 +795,7 @@ function leadValues(d: z.output<typeof leadFormSchema>) {
 export async function crearLead(
   data: z.input<typeof leadFormSchema>,
 ): Promise<ActionResult> {
-  const user = await assertPerm("leads", "edit");
+  return accionTenant("leads", "edit", async (user) => {
   const actor = actorOf(user);
 
   const parsed = leadFormSchema.safeParse(data);
@@ -845,6 +852,7 @@ export async function crearLead(
 
   revalidatePath("/je-admin/leads");
   return { ok: true };
+  });
 }
 
 /** Actualiza los datos editables de un lead existente. */
@@ -852,7 +860,7 @@ export async function actualizarLead(
   id: string,
   data: z.input<typeof leadFormSchema>,
 ): Promise<ActionResult> {
-  const user = await assertPerm("leads", "edit");
+  return accionTenant("leads", "edit", async (user) => {
   if (!(await puedeAccederLead(user, id))) {
     return { ok: false, error: SIN_ACCESO };
   }
@@ -894,6 +902,7 @@ export async function actualizarLead(
   revalidatePath("/je-admin/leads");
   revalidatePath(`/je-admin/leads/${id}`);
   return { ok: true };
+  });
 }
 
 /**
@@ -1003,7 +1012,7 @@ async function resolverEmailAsesor(
 export async function crearAsesor(
   data: z.input<typeof asesorSchema>,
 ): Promise<ActionResult> {
-  await assertPerm("usuarios", "edit");
+  return accionTenant("usuarios", "edit", async () => {
   const parsed = asesorSchema.safeParse(data);
   if (!parsed.success) {
     return {
@@ -1046,6 +1055,7 @@ export async function crearAsesor(
   revalidatePath("/je-admin/usuarios");
   revalidatePath("/je-admin/leads");
   return { ok: true };
+  });
 }
 
 /** Actualiza los datos de un asesor (no re-invita en Chatwoot; eso va por sync). */
@@ -1053,7 +1063,7 @@ export async function actualizarAsesor(
   id: string,
   data: z.input<typeof asesorSchema>,
 ): Promise<ActionResult> {
-  await assertPerm("usuarios", "edit");
+  return accionTenant("usuarios", "edit", async () => {
   const parsed = asesorSchema.safeParse(data);
   if (!parsed.success) {
     return {
@@ -1078,6 +1088,7 @@ export async function actualizarAsesor(
   revalidatePath("/je-admin/usuarios");
   revalidatePath("/je-admin/leads");
   return { ok: true };
+  });
 }
 
 /**
@@ -1088,7 +1099,7 @@ export async function actualizarAsesor(
 export async function sincronizarAsesoresChatwoot(): Promise<
   ActionResult & { enlazados?: number; sinMatch?: number }
 > {
-  await assertPerm("usuarios", "edit");
+  return accionTenant("usuarios", "edit", async () => {
   if (!(await chatwootConfigurado())) {
     return { ok: false, error: "Chatwoot no está configurado." };
   }
@@ -1128,6 +1139,7 @@ export async function sincronizarAsesoresChatwoot(): Promise<
 
   revalidatePath("/je-admin/usuarios");
   return { ok: true, enlazados, sinMatch };
+  });
 }
 
 /** Activa o desactiva un asesor (desactivado = no asignable a leads). */
@@ -1135,7 +1147,7 @@ export async function toggleAsesorActivo(
   id: string,
   activo: boolean,
 ): Promise<ActionResult> {
-  await assertPerm("usuarios", "edit");
+  return accionTenant("usuarios", "edit", async () => {
   try {
     await db
       .update(schema.asesores)
@@ -1147,6 +1159,7 @@ export async function toggleAsesorActivo(
   revalidatePath("/je-admin/usuarios");
   revalidatePath("/je-admin/leads");
   return { ok: true };
+  });
 }
 
 const actualizarOportunidadSchema = z.object({
@@ -1197,7 +1210,7 @@ export async function actualizarOportunidad(
   id: string,
   data: ActualizarOportunidadInput,
 ): Promise<ActionResult> {
-  const user = await assertPerm("oportunidades", "edit");
+  return accionTenant("oportunidades", "edit", async (user) => {
   if (!(await puedeAccederOportunidad(user, id))) {
     return { ok: false, error: SIN_ACCESO };
   }
@@ -1253,6 +1266,7 @@ export async function actualizarOportunidad(
 
   revalidatePath("/je-admin/oportunidades");
   return { ok: true };
+  });
 }
 
 /* ──────────────────────────── Clientes (D4) ──────────────────────────────── */
@@ -1378,7 +1392,7 @@ function clienteValuesOf(d: z.output<typeof clienteSchema>): {
 export async function crearCliente(
   data: ClienteInput,
 ): Promise<ActionResult & { id?: string }> {
-  const user = await assertPerm("clientes", "edit");
+  return accionTenant("clientes", "edit", async (user) => {
   const actor = actorOf(user);
 
   const parsed = clienteSchema.safeParse(data);
@@ -1420,6 +1434,7 @@ export async function crearCliente(
   } catch {
     return { ok: false, error: "No se pudo crear el cliente." };
   }
+  });
 }
 
 /** Actualiza los datos de un cliente. */
@@ -1427,7 +1442,7 @@ export async function actualizarCliente(
   id: string,
   data: ClienteInput,
 ): Promise<ActionResult> {
-  const user = await assertPerm("clientes", "edit");
+  return accionTenant("clientes", "edit", async (user) => {
   if (!(await puedeAccederCliente(user, id))) {
     return { ok: false, error: SIN_ACCESO };
   }
@@ -1467,6 +1482,7 @@ export async function actualizarCliente(
   revalidatePath("/je-admin/clientes");
   revalidatePath(`/je-admin/clientes/${id}`);
   return { ok: true };
+  });
 }
 
 /* ──────────────────────────── Contactos (D4) ─────────────────────────────── */
@@ -1508,7 +1524,7 @@ export async function agregarContacto(
   clienteId: string,
   data: ContactoInput,
 ): Promise<ActionResult & { id?: string }> {
-  const user = await assertPerm("clientes", "edit");
+  return accionTenant("clientes", "edit", async (user) => {
   if (!(await puedeAccederCliente(user, clienteId))) {
     return { ok: false, error: SIN_ACCESO };
   }
@@ -1556,6 +1572,7 @@ export async function agregarContacto(
   } catch {
     return { ok: false, error: "No se pudo agregar el contacto." };
   }
+  });
 }
 
 /** Actualiza un contacto. */
@@ -1563,7 +1580,7 @@ export async function actualizarContacto(
   id: string,
   data: ContactoInput,
 ): Promise<ActionResult> {
-  const user = await assertPerm("clientes", "edit");
+  return accionTenant("clientes", "edit", async (user) => {
   const actor = actorOf(user);
 
   const parsed = contactoSchema.safeParse(data);
@@ -1626,11 +1643,12 @@ export async function actualizarContacto(
   } catch {
     return { ok: false, error: "No se pudo actualizar el contacto." };
   }
+  });
 }
 
 /** Elimina un contacto. Resuelve el cliente para revalidar su detalle. */
 export async function eliminarContacto(id: string): Promise<ActionResult> {
-  const user = await assertPerm("clientes", "edit");
+  return accionTenant("clientes", "edit", async (user) => {
   const actor = actorOf(user);
 
   const contactoId = id; // contactos.id es uuid (string)
@@ -1674,6 +1692,7 @@ export async function eliminarContacto(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar el contacto." };
   }
+  });
 }
 
 /* ──────────────────────────── Cotizaciones (D4) ──────────────────────────── */
@@ -1852,7 +1871,7 @@ async function sincronizarEtapaPorEstadoCotizacion(
 export async function crearCotizacion(
   data: CrearCotizacionInput,
 ): Promise<ActionResult & { id?: string }> {
-  const user = await assertPerm("cotizaciones", "edit");
+  return accionTenant("cotizaciones", "edit", async (user) => {
   const actor = actorOf(user);
 
   const parsed = crearCotizacionSchema.safeParse(data);
@@ -1937,6 +1956,7 @@ export async function crearCotizacion(
   }
 
   return { ok: false, error: "No se pudo asignar un folio único." };
+  });
 }
 
 const cotizacionItemSchema = z.object({
@@ -1963,7 +1983,7 @@ export async function actualizarCotizacionItems(
   cotizacionId: string,
   items: CotizacionItemInput[],
 ): Promise<ActionResult & { subtotal?: number; iva?: number; total?: number }> {
-  const user = await assertPerm("cotizaciones", "edit");
+  return accionTenant("cotizaciones", "edit", async (user) => {
   if (!(await puedeAccederCotizacion(user, cotizacionId))) {
     return { ok: false, error: SIN_ACCESO };
   }
@@ -2035,6 +2055,7 @@ export async function actualizarCotizacionItems(
   } catch {
     return { ok: false, error: "No se pudieron actualizar las partidas." };
   }
+  });
 }
 
 /** Transiciones de estado permitidas por estado origen. */
@@ -2069,7 +2090,7 @@ export async function cambiarEstadoCotizacion(
   id: string,
   estado: CotizacionEstadoEnum,
 ): Promise<ActionResult> {
-  const user = await assertPerm("cotizaciones", "edit");
+  return accionTenant("cotizaciones", "edit", async (user) => {
   if (!(await puedeAccederCotizacion(user, id))) {
     return { ok: false, error: SIN_ACCESO };
   }
@@ -2136,6 +2157,7 @@ export async function cambiarEstadoCotizacion(
   } catch {
     return { ok: false, error: "No se pudo cambiar el estado." };
   }
+  });
 }
 
 /**
@@ -2145,7 +2167,7 @@ export async function cambiarEstadoCotizacion(
 export async function nuevaVersionCotizacion(
   id: string,
 ): Promise<ActionResult & { id?: string }> {
-  const user = await assertPerm("cotizaciones", "edit");
+  return accionTenant("cotizaciones", "edit", async (user) => {
   if (!(await puedeAccederCotizacion(user, id))) {
     return { ok: false, error: SIN_ACCESO };
   }
@@ -2227,6 +2249,7 @@ export async function nuevaVersionCotizacion(
   } catch {
     return { ok: false, error: "No se pudo crear la nueva versión." };
   }
+  });
 }
 
 /** Fecha (YYYY-MM-DD) opcional: vacío / ausente -> null. */
@@ -2265,7 +2288,7 @@ export async function actualizarCotizacionDatos(
   id: string,
   data: CotizacionDatosInput,
 ): Promise<ActionResult> {
-  const user = await assertPerm("cotizaciones", "edit");
+  return accionTenant("cotizaciones", "edit", async (user) => {
   if (!(await puedeAccederCotizacion(user, id))) {
     return { ok: false, error: SIN_ACCESO };
   }
@@ -2352,6 +2375,7 @@ export async function actualizarCotizacionDatos(
   } catch {
     return { ok: false, error: "No se pudo actualizar la cotización." };
   }
+  });
 }
 
 /* ──────────────────────── Wizard de dimensionamiento (D4) ────────────────────
@@ -2385,7 +2409,7 @@ type DimensionarInput = z.input<typeof dimensionarInputSchema>;
 export async function calcularDimensionamiento(
   input: DimensionarInput,
 ): Promise<ActionResult & { preview?: DimensionarResult }> {
-  const user = await assertPerm("cotizaciones", "edit");
+  return accionTenant("cotizaciones", "edit", async (user) => {
 
   const parsed = dimensionarInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -2498,6 +2522,7 @@ export async function calcularDimensionamiento(
   } catch {
     return { ok: false, error: "No se pudo calcular el dimensionamiento." };
   }
+  });
 }
 
 const aplicarDimensionamientoSchema = z.object({
@@ -2536,7 +2561,7 @@ type AplicarDimensionamientoInput = z.input<typeof aplicarDimensionamientoSchema
 export async function aplicarDimensionamiento(
   input: AplicarDimensionamientoInput,
 ): Promise<ActionResult & { subtotal?: number; iva?: number; total?: number }> {
-  const user = await assertPerm("cotizaciones", "edit");
+  return accionTenant("cotizaciones", "edit", async (user) => {
   const actor = actorOf(user);
 
   const parsed = aplicarDimensionamientoSchema.safeParse(input);
@@ -2663,6 +2688,7 @@ export async function aplicarDimensionamiento(
   } catch {
     return { ok: false, error: "No se pudo aplicar el dimensionamiento." };
   }
+  });
 }
 
 /**
@@ -2674,7 +2700,7 @@ export async function enlazarCotizacionConOportunidad(
   cotizacionId: string,
   oportunidadId: string | null,
 ): Promise<ActionResult> {
-  const user = await assertPerm("cotizaciones", "edit");
+  return accionTenant("cotizaciones", "edit", async (user) => {
   if (!(await puedeAccederCotizacion(user, cotizacionId))) {
     return { ok: false, error: SIN_ACCESO };
   }
@@ -2729,6 +2755,7 @@ export async function enlazarCotizacionConOportunidad(
   } catch {
     return { ok: false, error: "No se pudo enlazar la oportunidad." };
   }
+  });
 }
 
 /** Scope admin-like para leer una cotización sin acotar por vendedor. */
@@ -2743,7 +2770,7 @@ const SCOPE_ADMIN: DashboardScope = { rol: "admin", userId: "" };
 export async function enviarCotizacionPorCorreo(
   id: string,
 ): Promise<ActionResult & { skipped?: boolean }> {
-  const user = await assertPerm("cotizaciones", "edit");
+  return accionTenant("cotizaciones", "edit", async (user) => {
   if (!(await puedeAccederCotizacion(user, id))) {
     return { ok: false, error: SIN_ACCESO };
   }
@@ -2866,6 +2893,7 @@ export async function enviarCotizacionPorCorreo(
   revalidatePath("/je-admin/cotizaciones");
   revalidatePath(`/je-admin/cotizaciones/${id}`);
   return { ok: true, skipped: result.skipped };
+  });
 }
 
 /** Formatea un monto con la moneda dada (es-MX); cae a $n.nn si falla. */
@@ -2920,7 +2948,8 @@ async function siguienteFolioProyecto(
 export async function crearProyectoDeCotizacion(
   cotizacionId: string,
 ): Promise<ActionResult & { id?: string }> {
-  const actor = actorOf(await assertPerm("proyectos", "edit"));
+  return accionTenant("proyectos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   const anio = new Date().getFullYear();
   const MAX_RETRIES = 5;
@@ -2997,6 +3026,7 @@ export async function crearProyectoDeCotizacion(
   }
 
   return { ok: false, error: "No se pudo asignar un folio único." };
+  });
 }
 
 /* ──────────────── Proyectos / Trámites / Instalación / Materiales / Pagos (D5)
@@ -3027,7 +3057,8 @@ export async function avanzarFaseProyecto(
   id: string,
   fase: ProyectoFase,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("proyectos", "edit"));
+  return accionTenant("proyectos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   try {
     const resultado = await db.transaction(async (tx) => {
@@ -3079,6 +3110,7 @@ export async function avanzarFaseProyecto(
   } catch {
     return { ok: false, error: "No se pudo cambiar la fase del proyecto." };
   }
+  });
 }
 
 const tramiteCfeSchema = z.object({
@@ -3132,7 +3164,8 @@ export async function guardarTramiteCfe(
   proyectoId: string,
   data: TramiteCfeInput,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("proyectos", "edit"));
+  return accionTenant("proyectos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   const parsed = tramiteCfeSchema.safeParse(data);
   if (!parsed.success) {
@@ -3177,6 +3210,7 @@ export async function guardarTramiteCfe(
 
   revalidatePath(`/je-admin/proyectos/${proyectoId}`);
   return { ok: true };
+  });
 }
 
 const instalacionSchema = z.object({
@@ -3226,7 +3260,8 @@ export async function guardarInstalacion(
   proyectoId: string,
   data: InstalacionInput,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("proyectos", "edit"));
+  return accionTenant("proyectos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   const parsed = instalacionSchema.safeParse(data);
   if (!parsed.success) {
@@ -3271,6 +3306,7 @@ export async function guardarInstalacion(
 
   revalidatePath(`/je-admin/proyectos/${proyectoId}`);
   return { ok: true };
+  });
 }
 
 const materialSchema = z.object({
@@ -3310,7 +3346,8 @@ export async function agregarMaterial(
   proyectoId: string,
   data: MaterialInput,
 ): Promise<ActionResult & { id?: string }> {
-  const actor = actorOf(await assertPerm("proyectos", "edit"));
+  return accionTenant("proyectos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   const parsed = materialSchema.safeParse(data);
   if (!parsed.success) {
@@ -3351,6 +3388,7 @@ export async function agregarMaterial(
   } catch {
     return { ok: false, error: "No se pudo agregar el material." };
   }
+  });
 }
 
 /** Actualiza un material. Resuelve el proyecto para revalidar + traza. */
@@ -3358,7 +3396,8 @@ export async function actualizarMaterial(
   id: string,
   data: MaterialInput,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("proyectos", "edit"));
+  return accionTenant("proyectos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   const parsed = materialSchema.safeParse(data);
   if (!parsed.success) {
@@ -3402,11 +3441,13 @@ export async function actualizarMaterial(
   } catch {
     return { ok: false, error: "No se pudo actualizar el material." };
   }
+  });
 }
 
 /** Elimina un material. Resuelve el proyecto para revalidar + traza. */
 export async function eliminarMaterial(id: string): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("proyectos", "edit"));
+  return accionTenant("proyectos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   const materialId = Number(id); // proyecto_materiales.id es bigint
 
@@ -3436,6 +3477,7 @@ export async function eliminarMaterial(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar el material." };
   }
+  });
 }
 
 /** Marca un material como entregado / no entregado. */
@@ -3443,7 +3485,8 @@ export async function toggleMaterialEntregado(
   id: string,
   entregado: boolean,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("proyectos", "edit"));
+  return accionTenant("proyectos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   const materialId = Number(id); // proyecto_materiales.id es bigint
 
@@ -3476,6 +3519,7 @@ export async function toggleMaterialEntregado(
   } catch {
     return { ok: false, error: "No se pudo actualizar el material." };
   }
+  });
 }
 
 /* ──────────────────────────── Pagos (D5) ─────────────────────────────────── */
@@ -3537,7 +3581,8 @@ function hoyFecha(): string {
 export async function crearPago(
   data: PagoInput,
 ): Promise<ActionResult & { id?: string }> {
-  const actor = actorOf(await assertPerm("pagos", "edit"));
+  return accionTenant("pagos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   const parsed = pagoSchema.safeParse(data);
   if (!parsed.success) {
@@ -3582,6 +3627,7 @@ export async function crearPago(
   } catch {
     return { ok: false, error: "No se pudo crear el pago." };
   }
+  });
 }
 
 /** Actualiza datos editables de un pago (no cambia su estado). */
@@ -3589,7 +3635,8 @@ export async function actualizarPago(
   id: string,
   data: PagoInput,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("pagos", "edit"));
+  return accionTenant("pagos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   const parsed = pagoSchema.safeParse(data);
   if (!parsed.success) {
@@ -3632,6 +3679,7 @@ export async function actualizarPago(
   revalidatePath("/je-admin/pagos");
   if (d.proyectoId) revalidatePath(`/je-admin/proyectos/${d.proyectoId}`);
   return { ok: true };
+  });
 }
 
 /**
@@ -3642,7 +3690,8 @@ export async function marcarPagoPagado(
   id: string,
   fechaPagada?: string | null,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("pagos", "edit"));
+  return accionTenant("pagos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   const parsedFecha = fechaOpcional.safeParse(fechaPagada);
   if (!parsedFecha.success) {
@@ -3701,6 +3750,7 @@ export async function marcarPagoPagado(
   } catch {
     return { ok: false, error: "No se pudo marcar el pago como pagado." };
   }
+  });
 }
 
 /**
@@ -3711,7 +3761,8 @@ export async function registrarCfdiPago(
   id: string,
   cfdiUuid: string,
 ): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("pagos", "edit"));
+  return accionTenant("pagos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   const parsed = z
     .string()
@@ -3773,6 +3824,7 @@ export async function registrarCfdiPago(
   } catch {
     return { ok: false, error: "No se pudo registrar el CFDI." };
   }
+  });
 }
 
 /**
@@ -3780,7 +3832,8 @@ export async function registrarCfdiPago(
  * Evento solo si tiene proyectoId.
  */
 export async function cancelarPago(id: string): Promise<ActionResult> {
-  const actor = actorOf(await assertPerm("pagos", "edit"));
+  return accionTenant("pagos", "edit", async (user) => {
+  const actor = actorOf(user);
 
   try {
     const resultado = await db.transaction(async (tx) => {
@@ -3828,6 +3881,7 @@ export async function cancelarPago(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo cancelar el pago." };
   }
+  });
 }
 
 /* ──────────────── Cliente 360°: oportunidades / documentos / actividades ─────
@@ -3864,7 +3918,7 @@ export async function crearOportunidadDeCliente(
   clienteId: string,
   data: CrearOportunidadDeClienteInput,
 ): Promise<ActionResult & { id?: string }> {
-  const user = await assertPerm("oportunidades", "edit");
+  return accionTenant("oportunidades", "edit", async (user) => {
   if (!(await puedeAccederCliente(user, clienteId))) {
     return { ok: false, error: SIN_ACCESO };
   }
@@ -3937,6 +3991,7 @@ export async function crearOportunidadDeCliente(
   } catch {
     return { ok: false, error: "No se pudo crear la oportunidad." };
   }
+  });
 }
 
 const registrarDocumentoSchema = z.object({
@@ -3967,7 +4022,7 @@ export async function fetchDocumentos(input: {
   limit: number;
   offset: number;
 }): Promise<DocumentosPage> {
-  const user = await assertPerm("documentos", "view");
+  return accionTenant("documentos", "view", async (user) => {
   const scope: DashboardScope = {
     rol: (user.rol ?? "lectura") as Rol,
     userId: user.id,
@@ -3975,12 +4030,13 @@ export async function fetchDocumentos(input: {
   const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
   const offset = Math.max(0, Math.trunc(input.offset));
   return getDocumentosPage(scope, input.filtros ?? {}, { limit, offset });
+  });
 }
 
 export async function registrarDocumento(
   data: RegistrarDocumentoInput,
 ): Promise<ActionResult & { id?: string }> {
-  const user = await assertPerm("documentos", "edit");
+  return accionTenant("documentos", "edit", async (user) => {
   const actor = actorOf(user);
 
   const parsed = registrarDocumentoSchema.safeParse(data);
@@ -4028,11 +4084,12 @@ export async function registrarDocumento(
   } catch {
     return { ok: false, error: "No se pudo registrar el documento." };
   }
+  });
 }
 
 /** Elimina un documento. Resuelve su entidad para revalidar + traza. */
 export async function eliminarDocumento(id: string): Promise<ActionResult> {
-  const user = await assertPerm("documentos", "edit");
+  return accionTenant("documentos", "edit", async (user) => {
   const actor = actorOf(user);
 
   const documentoId = id; // documentos.id es uuid (string)
@@ -4083,6 +4140,7 @@ export async function eliminarDocumento(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar el documento." };
   }
+  });
 }
 
 /** ISO datetime (acepta date o datetime); vacío / ausente -> null. */
@@ -4196,7 +4254,7 @@ async function puedeAsignarActividad(
 export async function crearActividad(
   data: CrearActividadInput,
 ): Promise<ActionResult & { id?: string }> {
-  const user = await assertPerm("actividades", "edit");
+  return accionTenant("actividades", "edit", async (user) => {
   const actor = actorOf(user);
 
   const parsed = crearActividadSchema.safeParse(data);
@@ -4251,6 +4309,7 @@ export async function crearActividad(
   } catch {
     return { ok: false, error: "No se pudo crear la actividad." };
   }
+  });
 }
 
 /**
@@ -4261,7 +4320,7 @@ export async function completarActividad(
   id: string,
   completada: boolean,
 ): Promise<ActionResult> {
-  const user = await assertPerm("actividades", "edit");
+  return accionTenant("actividades", "edit", async (user) => {
   const actor = actorOf(user);
 
   const actividadId = Number(id); // actividades.id es bigint
@@ -4316,6 +4375,7 @@ export async function completarActividad(
   } catch {
     return { ok: false, error: "No se pudo actualizar la actividad." };
   }
+  });
 }
 
 /**
@@ -4327,7 +4387,7 @@ export async function actualizarActividad(
   id: string,
   data: ActualizarActividadInput,
 ): Promise<ActionResult> {
-  const user = await assertPerm("actividades", "edit");
+  return accionTenant("actividades", "edit", async (user) => {
   const actor = actorOf(user);
   const actividadId = Number(id);
 
@@ -4402,6 +4462,7 @@ export async function actualizarActividad(
   } catch {
     return { ok: false, error: "No se pudo actualizar la actividad." };
   }
+  });
 }
 
 /**
@@ -4412,7 +4473,7 @@ export async function cancelarActividad(
   id: string,
   cancelada: boolean,
 ): Promise<ActionResult> {
-  const user = await assertPerm("actividades", "edit");
+  return accionTenant("actividades", "edit", async (user) => {
   const actor = actorOf(user);
   const actividadId = Number(id);
 
@@ -4464,6 +4525,7 @@ export async function cancelarActividad(
   } catch {
     return { ok: false, error: "No se pudo cancelar la actividad." };
   }
+  });
 }
 
 /**
@@ -4471,7 +4533,7 @@ export async function cancelarActividad(
  * en la bitácora de la entidad dueña.
  */
 export async function eliminarActividad(id: string): Promise<ActionResult> {
-  const user = await assertPerm("actividades", "edit");
+  return accionTenant("actividades", "edit", async (user) => {
   if (user.rol !== "admin") {
     return { ok: false, error: "Solo un administrador puede eliminar actividades." };
   }
@@ -4513,6 +4575,7 @@ export async function eliminarActividad(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar la actividad." };
   }
+  });
 }
 
 /**
@@ -4524,7 +4587,7 @@ export async function fetchActividades(input: {
   limit: number;
   offset: number;
 }): Promise<ActividadesPage> {
-  const user = await assertPerm("actividades", "view");
+  return accionTenant("actividades", "view", async (user) => {
   const scope: DashboardScope = {
     rol: (user.rol ?? "lectura") as Rol,
     userId: user.id,
@@ -4532,6 +4595,7 @@ export async function fetchActividades(input: {
   const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
   const offset = Math.max(0, Math.trunc(input.offset));
   return getActividadesPage(scope, input.filtros ?? {}, { limit, offset });
+  });
 }
 
 /**
@@ -4542,12 +4606,13 @@ export async function buscarEntidadActividad(
   tipo: string,
   q: string,
 ): Promise<EntidadOpcion[]> {
-  const user = await assertPerm("actividades", "view");
+  return accionTenant("actividades", "view", async (user) => {
   const scope: DashboardScope = {
     rol: (user.rol ?? "lectura") as Rol,
     userId: user.id,
   };
   return buscarEntidadesActividad(scope, tipo, q, 10);
+  });
 }
 
 /**
@@ -4555,7 +4620,7 @@ export async function buscarEntidadActividad(
  * (proyectos / cotizaciones / oportunidades). Los contactos caen por cascade.
  */
 export async function eliminarCliente(id: string): Promise<ActionResult> {
-  const user = await assertPerm("clientes", "edit");
+  return accionTenant("clientes", "edit", async (user) => {
   if (user.rol !== "admin") {
     return {
       ok: false,
@@ -4603,6 +4668,7 @@ export async function eliminarCliente(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar el cliente." };
   }
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -4633,7 +4699,7 @@ export async function fetchProductos(input: {
   limit: number;
   offset: number;
 }): Promise<ProductosPage> {
-  await assertPerm("productos", "view");
+  return accionTenant("productos", "view", async () => {
   const f = input.filtros ?? {};
   const filtros: ProductosFiltros = {
     productoTipoId: f.productoTipoId ?? undefined,
@@ -4643,6 +4709,7 @@ export async function fetchProductos(input: {
   const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
   const offset = Math.max(0, Math.trunc(input.offset));
   return getProductosPage(filtros, { limit, offset });
+  });
 }
 
 // ── Tipos de producto ──────────────────────────────────────────────────────
@@ -4691,7 +4758,7 @@ function mensajeTipoConflicto(e: unknown): string {
 export async function crearProductoTipo(
   data: z.input<typeof productoTipoSchema>,
 ): Promise<ActionResult & { id?: string }> {
-  await assertPerm("productos", "edit");
+  return accionTenant("productos", "edit", async () => {
   const parsed = productoTipoSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -4706,13 +4773,14 @@ export async function crearProductoTipo(
   } catch (e) {
     return { ok: false, error: mensajeTipoConflicto(e) };
   }
+  });
 }
 
 export async function actualizarProductoTipo(
   id: string,
   data: z.input<typeof productoTipoSchema>,
 ): Promise<ActionResult> {
-  await assertPerm("productos", "edit");
+  return accionTenant("productos", "edit", async () => {
   const parsed = productoTipoSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -4727,6 +4795,7 @@ export async function actualizarProductoTipo(
   } catch (e) {
     return { ok: false, error: mensajeTipoConflicto(e) };
   }
+  });
 }
 
 /** Activa/desactiva un tipo (inactivo = no ofrecible al crear productos). */
@@ -4734,7 +4803,7 @@ export async function toggleProductoTipoActivo(
   id: string,
   activo: boolean,
 ): Promise<ActionResult> {
-  await assertPerm("productos", "edit");
+  return accionTenant("productos", "edit", async () => {
   try {
     await db
       .update(schema.productoTipos)
@@ -4745,11 +4814,12 @@ export async function toggleProductoTipoActivo(
   } catch {
     return { ok: false, error: "No se pudo cambiar el estado del tipo." };
   }
+  });
 }
 
 /** Borra un tipo solo si no tiene productos asociados (si los tiene, desactivar). */
 export async function eliminarProductoTipo(id: string): Promise<ActionResult> {
-  await assertPerm("productos", "edit");
+  return accionTenant("productos", "edit", async () => {
   try {
     const [{ enUso }] = await db
       .select({
@@ -4770,6 +4840,7 @@ export async function eliminarProductoTipo(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar el tipo de producto." };
   }
+  });
 }
 
 // ── Productos ────────────────────────────────────────────────────────────────
@@ -4848,7 +4919,7 @@ function mensajeProductoConflicto(e: unknown): string {
 export async function crearProducto(
   data: z.input<typeof productoSchema>,
 ): Promise<ActionResult & { id?: string }> {
-  await assertPerm("productos", "edit");
+  return accionTenant("productos", "edit", async () => {
   const parsed = productoSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -4863,13 +4934,14 @@ export async function crearProducto(
   } catch (e) {
     return { ok: false, error: mensajeProductoConflicto(e) };
   }
+  });
 }
 
 export async function actualizarProducto(
   id: string,
   data: z.input<typeof productoSchema>,
 ): Promise<ActionResult> {
-  await assertPerm("productos", "edit");
+  return accionTenant("productos", "edit", async () => {
   const parsed = productoSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -4884,6 +4956,7 @@ export async function actualizarProducto(
   } catch (e) {
     return { ok: false, error: mensajeProductoConflicto(e) };
   }
+  });
 }
 
 /** Activa/desactiva un producto (desactivado = no disponible para cotizar). */
@@ -4891,7 +4964,7 @@ export async function toggleProductoActivo(
   id: string,
   activo: boolean,
 ): Promise<ActionResult> {
-  await assertPerm("productos", "edit");
+  return accionTenant("productos", "edit", async () => {
   try {
     await db
       .update(schema.productos)
@@ -4902,6 +4975,7 @@ export async function toggleProductoActivo(
   } catch {
     return { ok: false, error: "No se pudo cambiar el estado del producto." };
   }
+  });
 }
 
 /**
@@ -4910,7 +4984,7 @@ export async function toggleProductoActivo(
  * catalogo_equipos tras el backfill, por lo que se comprueban ambas relaciones.
  */
 export async function eliminarProducto(id: string): Promise<ActionResult> {
-  const user = await assertPerm("productos", "edit");
+  return accionTenant("productos", "edit", async (user) => {
   if (user.rol !== "admin") {
     return { ok: false, error: "Solo un administrador puede eliminar productos." };
   }
@@ -4937,6 +5011,7 @@ export async function eliminarProducto(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar el producto." };
   }
+  });
 }
 
 /**
@@ -4948,7 +5023,7 @@ export async function guardarImagenProducto(
   url: string,
   itemId: string | null,
 ): Promise<ActionResult> {
-  await assertPerm("productos", "edit");
+  return accionTenant("productos", "edit", async () => {
   try {
     const [prev] = await db
       .select({ itemId: schema.productos.imagenItemId })
@@ -4969,11 +5044,12 @@ export async function guardarImagenProducto(
   } catch {
     return { ok: false, error: "No se pudo guardar la imagen." };
   }
+  });
 }
 
 /** Quita la imagen de un producto (limpia columnas y borra el item en Graph). */
 export async function quitarImagenProducto(id: string): Promise<ActionResult> {
-  await assertPerm("productos", "edit");
+  return accionTenant("productos", "edit", async () => {
   try {
     const [prev] = await db
       .select({ itemId: schema.productos.imagenItemId })
@@ -4992,6 +5068,7 @@ export async function quitarImagenProducto(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo quitar la imagen." };
   }
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -5055,7 +5132,7 @@ export async function fetchPaquetes(input: {
   limit: number;
   offset: number;
 }): Promise<PaquetesPage> {
-  await assertPerm("paquetes", "view");
+  return accionTenant("paquetes", "view", async () => {
   const f = input.filtros ?? {};
   const filtros: PaquetesFiltros = {
     segmento: f.segmento ?? undefined,
@@ -5065,12 +5142,13 @@ export async function fetchPaquetes(input: {
   const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
   const offset = Math.max(0, Math.trunc(input.offset));
   return getPaquetesPage(filtros, { limit, offset });
+  });
 }
 
 export async function crearPaquete(
   data: z.input<typeof paqueteSchema>,
 ): Promise<ActionResult & { id?: string }> {
-  await assertPerm("paquetes", "edit");
+  return accionTenant("paquetes", "edit", async () => {
   const parsed = paqueteSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -5095,13 +5173,14 @@ export async function crearPaquete(
   } catch (e) {
     return { ok: false, error: mensajePaqueteConflicto(e) };
   }
+  });
 }
 
 export async function actualizarPaquete(
   id: string,
   data: z.input<typeof paqueteSchema>,
 ): Promise<ActionResult> {
-  await assertPerm("paquetes", "edit");
+  return accionTenant("paquetes", "edit", async () => {
   const parsed = paqueteSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -5128,13 +5207,14 @@ export async function actualizarPaquete(
   } catch (e) {
     return { ok: false, error: mensajePaqueteConflicto(e) };
   }
+  });
 }
 
 export async function togglePaqueteActivo(
   id: string,
   activo: boolean,
 ): Promise<ActionResult> {
-  await assertPerm("paquetes", "edit");
+  return accionTenant("paquetes", "edit", async () => {
   try {
     await db
       .update(schema.paquetes)
@@ -5145,11 +5225,12 @@ export async function togglePaqueteActivo(
   } catch {
     return { ok: false, error: "No se pudo cambiar el estado del paquete." };
   }
+  });
 }
 
 /** Borra un paquete (sus líneas caen por cascade). No hay FK desde cotización. */
 export async function eliminarPaquete(id: string): Promise<ActionResult> {
-  await assertPerm("paquetes", "edit");
+  return accionTenant("paquetes", "edit", async () => {
   try {
     await db.delete(schema.paquetes).where(eq(schema.paquetes.id, id));
     revalidatePath(PAQUETES_PATH);
@@ -5157,6 +5238,7 @@ export async function eliminarPaquete(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar el paquete." };
   }
+  });
 }
 
 const paqueteLineaSchema = z.object({
@@ -5175,7 +5257,7 @@ export async function guardarPaqueteLineas(
   paqueteId: string,
   lineas: z.input<typeof paqueteLineaSchema>[],
 ): Promise<ActionResult> {
-  await assertPerm("paquetes", "edit");
+  return accionTenant("paquetes", "edit", async () => {
   const parsed = paqueteLineasSchema.safeParse(lineas);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Líneas no válidas." };
@@ -5224,6 +5306,7 @@ export async function guardarPaqueteLineas(
   } catch {
     return { ok: false, error: "No se pudieron guardar las líneas del paquete." };
   }
+  });
 }
 
 const aplicarPaqueteSchema = z.object({
@@ -5240,7 +5323,7 @@ const aplicarPaqueteSchema = z.object({
 export async function aplicarPaqueteACotizacion(
   input: z.input<typeof aplicarPaqueteSchema>,
 ): Promise<ActionResult & { total?: number }> {
-  const user = await assertPerm("cotizaciones", "edit");
+  return accionTenant("cotizaciones", "edit", async (user) => {
   const parsed = aplicarPaqueteSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -5355,6 +5438,7 @@ export async function aplicarPaqueteACotizacion(
   } catch {
     return { ok: false, error: "No se pudo aplicar el paquete." };
   }
+  });
 }
 
 export interface SugerenciaPaquetes {
@@ -5376,7 +5460,7 @@ export async function sugerirPaquetesParaCotizacion(
   cotizacionId: string,
   capacidadKwpOverride?: number | null,
 ): Promise<SugerenciaPaquetes> {
-  const user = await assertPerm("cotizaciones", "edit");
+  return accionTenant("cotizaciones", "edit", async (user) => {
   if (!(await puedeAccederCotizacion(user, cotizacionId))) {
     return { ok: false, error: SIN_ACCESO, capacidadKwp: null };
   }
@@ -5409,6 +5493,7 @@ export async function sugerirPaquetesParaCotizacion(
       : capStored;
   const result = await getMejorPaquete({ capacidadKwp: cap ?? 0, segmento });
   return { ok: true, capacidadKwp: cap, segmento, ...result };
+  });
 }
 
 /**
@@ -5505,17 +5590,18 @@ export async function fetchMarcas(input: {
   limit: number;
   offset: number;
 }): Promise<MarcasPage> {
-  await assertPerm("marcas", "view");
+  return accionTenant("marcas", "view", async () => {
   const f = input.filtros ?? {};
   const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
   const offset = Math.max(0, Math.trunc(input.offset));
   return getMarcasPage({ busqueda: f.busqueda, soloActivas: f.soloActivas }, { limit, offset });
+  });
 }
 
 export async function crearMarca(
   data: z.input<typeof marcaSchema>,
 ): Promise<ActionResult & { id?: string }> {
-  await assertPerm("marcas", "edit");
+  return accionTenant("marcas", "edit", async () => {
   const parsed = marcaSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -5536,13 +5622,14 @@ export async function crearMarca(
   } catch (e) {
     return { ok: false, error: mensajeMarcaConflicto(e) };
   }
+  });
 }
 
 export async function actualizarMarca(
   id: string,
   data: z.input<typeof marcaSchema>,
 ): Promise<ActionResult> {
-  await assertPerm("marcas", "edit");
+  return accionTenant("marcas", "edit", async () => {
   const parsed = marcaSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -5564,10 +5651,11 @@ export async function actualizarMarca(
   } catch (e) {
     return { ok: false, error: mensajeMarcaConflicto(e) };
   }
+  });
 }
 
 export async function toggleMarcaActiva(id: string, activo: boolean): Promise<ActionResult> {
-  await assertPerm("marcas", "edit");
+  return accionTenant("marcas", "edit", async () => {
   try {
     await db
       .update(schema.marcas)
@@ -5578,10 +5666,11 @@ export async function toggleMarcaActiva(id: string, activo: boolean): Promise<Ac
   } catch {
     return { ok: false, error: "No se pudo cambiar el estado de la marca." };
   }
+  });
 }
 
 export async function eliminarMarca(id: string): Promise<ActionResult> {
-  await assertPerm("marcas", "edit");
+  return accionTenant("marcas", "edit", async () => {
   try {
     await db.delete(schema.marcas).where(eq(schema.marcas.id, id));
     revalidatePath(MARCAS_PATH);
@@ -5589,6 +5678,7 @@ export async function eliminarMarca(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar la marca." };
   }
+  });
 }
 
 /** Guarda el logo de una marca (tras subirlo a SharePoint). Borra el anterior. */
@@ -5597,7 +5687,7 @@ export async function guardarImagenMarca(
   url: string,
   itemId: string | null,
 ): Promise<ActionResult> {
-  await assertPerm("marcas", "edit");
+  return accionTenant("marcas", "edit", async () => {
   try {
     const [prev] = await db
       .select({ itemId: schema.marcas.imagenItemId })
@@ -5616,11 +5706,12 @@ export async function guardarImagenMarca(
   } catch {
     return { ok: false, error: "No se pudo guardar el logo." };
   }
+  });
 }
 
 /** Quita el logo de una marca (limpia columnas y borra el item en Graph). */
 export async function quitarImagenMarca(id: string): Promise<ActionResult> {
-  await assertPerm("marcas", "edit");
+  return accionTenant("marcas", "edit", async () => {
   try {
     const [prev] = await db
       .select({ itemId: schema.marcas.imagenItemId })
@@ -5639,6 +5730,7 @@ export async function quitarImagenMarca(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo quitar el logo." };
   }
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -5700,23 +5792,26 @@ export async function fetchAreas(input: {
   limit: number;
   offset: number;
 }): Promise<AreasPage> {
-  await assertPerm("areas", "view");
+  return accionTenant("areas", "view", async () => {
   const f = input.filtros ?? {};
   const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
   const offset = Math.max(0, Math.trunc(input.offset));
   return getAreasPage({ busqueda: f.busqueda, soloActivas: f.soloActivas }, { limit, offset });
+  });
 }
 
 export async function fetchAreasArbol(): Promise<AreaArbolRow[]> {
-  await assertPerm("areas", "view");
+  return accionTenant("areas", "view", async () => {
   return getAreasArbol();
+  });
 }
 
 /* ── Empresas (multi-tenant) + importación de usuarios desde M365 ─────────── */
 
 export async function fetchEmpresas(): Promise<EmpresaRow[]> {
-  await assertPerm("usuarios", "view");
+  return accionTenant("usuarios", "view", async () => {
   return getEmpresas();
+  });
 }
 
 /* ── Roles (RBAC dinámico, por empresa) ───────────────────────────────────── */
@@ -5753,14 +5848,15 @@ function slugRol(nombre: string): string {
 }
 
 export async function fetchRoles(): Promise<RolRow[]> {
-  const user = await assertPerm("roles", "view");
+  return accionTenant("roles", "view", async (user) => {
   const empresaId = await empresaDeUsuario(user.id);
   if (!empresaId) return [];
   return getRoles(empresaId);
+  });
 }
 
 export async function crearRol(data: z.input<typeof rolSchemaCrear>): Promise<ActionResult & { id?: string }> {
-  const user = await assertPerm("roles", "edit");
+  return accionTenant("roles", "edit", async (user) => {
   const empresaId = await empresaDeUsuario(user.id);
   if (!empresaId) return { ok: false, error: "Tu usuario no tiene empresa asignada." };
   const parsed = rolSchemaCrear.safeParse(data);
@@ -5785,10 +5881,11 @@ export async function crearRol(data: z.input<typeof rolSchemaCrear>): Promise<Ac
     if (msg.includes("ux_roles_empresa_clave")) return { ok: false, error: "Ya existe un rol con ese nombre." };
     return { ok: false, error: "No se pudo crear el rol." };
   }
+  });
 }
 
 export async function actualizarRol(id: string, data: z.input<typeof rolSchemaEditar>): Promise<ActionResult> {
-  const user = await assertPerm("roles", "edit");
+  return accionTenant("roles", "edit", async (user) => {
   const empresaId = await empresaDeUsuario(user.id);
   if (!empresaId) return { ok: false, error: "Tu usuario no tiene empresa asignada." };
   const parsed = rolSchemaEditar.safeParse(data);
@@ -5818,10 +5915,11 @@ export async function actualizarRol(id: string, data: z.input<typeof rolSchemaEd
   } catch {
     return { ok: false, error: "No se pudo actualizar el rol." };
   }
+  });
 }
 
 export async function toggleRolActivo(id: string, activo: boolean): Promise<ActionResult> {
-  const user = await assertPerm("roles", "edit");
+  return accionTenant("roles", "edit", async (user) => {
   const empresaId = await empresaDeUsuario(user.id);
   if (!empresaId) return { ok: false, error: "Tu usuario no tiene empresa asignada." };
   const [rol] = await db
@@ -5841,10 +5939,11 @@ export async function toggleRolActivo(id: string, activo: boolean): Promise<Acti
   } catch {
     return { ok: false, error: "No se pudo actualizar el rol." };
   }
+  });
 }
 
 export async function eliminarRol(id: string): Promise<ActionResult> {
-  const user = await assertPerm("roles", "edit");
+  return accionTenant("roles", "edit", async (user) => {
   const empresaId = await empresaDeUsuario(user.id);
   if (!empresaId) return { ok: false, error: "Tu usuario no tiene empresa asignada." };
 
@@ -5863,6 +5962,7 @@ export async function eliminarRol(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar el rol." };
   }
+  });
 }
 
 /**
@@ -5873,7 +5973,7 @@ export async function fetchUsuariosM365(
   empresaId: string,
   soloDominio = true,
 ): Promise<{ ok: true; data: (M365User & { yaExiste: boolean })[] } | { ok: false; error: string }> {
-  await assertPerm("usuarios", "edit");
+  return accionTenant("usuarios", "edit", async () => {
   const [emp] = await db
     .select({ dominio: schema.empresas.dominio })
     .from(schema.empresas)
@@ -5889,6 +5989,7 @@ export async function fetchUsuariosM365(
   const existentes = await db.select({ email: schema.usuarios.email }).from(schema.usuarios);
   const set = new Set(existentes.map((x) => x.email.toLowerCase()));
   return { ok: true, data: r.data.map((u) => ({ ...u, yaExiste: set.has(u.email) })) };
+  });
 }
 
 /**
@@ -5900,7 +6001,7 @@ export async function importarUsuariosM365(
   empresaId: string,
   correos: string[],
 ): Promise<ActionResult & { creados?: number; omitidos?: number }> {
-  await assertPerm("usuarios", "edit");
+  return accionTenant("usuarios", "edit", async () => {
 
   const [emp] = await db
     .select({ dominio: schema.empresas.dominio })
@@ -5951,12 +6052,13 @@ export async function importarUsuariosM365(
   revalidatePath("/je-admin/usuarios");
   revalidatePath("/je-admin/organigrama");
   return { ok: true, creados, omitidos };
+  });
 }
 
 export async function crearArea(
   data: z.input<typeof areaSchema>,
 ): Promise<ActionResult & { id?: string }> {
-  await assertPerm("areas", "edit");
+  return accionTenant("areas", "edit", async () => {
   const parsed = areaSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -5981,13 +6083,14 @@ export async function crearArea(
   } catch (e) {
     return { ok: false, error: mensajeAreaConflicto(e) };
   }
+  });
 }
 
 export async function actualizarArea(
   id: string,
   data: z.input<typeof areaSchema>,
 ): Promise<ActionResult> {
-  await assertPerm("areas", "edit");
+  return accionTenant("areas", "edit", async () => {
   const parsed = areaSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -6017,10 +6120,11 @@ export async function actualizarArea(
   } catch (e) {
     return { ok: false, error: mensajeAreaConflicto(e) };
   }
+  });
 }
 
 export async function toggleAreaActiva(id: string, activa: boolean): Promise<ActionResult> {
-  await assertPerm("areas", "edit");
+  return accionTenant("areas", "edit", async () => {
   try {
     await db
       .update(schema.areas)
@@ -6031,10 +6135,11 @@ export async function toggleAreaActiva(id: string, activa: boolean): Promise<Act
   } catch {
     return { ok: false, error: "No se pudo actualizar el área." };
   }
+  });
 }
 
 export async function eliminarArea(id: string): Promise<ActionResult> {
-  await assertPerm("areas", "edit");
+  return accionTenant("areas", "edit", async () => {
   try {
     // usuarios.area_id es ON DELETE SET NULL: los miembros quedan sin área.
     await db.delete(schema.areas).where(eq(schema.areas.id, id));
@@ -6044,6 +6149,7 @@ export async function eliminarArea(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar el área." };
   }
+  });
 }
 
 /* ───────────────────────────── Cargos (catálogo) ───────────────────────────── */
@@ -6067,23 +6173,25 @@ export async function fetchCargos(input: {
   limit: number;
   offset: number;
 }): Promise<CargosPage> {
-  await assertPerm("cargos", "view");
+  return accionTenant("cargos", "view", async () => {
   const f = input.filtros ?? {};
   const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
   const offset = Math.max(0, Math.trunc(input.offset));
   return getCargosPage({ busqueda: f.busqueda, soloActivos: f.soloActivos }, { limit, offset });
+  });
 }
 
 /** Cargos activos (id + nombre) para los selects de usuario. */
 export async function fetchCargosActivos(): Promise<{ id: string; nombre: string }[]> {
-  await assertPerm("cargos", "view");
+  return accionTenant("cargos", "view", async () => {
   return getCargosActivos();
+  });
 }
 
 export async function crearCargo(
   data: z.input<typeof cargoSchema>,
 ): Promise<ActionResult & { id?: string }> {
-  await assertPerm("cargos", "edit");
+  return accionTenant("cargos", "edit", async () => {
   const parsed = cargoSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -6104,13 +6212,14 @@ export async function crearCargo(
   } catch (e) {
     return { ok: false, error: mensajeCargoConflicto(e) };
   }
+  });
 }
 
 export async function actualizarCargo(
   id: string,
   data: z.input<typeof cargoSchema>,
 ): Promise<ActionResult> {
-  await assertPerm("cargos", "edit");
+  return accionTenant("cargos", "edit", async () => {
   const parsed = cargoSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -6136,10 +6245,11 @@ export async function actualizarCargo(
   } catch (e) {
     return { ok: false, error: mensajeCargoConflicto(e) };
   }
+  });
 }
 
 export async function toggleCargoActivo(id: string, activo: boolean): Promise<ActionResult> {
-  await assertPerm("cargos", "edit");
+  return accionTenant("cargos", "edit", async () => {
   try {
     await db
       .update(schema.cargos)
@@ -6150,10 +6260,11 @@ export async function toggleCargoActivo(id: string, activo: boolean): Promise<Ac
   } catch {
     return { ok: false, error: "No se pudo actualizar el cargo." };
   }
+  });
 }
 
 export async function eliminarCargo(id: string): Promise<ActionResult> {
-  await assertPerm("cargos", "edit");
+  return accionTenant("cargos", "edit", async () => {
   try {
     // usuarios.cargo_id es ON DELETE SET NULL: quedan sin cargo del catálogo
     // (conservan el texto denormalizado como histórico).
@@ -6164,6 +6275,7 @@ export async function eliminarCargo(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar el cargo." };
   }
+  });
 }
 
 const jerarquiaSchema = z.object({
@@ -6181,7 +6293,7 @@ export async function actualizarJerarquiaUsuario(
   userId: string,
   data: z.input<typeof jerarquiaSchema>,
 ): Promise<ActionResult> {
-  await assertPerm("organizacion", "edit");
+  return accionTenant("organizacion", "edit", async () => {
   if (!z.string().uuid().safeParse(userId).success) {
     return { ok: false, error: "Usuario no válido." };
   }
@@ -6221,6 +6333,7 @@ export async function actualizarJerarquiaUsuario(
   } catch {
     return { ok: false, error: "No se pudo actualizar la organización del usuario." };
   }
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -6283,7 +6396,7 @@ export async function fetchCampanas(input: {
   limit: number;
   offset: number;
 }): Promise<CampanasPage> {
-  await assertPerm("campanas", "view");
+  return accionTenant("campanas", "view", async () => {
   const f = input.filtros ?? {};
   const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
   const offset = Math.max(0, Math.trunc(input.offset));
@@ -6291,12 +6404,13 @@ export async function fetchCampanas(input: {
     { estado: f.estado, plataforma: f.plataforma, busqueda: f.busqueda },
     { limit, offset },
   );
+  });
 }
 
 export async function crearCampana(
   data: CampanaInput,
 ): Promise<ActionResult & { id?: string }> {
-  await assertPerm("campanas", "edit");
+  return accionTenant("campanas", "edit", async () => {
   const parsed = campanaSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -6311,13 +6425,14 @@ export async function crearCampana(
   } catch {
     return { ok: false, error: "No se pudo crear la campaña." };
   }
+  });
 }
 
 export async function actualizarCampana(
   id: string,
   data: CampanaInput,
 ): Promise<ActionResult> {
-  await assertPerm("campanas", "edit");
+  return accionTenant("campanas", "edit", async () => {
   const parsed = campanaSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
@@ -6332,10 +6447,11 @@ export async function actualizarCampana(
   } catch {
     return { ok: false, error: "No se pudo actualizar la campaña." };
   }
+  });
 }
 
 export async function eliminarCampana(id: string): Promise<ActionResult> {
-  await assertPerm("campanas", "edit");
+  return accionTenant("campanas", "edit", async () => {
   try {
     // leads.campana_id es ON DELETE SET NULL: los leads quedan sin campaña.
     await db.delete(schema.campanas).where(eq(schema.campanas.id, id));
@@ -6344,6 +6460,7 @@ export async function eliminarCampana(id: string): Promise<ActionResult> {
   } catch {
     return { ok: false, error: "No se pudo eliminar la campaña." };
   }
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -6375,7 +6492,7 @@ export async function guardarIntegracion(
   clave: string,
   input: GuardarIntegracionInput,
 ): Promise<ActionResult> {
-  const user = await assertPerm("integraciones", "edit");
+  return accionTenant("integraciones", "edit", async (user) => {
   const def = REGISTRO.find((d) => d.clave === clave);
 
   // Fila previa (para conservar nombre/descripción de custom y secretos anteriores).
@@ -6454,6 +6571,7 @@ export async function guardarIntegracion(
   invalidarConfig(clave);
   revalidatePath("/je-admin/integraciones");
   return { ok: true };
+  });
 }
 
 /* ── Crear / revelar / eliminar integraciones ─────────────────────────────── */
@@ -6474,7 +6592,7 @@ const RE_CAMPO = /^[a-z][a-z0-9_]{0,39}$/;
  * `ajustes` (claro) o `secretos` (cifrado) según su flag `sensible`.
  */
 export async function crearIntegracion(input: CrearIntegracionInput): Promise<ActionResult> {
-  const user = await assertPerm("integraciones", "edit");
+  return accionTenant("integraciones", "edit", async (user) => {
 
   const clave = input.clave?.trim().toLowerCase() ?? "";
   const nombre = input.nombre?.trim() ?? "";
@@ -6524,6 +6642,7 @@ export async function crearIntegracion(input: CrearIntegracionInput): Promise<Ac
   invalidarConfig(clave);
   revalidatePath("/je-admin/integraciones");
   return { ok: true };
+  });
 }
 
 /**
@@ -6534,7 +6653,7 @@ export async function revelarSecretoIntegracion(
   clave: string,
   campo: string,
 ): Promise<{ ok: true; valor: string } | { ok: false; error: string }> {
-  await assertPerm("integraciones", "edit");
+  return accionTenant("integraciones", "edit", async () => {
   try {
     const integ = await getIntegracion(clave);
     const valor = integ.secreto(campo);
@@ -6543,11 +6662,12 @@ export async function revelarSecretoIntegracion(
   } catch {
     return { ok: false, error: "No se pudo revelar (¿falta CONFIG_ENC_KEY?)." };
   }
+  });
 }
 
 /** Elimina una integración creada a mano (las del REGISTRO no se borran). */
 export async function eliminarIntegracion(clave: string): Promise<ActionResult> {
-  await assertPerm("integraciones", "edit");
+  return accionTenant("integraciones", "edit", async () => {
   if (REGISTRO.some((d) => d.clave === clave)) {
     return { ok: false, error: "Las integraciones del sistema no se pueden eliminar." };
   }
@@ -6559,4 +6679,5 @@ export async function eliminarIntegracion(clave: string): Promise<ActionResult> 
   invalidarConfig(clave);
   revalidatePath("/je-admin/integraciones");
   return { ok: true };
+  });
 }
