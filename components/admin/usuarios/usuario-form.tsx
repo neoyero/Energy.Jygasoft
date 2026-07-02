@@ -9,6 +9,7 @@ import type { UsuarioAdminRow } from "@/lib/admin/queries"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Combobox } from "@/components/admin/ui/combobox"
 
 const SELECT_CLASS =
   "h-9 w-full rounded-md border border-border bg-background px-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50"
@@ -167,56 +168,38 @@ export function UsuarioForm({
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="space-y-1.5">
           <Label htmlFor="u-cargo">Cargo</Label>
-          <select
+          <Combobox
             id="u-cargo"
             value={form.cargoId}
-            onChange={(e) => set("cargoId", e.target.value)}
+            onChange={(v) => set("cargoId", v)}
+            options={cargos.map((c) => ({ value: c.id, label: c.nombre }))}
+            emptyLabel="Sin cargo"
             disabled={pending}
-            className={SELECT_CLASS}
-          >
-            <option value="">Sin cargo</option>
-            {cargos.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.nombre}
-              </option>
-            ))}
-          </select>
+          />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="u-jefe">Reporta a</Label>
-          <select
+          <Combobox
             id="u-jefe"
             value={form.reportaA}
-            onChange={(e) => set("reportaA", e.target.value)}
-            disabled={pending}
-            className={SELECT_CLASS}
-          >
-            <option value="">Sin jefe</option>
-            {usuarios
+            onChange={(v) => set("reportaA", v)}
+            options={usuarios
               .filter((u) => u.id !== usuario?.id)
-              .map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.nombre}
-                </option>
-              ))}
-          </select>
+              .map((u) => ({ value: u.id, label: u.nombre }))}
+            emptyLabel="Sin jefe"
+            disabled={pending}
+          />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="u-area">Área</Label>
-          <select
+          <Combobox
             id="u-area"
             value={form.areaId}
-            onChange={(e) => set("areaId", e.target.value)}
+            onChange={(v) => set("areaId", v)}
+            options={areas.map((a) => ({ value: a.id, label: a.nombre }))}
+            emptyLabel="Sin área"
             disabled={pending}
-            className={SELECT_CLASS}
-          >
-            <option value="">Sin área</option>
-            {areas.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.nombre}
-              </option>
-            ))}
-          </select>
+          />
         </div>
       </div>
 
