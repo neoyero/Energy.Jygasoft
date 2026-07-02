@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { Check, ChevronsUpDown, Search, X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -16,7 +17,6 @@ export interface ComboboxProps {
   value: string
   onChange: (value: string) => void
   options: ReadonlyArray<ComboOption>
-  /** Texto cuando no hay selección. */
   placeholder?: string
   /** Si se define, agrega una opción "vacía" arriba (value ""), p. ej. "Sin jefe". */
   emptyLabel?: string
@@ -25,10 +25,19 @@ export interface ComboboxProps {
   className?: string
 }
 
+interface Coords {
+  left: number
+  width: number
+  top?: number
+  bottom?: number
+  maxH: number
+}
+
 /**
- * Combobox con buscador (single-select). Botón que muestra la selección; al
- * abrir, un panel con input de búsqueda + lista filtrada. Cierra al elegir, con
- * Escape o al hacer clic fuera. Sin dependencias externas.
+ * Combobox con buscador (single-select). El panel se renderiza en un PORTAL con
+ * posición fija anclada al botón, así flota por encima del modal sin empujar ni
+ * provocar scroll, y se voltea hacia arriba si no hay espacio abajo. Cierra al
+ * elegir, con Escape o clic fuera. Sin dependencias externas.
  */
 export function Combobox({
   value,
@@ -43,7 +52,9 @@ export function Combobox({
   const [abierto, setAbierto] = useState(false)
   const [q, setQ] = useState("")
   const [activo, setActivo] = useState(0)
-  const ref = useRef<HTMLDivElement | null>(null)
+  const [coords, setCoords] = useState<Coords | null>(null)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
   const seleccion = options.find((o) => o.value === value)
@@ -60,24 +71,50 @@ export function Combobox({
     return [...base, ...filtradas]
   }, [options, q, emptyLabel])
 
-  // Cierra al hacer clic fuera.
+  const reposicionar = useCallback(() => {
+    const el = btnRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const espacioAbajo = window.innerHeight - r.bottom - 8
+    const espacioArriba = r.top - 8
+    const arriba = espacioAbajo < 240 && espacioArriba > espacioAbajo
+    setCoords({
+      left: r.left,
+      width: r.width,
+      top: arriba ? undefined : r.bottom + 4,
+      bottom: arriba ? window.innerHeight - r.top + 4 : undefined,
+      maxH: Math.min(320, Math.max(160, arriba ? espacioArriba : espacioAbajo)),
+    })
+  }, [])
+
+  // Al abrir: posiciona, resetea búsqueda, enfoca. Reposiciona en scroll/resize.
+  useEffect(() => {
+    if (!abierto) return
+    reposicionar()
+    setQ("")
+    setActivo(0)
+    const t = setTimeout(() => inputRef.current?.focus(), 10)
+    const onScroll = () => reposicionar()
+    // capture:true para captar el scroll de cualquier contenedor (p. ej. el modal).
+    window.addEventListener("scroll", onScroll, true)
+    window.addEventListener("resize", onScroll)
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener("scroll", onScroll, true)
+      window.removeEventListener("resize", onScroll)
+    }
+  }, [abierto, reposicionar])
+
+  // Cierra al hacer clic fuera del botón y del panel (portal).
   useEffect(() => {
     if (!abierto) return
     function onDoc(e: MouseEvent): void {
-      if (ref.current && !ref.current.contains(e.target as Node)) setAbierto(false)
+      const t = e.target as Node
+      if (btnRef.current?.contains(t) || panelRef.current?.contains(t)) return
+      setAbierto(false)
     }
     document.addEventListener("mousedown", onDoc)
     return () => document.removeEventListener("mousedown", onDoc)
-  }, [abierto])
-
-  // Enfoca el buscador al abrir.
-  useEffect(() => {
-    if (abierto) {
-      setQ("")
-      setActivo(0)
-      const t = setTimeout(() => inputRef.current?.focus(), 10)
-      return () => clearTimeout(t)
-    }
   }, [abierto])
 
   function elegir(v: string): void {
@@ -104,8 +141,9 @@ export function Combobox({
   }
 
   return (
-    <div ref={ref} className={cn("relative", className)}>
+    <div className={cn("relative", className)}>
       <button
+        ref={btnRef}
         type="button"
         id={id}
         disabled={disabled}
@@ -123,65 +161,79 @@ export function Combobox({
         <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       </button>
 
-      {abierto ? (
-        <div className="absolute z-50 mt-1 w-full rounded-lg border border-border bg-popover shadow-lg">
-          <div className="flex items-center gap-2 border-b border-border px-2.5 py-1.5">
-            <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-            <input
-              ref={inputRef}
-              value={q}
-              onChange={(e) => {
-                setQ(e.target.value)
-                setActivo(0)
+      {abierto && coords && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={panelRef}
+              style={{
+                position: "fixed",
+                left: coords.left,
+                width: coords.width,
+                top: coords.top,
+                bottom: coords.bottom,
+                maxHeight: coords.maxH,
               }}
-              onKeyDown={onKeyDown}
-              placeholder="Buscar…"
-              className="h-7 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-            />
-            {q ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setQ("")
-                  inputRef.current?.focus()
-                }}
-                className="text-muted-foreground hover:text-foreground"
-                aria-label="Limpiar"
-              >
-                <X className="size-4" />
-              </button>
-            ) : null}
-          </div>
-
-          <ul role="listbox" className="max-h-56 overflow-y-auto py-1">
-            {lista.length === 0 ? (
-              <li className="px-3 py-2 text-sm text-muted-foreground">Sin resultados.</li>
-            ) : (
-              lista.map((o, i) => (
-                <li key={o.value || "__none__"}>
+              className="z-[60] flex flex-col overflow-hidden rounded-lg border border-border bg-popover shadow-xl"
+            >
+              <div className="flex items-center gap-2 border-b border-border px-2.5 py-1.5">
+                <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <input
+                  ref={inputRef}
+                  value={q}
+                  onChange={(e) => {
+                    setQ(e.target.value)
+                    setActivo(0)
+                  }}
+                  onKeyDown={onKeyDown}
+                  placeholder="Buscar…"
+                  className="h-7 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                />
+                {q ? (
                   <button
                     type="button"
-                    role="option"
-                    aria-selected={o.value === value}
-                    onClick={() => elegir(o.value)}
-                    onMouseEnter={() => setActivo(i)}
-                    className={cn(
-                      "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm",
-                      i === activo ? "bg-muted" : "",
-                    )}
+                    onClick={() => {
+                      setQ("")
+                      inputRef.current?.focus()
+                    }}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label="Limpiar"
                   >
-                    <Check className={cn("size-4 shrink-0", o.value === value ? "opacity-100" : "opacity-0")} />
-                    <span className="min-w-0 flex-1 truncate">
-                      {o.label}
-                      {o.hint ? <span className="ml-1 text-xs text-muted-foreground">{o.hint}</span> : null}
-                    </span>
+                    <X className="size-4" />
                   </button>
-                </li>
-              ))
-            )}
-          </ul>
-        </div>
-      ) : null}
+                ) : null}
+              </div>
+
+              <ul role="listbox" className="min-h-0 flex-1 overflow-y-auto py-1">
+                {lista.length === 0 ? (
+                  <li className="px-3 py-2 text-sm text-muted-foreground">Sin resultados.</li>
+                ) : (
+                  lista.map((o, i) => (
+                    <li key={o.value || "__none__"}>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={o.value === value}
+                        onClick={() => elegir(o.value)}
+                        onMouseEnter={() => setActivo(i)}
+                        className={cn(
+                          "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm",
+                          i === activo ? "bg-muted" : "",
+                        )}
+                      >
+                        <Check className={cn("size-4 shrink-0", o.value === value ? "opacity-100" : "opacity-0")} />
+                        <span className="min-w-0 flex-1 truncate">
+                          {o.label}
+                          {o.hint ? <span className="ml-1 text-xs text-muted-foreground">{o.hint}</span> : null}
+                        </span>
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
