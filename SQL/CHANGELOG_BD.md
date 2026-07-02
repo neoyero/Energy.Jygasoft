@@ -12,6 +12,23 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0026 — Multi-tenant (Fase 2 · RLS) · 2026-07-01  [rama multi-tenant-enforcement]
+
+**Migración:** `db/migrations/0026_rls.sql`
+
+- Activa `ENABLE` + `FORCE ROW LEVEL SECURITY` y crea la policy `tenant_isolation`
+  en las 30 tablas con `empresa_id` (28 de negocio + usuarios + roles).
+- Policy TRANSICIONAL: permite si el GUC `app.empresa_id` no está seteado (para
+  migrar sin romper), permite todo si `app.superadmin='on'`, y en cualquier otro
+  caso exige `empresa_id = app.empresa_id`. Aplica a lectura (USING) y escritura
+  (WITH CHECK).
+- Verificado: con el GUC seteado, un tenant NO ve datos de otro; super-admin ve
+  todo; el rol de conexión está sujeto a RLS (no lo bypassa).
+- Deploy: el rol de conexión de la app NO debe ser superusuario ni tener BYPASSRLS.
+- Cierre (2G): endurecer a deny-by-default (quitar la rama "GUC IS NULL").
+
+---
+
 ## 0025 — Multi-tenant (Fase 2 · cimiento): empresa_id en tablas de negocio · 2026-07-01
 
 **Migración:** `db/migrations/0025_empresa_id_negocio.sql`
