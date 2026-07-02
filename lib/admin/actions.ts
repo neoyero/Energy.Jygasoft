@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { eq, and, ne, asc, desc, inArray, notInArray, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
-import { assertPerm, actorOf, type SessionUser } from "@/lib/admin/guard";
+import { assertPerm, accionTenant, actorOf, type SessionUser } from "@/lib/admin/guard";
 import {
   isScoped,
   getLeadsPage,
@@ -902,26 +902,27 @@ export async function actualizarLead(
  * ventana solicitada + el total que cumple el filtro.
  */
 export async function fetchLeads(input: FetchLeadsInput): Promise<LeadsPage> {
-  const user = await assertPerm("leads", "view");
-  const scope: DashboardScope = {
-    rol: (user.rol ?? "lectura") as Rol,
-    userId: (user.id ?? "") as string,
-  };
+  return accionTenant("leads", "view", async (user) => {
+    const scope: DashboardScope = {
+      rol: (user.rol ?? "lectura") as Rol,
+      userId: (user.id ?? "") as string,
+    };
 
-  const f = input.filtros ?? {};
-  const filtros: LeadsFiltros = {
-    estado: (f.estado ?? undefined) as LeadsFiltros["estado"],
-    canal: (f.canal ?? undefined) as LeadsFiltros["canal"],
-    vendedorId: f.vendedorId,
-    scoreMin: typeof f.scoreMin === "number" ? f.scoreMin : undefined,
-    busqueda: f.busqueda,
-    desde: f.desde,
-    hasta: f.hasta,
-  };
+    const f = input.filtros ?? {};
+    const filtros: LeadsFiltros = {
+      estado: (f.estado ?? undefined) as LeadsFiltros["estado"],
+      canal: (f.canal ?? undefined) as LeadsFiltros["canal"],
+      vendedorId: f.vendedorId,
+      scoreMin: typeof f.scoreMin === "number" ? f.scoreMin : undefined,
+      busqueda: f.busqueda,
+      desde: f.desde,
+      hasta: f.hasta,
+    };
 
-  const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
-  const offset = Math.max(0, Math.trunc(input.offset));
-  return getLeadsPage(scope, filtros, { limit, offset });
+    const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 100);
+    const offset = Math.max(0, Math.trunc(input.offset));
+    return getLeadsPage(scope, filtros, { limit, offset });
+  });
 }
 
 /* ──────────────────────────── Asesores ──────────────────────────── */
