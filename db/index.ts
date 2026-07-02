@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { serverEnv } from "@/lib/env";
@@ -29,6 +30,28 @@ if (serverEnv.NODE_ENV !== "production") {
   globalForPool.__energyPool = pool;
 }
 
-export const db = drizzle(pool, { schema: fullSchema });
+/** Instancia base (pool). Úsala en procesos SIN tenant (migraciones/seed). */
+export const basedb = drizzle(pool, { schema: fullSchema });
+type DrizzleDb = typeof basedb;
+
+/**
+ * Transacción de tenant activa del request (la fija `runWithTenant`). Cuando
+ * existe, el `db` exportado enruta TODAS las queries a ella (con el GUC
+ * `app.empresa_id` seteado → aplica RLS), sin tener que reescribir las queries.
+ */
+export const txStore = new AsyncLocalStorage<DrizzleDb>();
+
+/**
+ * `db` tenant-aware: si hay una transacción de tenant activa (AsyncLocalStorage),
+ * reenvía a ella; si no, al pool base. Comportamiento idéntico al de antes cuando
+ * no hay tenant activo (p. ej. login, scripts).
+ */
+export const db: DrizzleDb = new Proxy(basedb, {
+  get(target, prop, receiver) {
+    const active = (txStore.getStore() ?? target) as DrizzleDb;
+    const value = Reflect.get(active as object, prop, receiver);
+    return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(active) : value;
+  },
+}) as DrizzleDb;
 
 export { schema };
