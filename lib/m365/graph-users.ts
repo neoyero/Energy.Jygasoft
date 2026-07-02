@@ -1,4 +1,4 @@
-import { getGraphToken } from "@/lib/email";
+import { getGraphToken, invalidateGraphToken } from "@/lib/email";
 
 /**
  * Lista usuarios de la organización M365 vía Microsoft Graph (app-only, mismo App
@@ -47,18 +47,37 @@ export async function listarUsuariosM365(dominio: string): Promise<Res<M365User[
   let url: string | null = `${GRAPH}/users?$select=${select}&$top=999`;
   const dom = dominio.trim().toLowerCase();
   const out: M365User[] = [];
+  let authRefrescado = false; // solo un reintento con token nuevo por si el cacheado no traía el permiso
 
   try {
     while (url) {
-      const res = await fetch(url, {
+      let res = await fetch(url, {
         headers: { authorization: `Bearer ${token}`, accept: "application/json" },
         cache: "no-store",
       });
+      // Si el token cacheado no tiene el permiso (recién otorgado en Azure), se
+      // invalida, se pide uno fresco y se reintenta una vez.
+      if ((res.status === 401 || res.status === 403) && !authRefrescado) {
+        authRefrescado = true;
+        invalidateGraphToken();
+        try {
+          token = await getGraphToken();
+        } catch {
+          return { ok: false, error: "M365 no está configurado (revisa la integración m365)." };
+        }
+        res = await fetch(url, {
+          headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+          cache: "no-store",
+        });
+      }
       if (!res.ok) {
         const detalle = (await res.text().catch(() => "")).slice(0, 200);
         console.error(`[graph-users] ${res.status} ${detalle}`);
-        if (res.status === 403) {
-          return { ok: false, error: "Falta el permiso User.Read.All (consentimiento admin en Azure)." };
+        if (res.status === 401 || res.status === 403) {
+          return {
+            ok: false,
+            error: "Sin permiso en Graph: agrega User.Read.All o User.ReadWrite.All de tipo APLICACIÓN + consentimiento admin.",
+          };
         }
         return { ok: false, error: `Error de Microsoft Graph (${res.status}).` };
       }

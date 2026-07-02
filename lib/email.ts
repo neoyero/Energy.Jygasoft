@@ -37,6 +37,15 @@ export interface MailResult {
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
 /**
+ * Invalida el token de Graph en caché. Útil tras cambiar permisos/consentimiento
+ * en Azure: el siguiente getGraphToken() emite uno nuevo con los permisos actuales
+ * (sin esperar a que expire el cacheado, ~1h).
+ */
+export function invalidateGraphToken(): void {
+  cachedToken = null;
+}
+
+/**
  * Token de aplicación de Microsoft Graph (client-credentials, scope .default).
  * La config de M365 se resuelve desde el servicio (BD con fallback a env).
  */
