@@ -42,6 +42,7 @@ export type Modulo =
   | "cargos"
   | "chatwoot"
   | "integraciones"
+  | "roles"
   | "usuarios";
 
 // Grupos de roles para no repetir.
@@ -98,8 +99,35 @@ const MATRIX: Record<Modulo, { view: Rol[]; edit: Rol[] }> = {
   chatwoot: { view: MANAGERS, edit: MANAGERS },
   // Integraciones (tokens/keys de servicios): solo admin.
   integraciones: { view: ["admin"], edit: ["admin"] },
+  // Roles y permisos (RBAC): solo admin.
+  roles: { view: ["admin"], edit: ["admin"] },
   usuarios: { view: ["admin"], edit: ["admin"] },
 };
+
+/** Lista de módulos con etiqueta legible (para el editor de permisos por rol). */
+export const MODULOS: { modulo: Modulo; label: string }[] = [
+  { modulo: "dashboard", label: "Dashboard" },
+  { modulo: "leads", label: "Leads" },
+  { modulo: "oportunidades", label: "Pipeline / Oportunidades" },
+  { modulo: "clientes", label: "Clientes" },
+  { modulo: "cotizaciones", label: "Cotizaciones" },
+  { modulo: "actividades", label: "Actividades" },
+  { modulo: "proyectos", label: "Proyectos" },
+  { modulo: "documentos", label: "Documentos" },
+  { modulo: "productos", label: "Productos" },
+  { modulo: "paquetes", label: "Paquetes" },
+  { modulo: "marcas", label: "Marcas" },
+  { modulo: "pagos", label: "Pagos" },
+  { modulo: "metricas", label: "Métricas" },
+  { modulo: "campanas", label: "Campañas" },
+  { modulo: "organizacion", label: "Organigrama" },
+  { modulo: "areas", label: "Áreas" },
+  { modulo: "cargos", label: "Cargos" },
+  { modulo: "chatwoot", label: "Chatwoot" },
+  { modulo: "integraciones", label: "Integraciones" },
+  { modulo: "roles", label: "Roles" },
+  { modulo: "usuarios", label: "Usuarios" },
+];
 
 export function can(
   rol: string | undefined | null,
@@ -153,6 +181,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/je-admin/organigrama", label: "Organigrama", modulo: "organizacion", grupo: "Organización" },
   { href: "/je-admin/chatwoot", label: "Chatwoot", modulo: "chatwoot", grupo: "Sistema" },
   { href: "/je-admin/integraciones", label: "Integraciones", modulo: "integraciones", grupo: "Sistema" },
+  { href: "/je-admin/roles", label: "Roles", modulo: "roles", grupo: "Sistema" },
   { href: "/je-admin/usuarios", label: "Usuarios", modulo: "usuarios", grupo: "Sistema" },
 ];
 

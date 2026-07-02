@@ -12,6 +12,20 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0023 — RBAC dinámico (Paso A): tabla roles por empresa · 2026-07-01
+
+**Migración:** `db/migrations/0023_roles.sql`
+
+- Nueva tabla `roles` (por empresa): `clave`, `nombre`, `sistema` (base, no
+  borrables), `activo`, `permisos` jsonb `{ "<modulo>": { "view": bool, "edit": bool } }`.
+  Unique (empresa_id, clave). FK→empresas ON DELETE CASCADE.
+- Semilla de los roles base por empresa (desde la MATRIX del código): `pnpm db:seed-roles`.
+- Paso A: los roles son datos editables desde el módulo /je-admin/roles. El
+  enforcement dinámico (can() desde BD vía JWT + migración usuarios.rol enum→texto)
+  es el Paso B.
+
+---
+
 ## 0022 — Multi-tenant (Fase 1): empresas + usuarios.empresa_id · 2026-07-01
 
 **Migración:** `db/migrations/0022_empresas.sql`

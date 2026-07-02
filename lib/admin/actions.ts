@@ -26,6 +26,8 @@ import {
   type CargosFiltros,
   getEmpresas,
   type EmpresaRow,
+  getRoles,
+  type RolRow,
   getDocumentosPage,
   type DocumentosPage,
   type DocumentosFiltros,
@@ -5695,6 +5697,152 @@ export async function fetchAreasArbol(): Promise<AreaArbolRow[]> {
 export async function fetchEmpresas(): Promise<EmpresaRow[]> {
   await assertPerm("usuarios", "view");
   return getEmpresas();
+}
+
+/* ── Roles (RBAC dinámico, por empresa) ───────────────────────────────────── */
+
+const ROLES_PATH = "/je-admin/roles";
+
+/** Empresa del usuario en sesión (para acotar los roles a su tenant). */
+async function empresaDeUsuario(userId: string | undefined): Promise<string | null> {
+  if (!userId) return null;
+  const [u] = await db
+    .select({ empresaId: schema.usuarios.empresaId })
+    .from(schema.usuarios)
+    .where(eq(schema.usuarios.id, userId))
+    .limit(1);
+  return u?.empresaId ?? null;
+}
+
+const permisosSchema = z.record(
+  z.string(),
+  z.object({ view: z.boolean(), edit: z.boolean() }),
+);
+const rolSchemaCrear = z.object({
+  nombre: z.string().trim().min(1, "El nombre es obligatorio.").max(80),
+  permisos: permisosSchema.optional(),
+});
+const rolSchemaEditar = z.object({
+  nombre: z.string().trim().min(1, "El nombre es obligatorio.").max(80),
+  permisos: permisosSchema,
+  activo: z.boolean().optional(),
+});
+
+function slugRol(nombre: string): string {
+  return normalizarNombre(nombre).replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "rol";
+}
+
+export async function fetchRoles(): Promise<RolRow[]> {
+  const user = await assertPerm("roles", "view");
+  const empresaId = await empresaDeUsuario(user.id);
+  if (!empresaId) return [];
+  return getRoles(empresaId);
+}
+
+export async function crearRol(data: z.input<typeof rolSchemaCrear>): Promise<ActionResult & { id?: string }> {
+  const user = await assertPerm("roles", "edit");
+  const empresaId = await empresaDeUsuario(user.id);
+  if (!empresaId) return { ok: false, error: "Tu usuario no tiene empresa asignada." };
+  const parsed = rolSchemaCrear.safeParse(data);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  const d = parsed.data;
+  const clave = slugRol(d.nombre);
+  try {
+    const [row] = await db
+      .insert(schema.roles)
+      .values({
+        empresaId,
+        clave,
+        nombre: d.nombre,
+        sistema: false,
+        permisos: d.permisos ?? {},
+      })
+      .returning({ id: schema.roles.id });
+    revalidatePath(ROLES_PATH);
+    return { ok: true, id: row.id };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.includes("ux_roles_empresa_clave")) return { ok: false, error: "Ya existe un rol con ese nombre." };
+    return { ok: false, error: "No se pudo crear el rol." };
+  }
+}
+
+export async function actualizarRol(id: string, data: z.input<typeof rolSchemaEditar>): Promise<ActionResult> {
+  const user = await assertPerm("roles", "edit");
+  const empresaId = await empresaDeUsuario(user.id);
+  if (!empresaId) return { ok: false, error: "Tu usuario no tiene empresa asignada." };
+  const parsed = rolSchemaEditar.safeParse(data);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  const d = parsed.data;
+
+  const [rol] = await db
+    .select({ sistema: schema.roles.sistema })
+    .from(schema.roles)
+    .where(and(eq(schema.roles.id, id), eq(schema.roles.empresaId, empresaId)))
+    .limit(1);
+  if (!rol) return { ok: false, error: "Rol no válido." };
+
+  try {
+    await db
+      .update(schema.roles)
+      .set({
+        nombre: d.nombre,
+        permisos: d.permisos,
+        // Los roles del sistema no se pueden desactivar (evita lockout).
+        activo: rol.sistema ? true : (d.activo ?? true),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(and(eq(schema.roles.id, id), eq(schema.roles.empresaId, empresaId)));
+    revalidatePath(ROLES_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo actualizar el rol." };
+  }
+}
+
+export async function toggleRolActivo(id: string, activo: boolean): Promise<ActionResult> {
+  const user = await assertPerm("roles", "edit");
+  const empresaId = await empresaDeUsuario(user.id);
+  if (!empresaId) return { ok: false, error: "Tu usuario no tiene empresa asignada." };
+  const [rol] = await db
+    .select({ sistema: schema.roles.sistema })
+    .from(schema.roles)
+    .where(and(eq(schema.roles.id, id), eq(schema.roles.empresaId, empresaId)))
+    .limit(1);
+  if (!rol) return { ok: false, error: "Rol no válido." };
+  if (rol.sistema) return { ok: false, error: "Los roles del sistema no se pueden desactivar." };
+  try {
+    await db
+      .update(schema.roles)
+      .set({ activo, updatedAt: new Date().toISOString() })
+      .where(and(eq(schema.roles.id, id), eq(schema.roles.empresaId, empresaId)));
+    revalidatePath(ROLES_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo actualizar el rol." };
+  }
+}
+
+export async function eliminarRol(id: string): Promise<ActionResult> {
+  const user = await assertPerm("roles", "edit");
+  const empresaId = await empresaDeUsuario(user.id);
+  if (!empresaId) return { ok: false, error: "Tu usuario no tiene empresa asignada." };
+
+  const [rol] = await db
+    .select({ sistema: schema.roles.sistema })
+    .from(schema.roles)
+    .where(and(eq(schema.roles.id, id), eq(schema.roles.empresaId, empresaId)))
+    .limit(1);
+  if (!rol) return { ok: false, error: "Rol no válido." };
+  if (rol.sistema) return { ok: false, error: "Los roles del sistema no se pueden eliminar." };
+
+  try {
+    await db.delete(schema.roles).where(and(eq(schema.roles.id, id), eq(schema.roles.empresaId, empresaId)));
+    revalidatePath(ROLES_PATH);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo eliminar el rol." };
+  }
 }
 
 /**

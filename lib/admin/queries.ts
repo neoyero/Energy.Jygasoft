@@ -1240,6 +1240,50 @@ export interface EmpresaRow {
   activa: boolean;
 }
 
+/* ── Roles (RBAC dinámico, por empresa) ───────────────────────────────────── */
+
+export interface RolPermiso {
+  view: boolean;
+  edit: boolean;
+}
+export interface RolRow {
+  id: string;
+  empresaId: string;
+  clave: string;
+  nombre: string;
+  sistema: boolean;
+  activo: boolean;
+  permisos: Record<string, RolPermiso>;
+  miembros: number;
+}
+
+/** Roles de una empresa con su matriz de permisos y conteo de usuarios. */
+export async function getRoles(empresaId: string): Promise<RolRow[]> {
+  const miembros = sql<number>`(
+    SELECT count(*)::int FROM usuarios u
+    WHERE u.empresa_id = ${sql.raw("roles.empresa_id")} AND u.rol::text = ${sql.raw("roles.clave")}
+  )`;
+  const rows = await db
+    .select({
+      id: schema.roles.id,
+      empresaId: schema.roles.empresaId,
+      clave: schema.roles.clave,
+      nombre: schema.roles.nombre,
+      sistema: schema.roles.sistema,
+      activo: schema.roles.activo,
+      permisos: schema.roles.permisos,
+      miembros,
+    })
+    .from(schema.roles)
+    .where(eq(schema.roles.empresaId, empresaId))
+    .orderBy(desc(schema.roles.sistema), asc(schema.roles.nombre));
+  return rows.map((r) => ({
+    ...r,
+    permisos: (r.permisos as Record<string, RolPermiso>) ?? {},
+    miembros: Number(r.miembros),
+  }));
+}
+
 /** Empresas (tenants). Ordenadas por nombre. */
 export async function getEmpresas(): Promise<EmpresaRow[]> {
   return db

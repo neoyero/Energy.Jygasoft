@@ -22,6 +22,7 @@ import {
   Building2,
   IdCard,
   MessagesSquare,
+  ShieldCheck,
   KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,7 @@ const ICONS: Record<Modulo, React.ComponentType<{ className?: string }>> = {
   cargos: IdCard,
   chatwoot: MessagesSquare,
   integraciones: KeyRound,
+  roles: ShieldCheck,
   usuarios: UserCog,
 };
 

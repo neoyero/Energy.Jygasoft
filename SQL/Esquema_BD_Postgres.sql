@@ -51,6 +51,23 @@ CREATE UNIQUE INDEX ux_empresas_nombre_norm ON empresas (nombre_normalizado);
 CREATE UNIQUE INDEX ux_empresas_dominio ON empresas (lower(dominio));
 CREATE TRIGGER trg_empresas_upd BEFORE UPDATE ON empresas FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- RBAC dinámico: roles por empresa con su matriz de permisos (jsonb):
+-- { "<modulo>": { "view": bool, "edit": bool } }. Semilla con `pnpm db:seed-roles`.
+CREATE TABLE roles (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  empresa_id uuid NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  clave      text NOT NULL,
+  nombre     text NOT NULL,
+  sistema    boolean NOT NULL DEFAULT false,
+  activo     boolean NOT NULL DEFAULT true,
+  permisos   jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX ux_roles_empresa_clave ON roles (empresa_id, clave);
+CREATE INDEX ix_roles_empresa ON roles (empresa_id);
+CREATE TRIGGER trg_roles_upd BEFORE UPDATE ON roles FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 -- ===================== EQUIPO / PERSONAS / CATALOGO =====================
 CREATE TABLE usuarios (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

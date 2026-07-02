@@ -39,6 +39,27 @@ export const empresas = pgTable("empresas", {
 	uniqueIndex("ux_empresas_nombre_norm").using("btree", table.nombreNormalizado.asc().nullsLast().op("text_ops")),
 ]);
 
+// RBAC dinámico: roles por empresa con su matriz de permisos (jsonb).
+export const roles = pgTable("roles", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	empresaId: uuid("empresa_id").notNull(),
+	clave: text().notNull(),
+	nombre: text().notNull(),
+	sistema: boolean().default(false).notNull(),
+	activo: boolean().default(true).notNull(),
+	permisos: jsonb().default({}).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	uniqueIndex("ux_roles_empresa_clave").using("btree", table.empresaId.asc().nullsLast().op("uuid_ops"), table.clave.asc().nullsLast().op("text_ops")),
+	index("ix_roles_empresa").using("btree", table.empresaId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.empresaId],
+			foreignColumns: [empresas.id],
+			name: "roles_empresa_id_fkey"
+		}).onDelete("cascade"),
+]);
+
 export const usuarios = pgTable("usuarios", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	nombre: text().notNull(),
