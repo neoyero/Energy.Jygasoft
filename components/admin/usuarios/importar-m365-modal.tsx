@@ -1,13 +1,13 @@
 "use client"
 
-import { useCallback, useEffect, useState, useTransition } from "react"
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { RefreshCw } from "lucide-react"
+import { RefreshCw, Search } from "lucide-react"
 
 import type { EmpresaRow } from "@/lib/admin/queries"
-import { ROLES } from "@/lib/admin/rbac"
 import { fetchUsuariosM365, importarUsuariosM365 } from "@/lib/admin/actions"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Modal } from "@/components/admin/ui/modal"
 
 const SELECT_CLASS =
@@ -24,21 +24,18 @@ interface M365Row {
   yaExiste: boolean
 }
 
-function rolLabel(r: string): string {
-  return r.replace(/_/g, " ")
-}
-
 export interface ImportarM365ModalProps {
   open: boolean
   empresas: ReadonlyArray<EmpresaRow>
   onClose: () => void
 }
 
-/** Importa usuarios desde la organización M365, filtrados por el dominio de la empresa. */
+/** Importa usuarios desde la organización M365. Buscador por nombre/correo y toggle de dominio. */
 export function ImportarM365Modal({ open, empresas, onClose }: ImportarM365ModalProps) {
   const router = useRouter()
   const [empresaId, setEmpresaId] = useState(empresas[0]?.id ?? "")
-  const [rol, setRol] = useState<string>("vendedor")
+  const [soloDominio, setSoloDominio] = useState(true)
+  const [busqueda, setBusqueda] = useState("")
   const [rows, setRows] = useState<M365Row[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -46,25 +43,34 @@ export function ImportarM365Modal({ open, empresas, onClose }: ImportarM365Modal
   const [msg, setMsg] = useState<string | null>(null)
   const [importing, startImport] = useTransition()
 
-  const cargar = useCallback(async (id: string) => {
+  const empresaDominio = empresas.find((e) => e.id === empresaId)?.dominio ?? ""
+
+  const cargar = useCallback(async (id: string, solo: boolean) => {
     if (!id) return
     setLoading(true)
     setError(null)
     setMsg(null)
     setSel(new Set())
     setRows([])
-    const r = await fetchUsuariosM365(id)
+    const r = await fetchUsuariosM365(id, solo)
     if (r.ok) setRows(r.data)
     else setError(r.error)
     setLoading(false)
   }, [])
 
   useEffect(() => {
-    if (open && empresaId) void cargar(empresaId)
+    if (open && empresaId) void cargar(empresaId, soloDominio)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, empresaId])
+  }, [open, empresaId, soloDominio])
 
-  const importables = rows.filter((r) => !r.yaExiste)
+  // Filtro cliente por nombre/correo.
+  const filtrados = useMemo(() => {
+    const q = busqueda.trim().toLowerCase()
+    if (!q) return rows
+    return rows.filter((r) => r.displayName.toLowerCase().includes(q) || r.email.includes(q))
+  }, [rows, busqueda])
+
+  const importables = filtrados.filter((r) => !r.yaExiste)
   const todosSel = importables.length > 0 && importables.every((r) => sel.has(r.email))
 
   function toggle(email: string): void {
@@ -76,21 +82,33 @@ export function ImportarM365Modal({ open, empresas, onClose }: ImportarM365Modal
     })
   }
   function toggleTodos(): void {
-    setSel(todosSel ? new Set() : new Set(importables.map((r) => r.email)))
+    if (todosSel) {
+      setSel((prev) => {
+        const n = new Set(prev)
+        importables.forEach((r) => n.delete(r.email))
+        return n
+      })
+    } else {
+      setSel((prev) => {
+        const n = new Set(prev)
+        importables.forEach((r) => n.add(r.email))
+        return n
+      })
+    }
   }
 
   function importar(): void {
     setError(null)
     setMsg(null)
     startImport(async () => {
-      const r = await importarUsuariosM365(empresaId, [...sel], rol)
+      const r = await importarUsuariosM365(empresaId, [...sel])
       if (!r.ok) {
         setError(r.error)
         return
       }
       setMsg(`Importados: ${r.creados ?? 0} · Omitidos (ya existían): ${r.omitidos ?? 0}.`)
       router.refresh()
-      void cargar(empresaId)
+      void cargar(empresaId, soloDominio)
     })
   }
 
@@ -99,7 +117,7 @@ export function ImportarM365Modal({ open, empresas, onClose }: ImportarM365Modal
       open={open}
       onOpenChange={(o) => !o && onClose()}
       title="Importar usuarios de Microsoft 365"
-      description="Se listan los usuarios de tu organización M365 del dominio de la empresa. Elige cuáles dar de alta."
+      description="Usuarios de tu organización M365. Se importan como 'vendedor' (puedes cambiar el rol después)."
       size="3xl"
       dismissable={!importing}
     >
@@ -107,7 +125,7 @@ export function ImportarM365Modal({ open, empresas, onClose }: ImportarM365Modal
         {/* Controles */}
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-            Empresa (dominio)
+            Empresa
             <select
               value={empresaId}
               onChange={(e) => setEmpresaId(e.target.value)}
@@ -121,22 +139,32 @@ export function ImportarM365Modal({ open, empresas, onClose }: ImportarM365Modal
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-            Rol al importar
-            <select
-              value={rol}
-              onChange={(e) => setRol(e.target.value)}
-              disabled={importing}
-              className={SELECT_CLASS + " w-44"}
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {rolLabel(r)}
-                </option>
-              ))}
-            </select>
+
+          <div className="space-y-1">
+            <span className="block text-xs font-medium text-muted-foreground">Buscar</span>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+              <Input
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Nombre o correo…"
+                className="w-60 pl-8"
+              />
+            </div>
+          </div>
+
+          <label className="flex h-9 items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={soloDominio}
+              onChange={(e) => setSoloDominio(e.target.checked)}
+              disabled={loading || importing}
+              className="size-4 rounded border-border"
+            />
+            Solo dominio {empresaDominio ? `(${empresaDominio})` : ""}
           </label>
-          <Button type="button" size="sm" variant="ghost" onClick={() => cargar(empresaId)} disabled={loading || importing}>
+
+          <Button type="button" size="sm" variant="ghost" onClick={() => cargar(empresaId, soloDominio)} disabled={loading || importing}>
             <RefreshCw className="size-4" aria-hidden /> Recargar
           </Button>
         </div>
@@ -163,21 +191,23 @@ export function ImportarM365Modal({ open, empresas, onClose }: ImportarM365Modal
                 disabled={loading || importing || importables.length === 0}
                 className="size-4 rounded border-border"
               />
-              Seleccionar todos ({importables.length} importables)
+              Seleccionar visibles ({importables.length})
             </label>
-            <span className="text-muted-foreground">{rows.length} en M365 · {sel.size} elegidos</span>
+            <span className="text-muted-foreground">
+              {filtrados.length} mostrados · {sel.size} elegidos
+            </span>
           </div>
 
           <div className="max-h-[45vh] overflow-y-auto">
             {loading ? (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">Consultando Microsoft 365…</p>
-            ) : rows.length === 0 ? (
+            ) : filtrados.length === 0 ? (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                {error ? "—" : "Sin usuarios para este dominio."}
+                {error ? "—" : rows.length === 0 ? "Sin usuarios (prueba desmarcar 'Solo dominio')." : "Sin coincidencias."}
               </p>
             ) : (
               <ul className="divide-y divide-border">
-                {rows.map((u) => (
+                {filtrados.map((u) => (
                   <li key={u.id}>
                     <label
                       className={

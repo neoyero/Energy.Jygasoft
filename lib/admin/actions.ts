@@ -5703,6 +5703,7 @@ export async function fetchEmpresas(): Promise<EmpresaRow[]> {
  */
 export async function fetchUsuariosM365(
   empresaId: string,
+  soloDominio = true,
 ): Promise<{ ok: true; data: (M365User & { yaExiste: boolean })[] } | { ok: false; error: string }> {
   await assertPerm("usuarios", "edit");
   const [emp] = await db
@@ -5712,7 +5713,9 @@ export async function fetchUsuariosM365(
     .limit(1);
   if (!emp) return { ok: false, error: "Empresa no válida." };
 
-  const r = await listarUsuariosM365(emp.dominio);
+  // soloDominio=false → lista toda la organización (útil si el dominio del panel
+  // no coincide con el mail/UPN real).
+  const r = await listarUsuariosM365(soloDominio ? emp.dominio : "");
   if (!r.ok) return r;
 
   const existentes = await db.select({ email: schema.usuarios.email }).from(schema.usuarios);
@@ -5728,12 +5731,8 @@ export async function fetchUsuariosM365(
 export async function importarUsuariosM365(
   empresaId: string,
   correos: string[],
-  rol: string,
 ): Promise<ActionResult & { creados?: number; omitidos?: number }> {
   await assertPerm("usuarios", "edit");
-
-  const rolParsed = rolSchema.safeParse(rol);
-  if (!rolParsed.success) return { ok: false, error: "Rol no válido." };
 
   const [emp] = await db
     .select({ dominio: schema.empresas.dominio })
@@ -5742,7 +5741,10 @@ export async function importarUsuariosM365(
     .limit(1);
   if (!emp) return { ok: false, error: "Empresa no válida." };
 
-  const r = await listarUsuariosM365(emp.dominio);
+  // Se re-consulta toda la organización (sin filtro de dominio) para validar los
+  // seleccionados de forma autoritativa. Se importan con rol 'vendedor' (editable
+  // luego en el panel).
+  const r = await listarUsuariosM365("");
   if (!r.ok) return { ok: false, error: r.error };
 
   const sel = new Set((correos ?? []).map((c) => c.toLowerCase()));
@@ -5766,7 +5768,7 @@ export async function importarUsuariosM365(
           nombre: u.displayName,
           email: u.email,
           empresaId,
-          rol: rolParsed.data,
+          rol: "vendedor",
           telefono: u.phone,
           cargo: u.jobTitle,
           activo: true,

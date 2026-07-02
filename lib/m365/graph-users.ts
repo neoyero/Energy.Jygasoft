@@ -64,9 +64,15 @@ export async function listarUsuariosM365(dominio: string): Promise<Res<M365User[
       }
       const json = (await res.json()) as { value?: GraphUser[]; "@odata.nextLink"?: string };
       for (const u of json.value ?? []) {
-        const email = (u.mail || u.userPrincipalName || "").toLowerCase();
+        const mail = (u.mail ?? "").toLowerCase();
+        const upn = (u.userPrincipalName ?? "").toLowerCase();
+        const email = mail || upn;
         if (!email) continue;
-        if (dom && !email.endsWith(`@${dom}`)) continue;
+        // Coincide si el dominio aparece en el mail O en el UPN (los UPN a veces
+        // están en onmicrosoft.com aunque el correo real sea del dominio). Sin
+        // dominio = toda la organización.
+        const coincide = !dom || mail.endsWith(`@${dom}`) || upn.endsWith(`@${dom}`);
+        if (!coincide) continue;
         out.push({
           id: u.id,
           displayName: u.displayName || email,
