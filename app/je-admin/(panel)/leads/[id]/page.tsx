@@ -9,7 +9,7 @@ import {
   getUsuariosAsignables,
   type DashboardScope,
 } from "@/lib/admin/queries";
-import { requirePerm } from "@/lib/admin/guard";
+import { paginaTenant } from "@/lib/admin/guard";
 import { can, type Rol } from "@/lib/admin/rbac";
 import { formatMXN, fmtFechaRel } from "@/lib/admin/format";
 import { LeadActions } from "@/components/admin/lead-actions";
@@ -62,7 +62,7 @@ function siNo(v: boolean | null | undefined): string {
 
 export default async function LeadDetail({ params }: Params) {
   const { id } = await params;
-  const user = await requirePerm("leads", "view");
+  return paginaTenant("leads", async (user) => {
   const puedeEditar = can(user.rol, "leads", "edit");
 
   const scope: DashboardScope = {
@@ -252,6 +252,7 @@ export default async function LeadDetail({ params }: Params) {
       </Card>
     </div>
   );
+  });
 }
 
 /** Par etiqueta/valor reutilizable dentro de las cards de detalle. */

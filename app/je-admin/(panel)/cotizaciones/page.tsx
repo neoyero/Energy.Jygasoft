@@ -1,6 +1,6 @@
 import { FileText } from "lucide-react"
 
-import { requirePerm } from "@/lib/admin/guard"
+import { paginaTenant } from "@/lib/admin/guard"
 import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getCotizacionesFiltradas,
@@ -21,37 +21,37 @@ export const dynamic = "force-dynamic"
  * CotizacionesView.
  */
 export default async function CotizacionesPage() {
-  const user = await requirePerm("cotizaciones", "view")
+  return paginaTenant("cotizaciones", async (user) => {
+    const scope: DashboardScope = {
+      rol: (user.rol ?? "lectura") as Rol,
+      userId: user.id,
+    }
 
-  const scope: DashboardScope = {
-    rol: (user.rol ?? "lectura") as Rol,
-    userId: user.id,
-  }
+    const [cotizaciones, vendedoresAll, kpis] = await Promise.all([
+      getCotizacionesFiltradas(scope, {}),
+      getVendedores(),
+      getCotizacionesKpis(scope),
+    ])
 
-  const [cotizaciones, vendedoresAll, kpis] = await Promise.all([
-    getCotizacionesFiltradas(scope, {}),
-    getVendedores(),
-    getCotizacionesKpis(scope),
-  ])
+    const puedeEditar = can(user.rol, "cotizaciones", "edit")
+    const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll)
 
-  const puedeEditar = can(user.rol, "cotizaciones", "edit")
-  const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll)
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          title="Cotizaciones"
+          description="Cotizaciones versionadas por cliente. Filtra por estado, vendedor o folio."
+          icon={<FileText className="size-6" aria-hidden />}
+        />
 
-  return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Cotizaciones"
-        description="Cotizaciones versionadas por cliente. Filtra por estado, vendedor o folio."
-        icon={<FileText className="size-6" aria-hidden />}
-      />
-
-      <CotizacionesView
-        cotizacionesIniciales={cotizaciones}
-        vendedores={vendedores}
-        kpis={kpis}
-        puedeEditar={puedeEditar}
-        rolScoped={ocultarFiltro}
-      />
-    </div>
-  )
+        <CotizacionesView
+          cotizacionesIniciales={cotizaciones}
+          vendedores={vendedores}
+          kpis={kpis}
+          puedeEditar={puedeEditar}
+          rolScoped={ocultarFiltro}
+        />
+      </div>
+    )
+  })
 }

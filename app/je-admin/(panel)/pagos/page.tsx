@@ -1,6 +1,6 @@
 import { Wallet, CalendarClock, CheckCircle2, AlertTriangle } from "lucide-react"
 
-import { requirePerm } from "@/lib/admin/guard"
+import { paginaTenant } from "@/lib/admin/guard"
 import { can, type Rol } from "@/lib/admin/rbac"
 import { getPagosData, getPagosFlujo, type DashboardScope } from "@/lib/admin/queries"
 import { formatMXN } from "@/lib/admin/format"
@@ -19,8 +19,7 @@ export const dynamic = "force-dynamic"
  * (pagos:edit) habilita alta, edición y acciones de estado.
  */
 export default async function PagosPage() {
-  const user = await requirePerm("pagos", "view")
-
+  return paginaTenant("pagos", async (user) => {
   const scope: DashboardScope = {
     rol: (user.rol ?? "lectura") as Rol,
     userId: user.id,
@@ -96,4 +95,5 @@ export default async function PagosPage() {
       />
     </div>
   )
+  })
 }

@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 
-import { requirePerm } from "@/lib/admin/guard";
+import { paginaTenant } from "@/lib/admin/guard";
 import { can, type Rol } from "@/lib/admin/rbac";
 import {
   getCotizacion,
@@ -31,8 +31,7 @@ interface Params {
  */
 export default async function CotizacionDetailPage({ params }: Params) {
   const { id } = await params;
-  const user = await requirePerm("cotizaciones", "view");
-
+  return paginaTenant("cotizaciones", async (user) => {
   const scope: DashboardScope = {
     rol: (user.rol ?? "lectura") as Rol,
     userId: user.id,
@@ -97,4 +96,5 @@ export default async function CotizacionDetailPage({ params }: Params) {
       />
     </div>
   );
+  });
 }

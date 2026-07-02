@@ -6,7 +6,7 @@ import {
   Wallet,
 } from "lucide-react";
 
-import { requirePerm } from "@/lib/admin/guard";
+import { paginaTenant } from "@/lib/admin/guard";
 import { can, type Rol } from "@/lib/admin/rbac";
 import {
   getDashboardData,
@@ -38,7 +38,7 @@ export const dynamic = "force-dynamic";
 const ETAPAS_CERRADAS: ReadonlySet<string> = new Set(["ganada", "perdida"]);
 
 export default async function DashboardPage() {
-  const user = await requirePerm("dashboard", "view");
+  return paginaTenant("dashboard", async (user) => {
   const scope: DashboardScope = {
     rol: (user.rol ?? "lectura") as Rol,
     userId: user.id,
@@ -247,4 +247,5 @@ export default async function DashboardPage() {
       </section>
     </div>
   );
+  });
 }

@@ -1,6 +1,6 @@
 import { Package } from "lucide-react"
 
-import { requirePerm } from "@/lib/admin/guard"
+import { paginaTenant } from "@/lib/admin/guard"
 import { can } from "@/lib/admin/rbac"
 import { getProductoTipos, getMarcasActivas } from "@/lib/admin/queries"
 import { PageHeader } from "@/components/admin/ui/page-header"
@@ -15,25 +15,26 @@ export const dynamic = "force-dynamic"
  * vistas (productos / tipos) a ProductosView.
  */
 export default async function ProductosPage() {
-  const user = await requirePerm("productos", "view")
-  const [tipos, marcas] = await Promise.all([getProductoTipos(), getMarcasActivas()])
-  const puedeEditar = can(user.rol, "productos", "edit")
-  const puedeEliminar = user.rol === "admin"
+  return paginaTenant("productos", async (user) => {
+    const [tipos, marcas] = await Promise.all([getProductoTipos(), getMarcasActivas()])
+    const puedeEditar = can(user.rol, "productos", "edit")
+    const puedeEliminar = user.rol === "admin"
 
-  return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Productos"
-        description="Catálogo de productos por tipo. Filtra, busca y administra precios y atributos."
-        icon={<Package className="size-6" aria-hidden />}
-      />
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          title="Productos"
+          description="Catálogo de productos por tipo. Filtra, busca y administra precios y atributos."
+          icon={<Package className="size-6" aria-hidden />}
+        />
 
-      <ProductosView
-        tipos={tipos}
-        marcas={marcas}
-        puedeEditar={puedeEditar}
-        puedeEliminar={puedeEliminar}
-      />
-    </div>
-  )
+        <ProductosView
+          tipos={tipos}
+          marcas={marcas}
+          puedeEditar={puedeEditar}
+          puedeEliminar={puedeEliminar}
+        />
+      </div>
+    )
+  })
 }

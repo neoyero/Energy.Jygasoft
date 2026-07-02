@@ -1,6 +1,6 @@
 import { Users } from "lucide-react"
 
-import { requirePerm } from "@/lib/admin/guard"
+import { paginaTenant } from "@/lib/admin/guard"
 import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getClientesFiltrados,
@@ -19,35 +19,35 @@ export const dynamic = "force-dynamic"
  * vendedores. Delega el filtrado en cliente y las vistas a ClientesView.
  */
 export default async function ClientesPage() {
-  const user = await requirePerm("clientes", "view")
+  return paginaTenant("clientes", async (user) => {
+    const scope: DashboardScope = {
+      rol: (user.rol ?? "lectura") as Rol,
+      userId: user.id,
+    }
 
-  const scope: DashboardScope = {
-    rol: (user.rol ?? "lectura") as Rol,
-    userId: user.id,
-  }
+    const [clientes, vendedoresAll] = await Promise.all([
+      getClientesFiltrados(scope, {}),
+      getVendedores(),
+    ])
 
-  const [clientes, vendedoresAll] = await Promise.all([
-    getClientesFiltrados(scope, {}),
-    getVendedores(),
-  ])
+    const puedeEditar = can(user.rol, "clientes", "edit")
+    const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll)
 
-  const puedeEditar = can(user.rol, "clientes", "edit")
-  const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll)
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          title="Clientes"
+          description="Cartera de clientes. Filtra por tipo, vendedor o búsqueda."
+          icon={<Users className="size-6" aria-hidden />}
+        />
 
-  return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Clientes"
-        description="Cartera de clientes. Filtra por tipo, vendedor o búsqueda."
-        icon={<Users className="size-6" aria-hidden />}
-      />
-
-      <ClientesView
-        clientesIniciales={clientes}
-        vendedores={vendedores}
-        puedeEditar={puedeEditar}
-        rolScoped={ocultarFiltro}
-      />
-    </div>
-  )
+        <ClientesView
+          clientesIniciales={clientes}
+          vendedores={vendedores}
+          puedeEditar={puedeEditar}
+          rolScoped={ocultarFiltro}
+        />
+      </div>
+    )
+  })
 }

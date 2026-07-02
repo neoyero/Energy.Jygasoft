@@ -1,6 +1,6 @@
 import { FolderKanban } from "lucide-react"
 
-import { requirePerm } from "@/lib/admin/guard"
+import { paginaTenant } from "@/lib/admin/guard"
 import { type Rol } from "@/lib/admin/rbac"
 import {
   getProyectosFiltrados,
@@ -20,33 +20,33 @@ export const dynamic = "force-dynamic"
  * alta de proyecto en D5: la edicion vive en el detalle.
  */
 export default async function ProyectosPage() {
-  const user = await requirePerm("proyectos", "view")
+  return paginaTenant("proyectos", async (user) => {
+    const scope: DashboardScope = {
+      rol: (user.rol ?? "lectura") as Rol,
+      userId: user.id,
+    }
 
-  const scope: DashboardScope = {
-    rol: (user.rol ?? "lectura") as Rol,
-    userId: user.id,
-  }
+    const [proyectos, vendedoresAll] = await Promise.all([
+      getProyectosFiltrados(scope, {}),
+      getVendedores(),
+    ])
 
-  const [proyectos, vendedoresAll] = await Promise.all([
-    getProyectosFiltrados(scope, {}),
-    getVendedores(),
-  ])
+    const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll)
 
-  const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll)
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          title="Proyectos"
+          description="Cartera de proyectos. Filtra por fase, vendedor o búsqueda."
+          icon={<FolderKanban className="size-6" aria-hidden />}
+        />
 
-  return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Proyectos"
-        description="Cartera de proyectos. Filtra por fase, vendedor o búsqueda."
-        icon={<FolderKanban className="size-6" aria-hidden />}
-      />
-
-      <ProyectosView
-        proyectos={proyectos}
-        vendedores={vendedores}
-        rolScoped={ocultarFiltro}
-      />
-    </div>
-  )
+        <ProyectosView
+          proyectos={proyectos}
+          vendedores={vendedores}
+          rolScoped={ocultarFiltro}
+        />
+      </div>
+    )
+  })
 }

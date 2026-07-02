@@ -1,7 +1,7 @@
 import type { ReactNode } from "react"
 import { notFound } from "next/navigation"
 
-import { requirePerm } from "@/lib/admin/guard"
+import { paginaTenant } from "@/lib/admin/guard"
 import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getClienteDetalle,
@@ -49,8 +49,7 @@ function siNo(v: boolean | null | undefined): string {
  */
 export default async function ClienteDetail({ params }: Params) {
   const { id } = await params
-  const user = await requirePerm("clientes", "view")
-
+  return paginaTenant("clientes", async (user) => {
   const scope: DashboardScope = {
     rol: (user.rol ?? "lectura") as Rol,
     userId: user.id,
@@ -210,6 +209,7 @@ export default async function ClienteDetail({ params }: Params) {
       />
     </div>
   )
+  })
 }
 
 /** Par etiqueta/valor reutilizable dentro de las cards de detalle. */

@@ -1,6 +1,6 @@
 import { BarChart3 } from "lucide-react";
 
-import { requirePerm } from "@/lib/admin/guard";
+import { paginaTenant } from "@/lib/admin/guard";
 import { type Rol } from "@/lib/admin/rbac";
 import {
   getMetricasData,
@@ -22,45 +22,46 @@ export default async function MetricasPage({
 }) {
   const sp = await searchParams;
 
-  const user = await requirePerm("metricas", "view");
-  const scope: DashboardScope = {
-    rol: (user.rol ?? "lectura") as Rol,
-    userId: user.id,
-  };
+  return paginaTenant("metricas", async (user) => {
+    const scope: DashboardScope = {
+      rol: (user.rol ?? "lectura") as Rol,
+      userId: user.id,
+    };
 
-  const filtros = {
-    desde: sp.desde,
-    hasta: sp.hasta,
-    vendedorId: sp.vendedor ?? null,
-  };
+    const filtros = {
+      desde: sp.desde,
+      hasta: sp.hasta,
+      vendedorId: sp.vendedor ?? null,
+    };
 
-  const [data, vendedoresAll, kpisPorArea] = await Promise.all([
-    getMetricasData(scope, filtros),
-    getVendedores(),
-    getKpisPorArea(scope),
-  ]);
-  const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll);
+    const [data, vendedoresAll, kpisPorArea] = await Promise.all([
+      getMetricasData(scope, filtros),
+      getVendedores(),
+      getKpisPorArea(scope),
+    ]);
+    const { vendedores, ocultarFiltro } = await acotarFiltroVendedor(scope, vendedoresAll);
 
-  return (
-    <div className="space-y-8">
-      <PageHeader
-        title="Métricas"
-        description="Ingresos, conversión del pipeline, proyectos por fase y cobranza."
-        icon={<BarChart3 className="size-6" aria-hidden />}
-      />
+    return (
+      <div className="space-y-8">
+        <PageHeader
+          title="Métricas"
+          description="Ingresos, conversión del pipeline, proyectos por fase y cobranza."
+          icon={<BarChart3 className="size-6" aria-hidden />}
+        />
 
-      <MetricasView
-        data={data}
-        vendedores={vendedores}
-        rolScoped={ocultarFiltro}
-        initial={{
-          desde: sp.desde ?? "",
-          hasta: sp.hasta ?? "",
-          vendedor: sp.vendedor ?? "",
-        }}
-      />
+        <MetricasView
+          data={data}
+          vendedores={vendedores}
+          rolScoped={ocultarFiltro}
+          initial={{
+            desde: sp.desde ?? "",
+            hasta: sp.hasta ?? "",
+            vendedor: sp.vendedor ?? "",
+          }}
+        />
 
-      <KpisPorArea rows={kpisPorArea} />
-    </div>
-  );
+        <KpisPorArea rows={kpisPorArea} />
+      </div>
+    );
+  });
 }

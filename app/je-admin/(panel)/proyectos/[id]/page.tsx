@@ -1,7 +1,7 @@
 import type { ReactNode } from "react"
 import { notFound } from "next/navigation"
 
-import { requirePerm } from "@/lib/admin/guard"
+import { paginaTenant } from "@/lib/admin/guard"
 import { can, type Rol } from "@/lib/admin/rbac"
 import {
   getProyectoDetalle,
@@ -56,8 +56,7 @@ function money(v: number | null | undefined): string {
  */
 export default async function ProyectoDetail({ params }: Params) {
   const { id } = await params
-  const user = await requirePerm("proyectos", "view")
-
+  return paginaTenant("proyectos", async (user) => {
   const scope: DashboardScope = {
     rol: (user.rol ?? "lectura") as Rol,
     userId: user.id,
@@ -166,6 +165,7 @@ export default async function ProyectoDetail({ params }: Params) {
       </Card>
     </div>
   )
+  })
 }
 
 /** Par etiqueta/valor reutilizable dentro de las cards de detalle. */
