@@ -2,7 +2,7 @@ import { UserCog } from "lucide-react";
 
 import { requirePerm } from "@/lib/admin/guard";
 import { can } from "@/lib/admin/rbac";
-import { getUsuarios, getAsesores, getAreasActivas, getCargosActivos, getEmpresas } from "@/lib/admin/queries";
+import { getUsuarios, getAsesores, getAreasActivas, getCargosActivos, getEmpresas, getRolesActivos, empresaIdDeUsuario } from "@/lib/admin/queries";
 import { chatwootConfigurado } from "@/lib/chatwoot/client";
 import { PageHeader } from "@/components/admin/ui/page-header";
 import { UsuariosView } from "@/components/admin/usuarios/usuarios-view";
@@ -12,12 +12,14 @@ export const dynamic = "force-dynamic";
 
 export default async function UsuariosPage() {
   const user = await requirePerm("usuarios", "view");
-  const [usuarios, asesores, areas, cargos, empresas] = await Promise.all([
+  const empresaId = await empresaIdDeUsuario(user.id);
+  const [usuarios, asesores, areas, cargos, empresas, roles] = await Promise.all([
     getUsuarios(),
     getAsesores(),
     getAreasActivas(),
     getCargosActivos(),
     getEmpresas(),
+    empresaId ? getRolesActivos(empresaId) : Promise.resolve([]),
   ]);
   const usuarioOptions = usuarios.map((u) => ({
     id: u.id,
@@ -35,7 +37,7 @@ export default async function UsuariosPage() {
         icon={<UserCog className="size-6" aria-hidden />}
       />
 
-      <UsuariosView usuarios={usuarios} areas={areas} cargos={cargos} empresas={empresas} puedeEditar={puedeEditar} />
+      <UsuariosView usuarios={usuarios} areas={areas} cargos={cargos} empresas={empresas} roles={roles} puedeEditar={puedeEditar} />
 
       {/* ── Asesores (agentes de Chatwoot) ── */}
       <div className="pt-2">

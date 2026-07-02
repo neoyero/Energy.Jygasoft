@@ -141,6 +141,30 @@ export function can(
   return list.includes(rol as Rol);
 }
 
+/** Mapa de permisos de un rol: módulo → { view, edit }. (RBAC dinámico) */
+export type PermMap = Record<string, { view?: boolean; edit?: boolean }>;
+
+/**
+ * Chequeo de permiso con RBAC DINÁMICO + fallback seguro:
+ *  - Si el usuario trae un mapa de permisos (desde BD, vía JWT), es AUTORITATIVO:
+ *    un módulo ausente = sin permiso.
+ *  - Si NO hay mapa (sesión vieja o rol sin fila en BD), cae a la matriz del
+ *    código `can(rol, …)`. Así nunca se bloquea el acceso por un token viejo.
+ */
+export function puede(
+  permisos: PermMap | undefined | null,
+  rol: string | undefined | null,
+  modulo: Modulo,
+  accion: Accion = "view",
+): boolean {
+  if (permisos && typeof permisos === "object") {
+    const p = permisos[modulo];
+    if (!p) return false;
+    return accion === "edit" ? Boolean(p.edit) : Boolean(p.view || p.edit);
+  }
+  return can(rol, modulo, accion);
+}
+
 /** Orden de los grupos en el sidebar. */
 export const NAV_GROUPS = [
   "General",

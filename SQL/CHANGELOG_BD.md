@@ -12,6 +12,19 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0024 — RBAC dinámico (Paso B): usuarios.rol enum→text · 2026-07-01
+
+**Migración:** `db/migrations/0024_usuarios_rol_text.sql`
+
+- `usuarios.rol` pasa de enum `usuario_rol` a **text** (clave de `roles`), para
+  poder asignar roles a medida. Valores existentes preservados. El tipo enum se
+  conserva (histórico) pero la columna ya no lo usa.
+- Enforcement: al iniciar sesión se embebe en el JWT la matriz de permisos del rol
+  (para su empresa); `can()`/`puede()` la usan, con **fallback** a la matriz del
+  código si no hay mapa (sesión vieja o rol sin fila) → sin lockout.
+
+---
+
 ## 0023 — RBAC dinámico (Paso A): tabla roles por empresa · 2026-07-01
 
 **Migración:** `db/migrations/0023_roles.sql`

@@ -1,4 +1,5 @@
 import type { NextAuthConfig } from "next-auth";
+import type { PermMap } from "@/lib/admin/rbac";
 
 /**
  * Configuración edge-safe de Auth.js (sin providers con dependencias de Node).
@@ -14,12 +15,18 @@ export const authConfig: NextAuthConfig = {
       if (user) {
         token.uid = user.id as string;
         token.rol = user.rol;
+        // Contexto multi-tenant + RBAC dinámico (calculado en auth.ts, sin DB aquí
+        // para no romper el runtime edge del middleware).
+        token.empresaId = user.empresaId ?? null;
+        token.permisos = user.permisos ?? null;
       }
       return token;
     },
     session({ session, token }) {
       if (token.uid) session.user.id = String(token.uid);
       if (token.rol) session.user.rol = String(token.rol);
+      session.user.empresaId = (token.empresaId as string | null | undefined) ?? null;
+      session.user.permisos = (token.permisos as PermMap | null | undefined) ?? null;
       return session;
     },
   },

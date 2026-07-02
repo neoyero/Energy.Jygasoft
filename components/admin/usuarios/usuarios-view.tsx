@@ -28,6 +28,8 @@ export interface UsuariosViewProps {
   cargos: ReadonlyArray<{ id: string; nombre: string }>
   /** Empresas (tenants) para el importador de M365. */
   empresas: ReadonlyArray<EmpresaRow>
+  /** Roles de la empresa para el selector del formulario. */
+  roles: ReadonlyArray<{ clave: string; nombre: string }>
   /** RBAC usuarios:edit (solo admin). */
   puedeEditar: boolean
 }
@@ -43,7 +45,7 @@ function rolLabel(rol: string): string {
  * modal (UsuarioForm) y activar/desactivar por fila. El detalle se refresca vía
  * router.refresh() tras cada acción.
  */
-export function UsuariosView({ usuarios, areas, cargos, empresas, puedeEditar }: UsuariosViewProps) {
+export function UsuariosView({ usuarios, areas, cargos, empresas, roles, puedeEditar }: UsuariosViewProps) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [busqueda, setBusqueda] = useState("")
@@ -256,6 +258,7 @@ export function UsuariosView({ usuarios, areas, cargos, empresas, puedeEditar }:
             usuarios={opciones}
             areas={areas}
             cargos={cargos}
+            roles={roles}
             onSuccess={cerrar}
             onCancel={cerrar}
             onSavingChange={setSaving}

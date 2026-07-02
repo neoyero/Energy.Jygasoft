@@ -1284,6 +1284,25 @@ export async function getRoles(empresaId: string): Promise<RolRow[]> {
   }));
 }
 
+/** Roles activos (clave + nombre) de una empresa, para selects. */
+export async function getRolesActivos(empresaId: string): Promise<{ clave: string; nombre: string }[]> {
+  return db
+    .select({ clave: schema.roles.clave, nombre: schema.roles.nombre })
+    .from(schema.roles)
+    .where(and(eq(schema.roles.empresaId, empresaId), eq(schema.roles.activo, true)))
+    .orderBy(desc(schema.roles.sistema), asc(schema.roles.nombre));
+}
+
+/** Empresa (tenant) del usuario. */
+export async function empresaIdDeUsuario(userId: string): Promise<string | null> {
+  const [u] = await db
+    .select({ empresaId: schema.usuarios.empresaId })
+    .from(schema.usuarios)
+    .where(eq(schema.usuarios.id, userId))
+    .limit(1);
+  return u?.empresaId ?? null;
+}
+
 /** Empresas (tenants). Ordenadas por nombre. */
 export async function getEmpresas(): Promise<EmpresaRow[]> {
   return db

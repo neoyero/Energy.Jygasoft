@@ -358,7 +358,8 @@ async function puedeAccederEntidad(
   }
 }
 
-const rolSchema = z.enum(schema.usuarioRol.enumValues);
+// RBAC dinámico: el rol es la clave de un rol de la empresa (validado aparte).
+const rolSchema = z.string().trim().min(1, "El rol es obligatorio.").max(40);
 
 /** Campos de organigrama compartidos por alta/edición de usuario. */
 const usuarioOrgFields = {
@@ -411,6 +412,17 @@ function isUniqueEmailViolation(error: unknown): boolean {
   return msg.includes("ux_usuarios_email");
 }
 
+/** true si el rol (clave) existe en la empresa. Si no hay empresa, no valida. */
+async function rolValido(empresaId: string | null, rolClave: string): Promise<boolean> {
+  if (!empresaId) return true;
+  const [r] = await db
+    .select({ id: schema.roles.id })
+    .from(schema.roles)
+    .where(and(eq(schema.roles.empresaId, empresaId), eq(schema.roles.clave, rolClave)))
+    .limit(1);
+  return Boolean(r);
+}
+
 /** Resuelve la empresa por el dominio del correo; si no hay match, la primera. */
 async function empresaPorEmail(email: string): Promise<string | null> {
   const dominio = (email.split("@")[1] ?? "").toLowerCase();
@@ -444,6 +456,9 @@ export async function createUsuario(data: CreateUsuarioInput): Promise<ActionRes
 
   const cargoNombre = await resolverCargoNombre(d.cargoId);
   const empresaId = await empresaPorEmail(d.email);
+  if (!(await rolValido(empresaId, d.rol))) {
+    return { ok: false, error: "El rol no existe en la empresa." };
+  }
   try {
     await db.insert(schema.usuarios).values({
       nombre: d.nombre,
@@ -498,6 +513,10 @@ export async function updateUsuario(
   }
 
   const cargoNombre = await resolverCargoNombre(d.cargoId);
+  const empId = await empresaDeUsuario(id);
+  if (!(await rolValido(empId, d.rol))) {
+    return { ok: false, error: "El rol no existe en la empresa." };
+  }
   try {
     await db
       .update(schema.usuarios)

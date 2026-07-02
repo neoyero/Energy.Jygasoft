@@ -110,7 +110,7 @@ export function RolesView({ rolesIniciales, puedeEditar }: RolesViewProps) {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
-          Nota: la aplicación de permisos aún usa la configuración base (Paso A); editar aquí ya deja todo listo.
+          Los cambios de permisos se aplican al próximo inicio de sesión del usuario.
         </p>
         {puedeEditar ? (
           <Button size="sm" onClick={() => setCrear(true)}>

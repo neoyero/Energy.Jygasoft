@@ -74,7 +74,7 @@ CREATE TABLE usuarios (
   nombre text NOT NULL,
   email text NOT NULL,
   empresa_id uuid REFERENCES empresas(id) ON DELETE SET NULL,  -- multi-tenant
-  rol usuario_rol NOT NULL DEFAULT 'vendedor',
+  rol text NOT NULL DEFAULT 'vendedor',   -- RBAC dinámico: clave de `roles` (antes enum usuario_rol)
   folio_vendedor text UNIQUE,
   telefono text,
   password_hash text,

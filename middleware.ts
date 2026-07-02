@@ -1,7 +1,7 @@
 import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
 import { authConfig } from "@/auth.config";
-import { can, type Modulo } from "@/lib/admin/rbac";
+import { puede, type Modulo, type PermMap } from "@/lib/admin/rbac";
 
 /**
  * Middleware transversal:
@@ -104,10 +104,12 @@ export default auth((req) => {
     return NextResponse.redirect(new URL("/je-admin", nextUrl.origin));
   }
 
-  // Guard por sección (RBAC): bloquea acceso por URL directa a módulos sin permiso.
+  // Guard por sección (RBAC dinámico): bloquea acceso por URL directa a módulos
+  // sin permiso. Usa la matriz del rol embebida en el JWT (con fallback a código).
   if (isAdmin && !isLogin && req.auth) {
     const modulo = moduloFromPath(nextUrl.pathname);
-    if (modulo && !can(req.auth.user?.rol, modulo, "view")) {
+    const u = req.auth.user as { rol?: string | null; permisos?: PermMap | null } | undefined;
+    if (modulo && !puede(u?.permisos, u?.rol, modulo, "view")) {
       return NextResponse.redirect(new URL("/je-admin", nextUrl.origin));
     }
   }

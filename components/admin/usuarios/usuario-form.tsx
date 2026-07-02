@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
 import { createUsuario, updateUsuario } from "@/lib/admin/actions"
-import { ROLES, type Rol } from "@/lib/admin/rbac"
+import { ROLES } from "@/lib/admin/rbac"
 import type { UsuarioAdminRow } from "@/lib/admin/queries"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -23,6 +23,8 @@ export interface UsuarioFormProps {
   areas: ReadonlyArray<{ id: string; nombre: string }>
   /** Cargos activos del catálogo para el selector. */
   cargos: ReadonlyArray<{ id: string; nombre: string }>
+  /** Roles de la empresa para el selector de rol. */
+  roles: ReadonlyArray<{ clave: string; nombre: string }>
   onSuccess?: () => void
   onCancel?: () => void
   onSavingChange?: (saving: boolean) => void
@@ -55,10 +57,14 @@ export function UsuarioForm({
   usuarios,
   areas,
   cargos,
+  roles,
   onSuccess,
   onCancel,
   onSavingChange,
 }: UsuarioFormProps) {
+  // Opciones de rol: los roles de la empresa; si aún no hay, cae a los base.
+  const opcionesRol =
+    roles.length > 0 ? roles : ROLES.map((r) => ({ clave: r, nombre: r.replace(/_/g, " ") }))
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
@@ -85,7 +91,7 @@ export function UsuarioForm({
     setError(null)
     const base = {
       nombre: form.nombre.trim(),
-      rol: form.rol as Rol,
+      rol: form.rol,
       telefono: nz(form.telefono),
       cargoId: nz(form.cargoId),
       reportaA: nz(form.reportaA),
@@ -147,9 +153,9 @@ export function UsuarioForm({
             disabled={pending}
             className={SELECT_CLASS}
           >
-            {ROLES.map((r) => (
-              <option key={r} value={r}>
-                {r.replace(/_/g, " ")}
+            {opcionesRol.map((r) => (
+              <option key={r.clave} value={r.clave}>
+                {r.nombre}
               </option>
             ))}
           </select>

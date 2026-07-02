@@ -64,7 +64,8 @@ export const usuarios = pgTable("usuarios", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	nombre: text().notNull(),
 	email: text().notNull(),
-	rol: usuarioRol().default('vendedor').notNull(),
+	// RBAC dinámico: rol como texto (clave de `roles`); antes era el enum usuario_rol.
+	rol: text().default('vendedor').notNull(),
 	folioVendedor: text("folio_vendedor"),
 	telefono: text(),
 	passwordHash: text("password_hash"),
