@@ -33,7 +33,25 @@ export function esSuperadmin(): boolean {
   return ctxStore.getStore()?.superadmin ?? false;
 }
 
+/**
+ * Fija el tenant para el resto del contexto async actual, SIN abrir transacción.
+ * Úsalo en el guard (requirePerm/assertPerm): deja `empresaActualId()` /
+ * `esSuperadmin()` disponibles en toda la página/acción → potencia el scoping a
+ * nivel de app (capa primaria de aislamiento, 2E). El backstop RLS se activa
+ * además con `runWithTenant`, que abre la transacción y fija el GUC.
+ *
+ * `enterWith` propaga el store al árbol async del request actual; cada request de
+ * Next corre en su propia raíz async, así que no hay fuga entre requests.
+ */
+export function establecerTenant(ctx: TenantCtx): void {
+  ctxStore.enterWith(ctx);
+}
+
 export async function runWithTenant<T>(ctx: TenantCtx, fn: () => Promise<T>): Promise<T> {
+  // Llamada anidada dentro de un tenant ya activo (p. ej. una página envuelta que
+  // llama a una acción también envuelta): reutiliza la transacción/contexto — no
+  // abras otra ni exhaustas el pool. Hace que `withTenant` sea seguro de anidar.
+  if (txStore.getStore()) return fn();
   return ctxStore.run(ctx, () =>
     basedb.transaction(async (tx) => {
       if (ctx.superadmin) {
