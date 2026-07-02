@@ -12,6 +12,24 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0025 — Multi-tenant (Fase 2 · cimiento): empresa_id en tablas de negocio · 2026-07-01
+
+**Migración:** `db/migrations/0025_empresa_id_negocio.sql`
+
+- Agrega `empresa_id` (uuid, FK→empresas, **nullable**) + índice `ix_<tabla>_empresa`
+  a las 28 tablas de negocio (areas, cargos, leads, clientes, contactos,
+  oportunidades, cotizaciones(+items), proyectos, tramites_cfe, instalaciones,
+  proyecto_materiales, pagos, actividades, eventos, documentos, campanas,
+  cuadrillas(+miembros), asesores, productos, producto_tipos, paquetes(+lineas),
+  marcas, config_parametros, calculadora_simulaciones, form_submissions).
+- Backfill: todo lo existente → empresa Jygasoft (la app era mono-tenant).
+- NO rompedor: nullable, así los INSERT actuales siguen funcionando. Global
+  (sin empresa_id): catálogos nacionales, login_codes, webhook_log, integraciones.
+- Siguientes incrementos: scoping en escritura/lectura, RLS + bypass super-admin,
+  uniques compuestos, NOT NULL, módulo Empresas + selector de empresa activa.
+
+---
+
 ## 0024 — RBAC dinámico (Paso B): usuarios.rol enum→text · 2026-07-01
 
 **Migración:** `db/migrations/0024_usuarios_rol_text.sql`
