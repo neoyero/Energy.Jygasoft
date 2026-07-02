@@ -16,6 +16,9 @@ import {
   type DataTableRowAction,
 } from "@/components/admin/ui/data-table"
 import { UsuarioForm } from "@/components/admin/usuarios/usuario-form"
+import { ImportarM365Modal } from "@/components/admin/usuarios/importar-m365-modal"
+import type { EmpresaRow } from "@/lib/admin/queries"
+import { CloudDownload } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export interface UsuariosViewProps {
@@ -23,6 +26,8 @@ export interface UsuariosViewProps {
   areas: ReadonlyArray<{ id: string; nombre: string }>
   /** Cargos activos del catálogo para el selector del formulario. */
   cargos: ReadonlyArray<{ id: string; nombre: string }>
+  /** Empresas (tenants) para el importador de M365. */
+  empresas: ReadonlyArray<EmpresaRow>
   /** RBAC usuarios:edit (solo admin). */
   puedeEditar: boolean
 }
@@ -38,10 +43,11 @@ function rolLabel(rol: string): string {
  * modal (UsuarioForm) y activar/desactivar por fila. El detalle se refresca vía
  * router.refresh() tras cada acción.
  */
-export function UsuariosView({ usuarios, areas, cargos, puedeEditar }: UsuariosViewProps) {
+export function UsuariosView({ usuarios, areas, cargos, empresas, puedeEditar }: UsuariosViewProps) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [busqueda, setBusqueda] = useState("")
+  const [importarOpen, setImportarOpen] = useState(false)
   const [creando, setCreando] = useState(false)
   const [editando, setEditando] = useState<UsuarioAdminRow | null>(null)
   const [saving, setSaving] = useState(false)
@@ -210,9 +216,14 @@ export function UsuariosView({ usuarios, areas, cargos, puedeEditar }: UsuariosV
         </div>
 
         {puedeEditar ? (
-          <Button type="button" size="sm" onClick={() => { setEditando(null); setCreando(true) }}>
-            <Plus className="size-4" aria-hidden /> Nuevo usuario
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={() => setImportarOpen(true)}>
+              <CloudDownload className="size-4" aria-hidden /> Importar de M365
+            </Button>
+            <Button type="button" size="sm" onClick={() => { setEditando(null); setCreando(true) }}>
+              <Plus className="size-4" aria-hidden /> Nuevo usuario
+            </Button>
+          </div>
         ) : null}
       </div>
 
@@ -250,6 +261,10 @@ export function UsuariosView({ usuarios, areas, cargos, puedeEditar }: UsuariosV
             onSavingChange={setSaving}
           />
         </Modal>
+      ) : null}
+
+      {puedeEditar ? (
+        <ImportarM365Modal open={importarOpen} empresas={empresas} onClose={() => setImportarOpen(false)} />
       ) : null}
     </div>
   )

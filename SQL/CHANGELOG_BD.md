@@ -12,6 +12,20 @@ El esquema canónico vive en `SQL/Esquema_BD_Postgres.sql` y el modelo Drizzle e
 
 ---
 
+## 0022 — Multi-tenant (Fase 1): empresas + usuarios.empresa_id · 2026-07-01
+
+**Migración:** `db/migrations/0022_empresas.sql`
+
+- Nueva tabla `empresas` (tenant raíz): `nombre`, `nombre_normalizado` (unique),
+  `dominio` (unique, lower), `rfc`, `logo_url`, `activa`, trigger `updated_at`.
+  Semilla: Jygasoft Energy (jygasoft.com) y Sognoterra (sognoterra.com).
+- `usuarios.empresa_id` (FK→empresas ON DELETE SET NULL) + índice `ix_usuarios_empresa`.
+  Backfill por el dominio del correo; el resto cae a Jygasoft (empresa por defecto).
+- Fase 1 de multi-tenant: aún nullable y sin RLS. El aislamiento total (empresa_id
+  en todas las tablas de negocio + Row-Level Security) llega en una fase posterior.
+
+---
+
 ## 0021 — Varios líderes por área · 2026-07-01
 
 **Migración:** `db/migrations/0021_area_lideres.sql`

@@ -34,11 +34,29 @@ CREATE TYPE entidad_tipo        AS ENUM ('lead','cliente','contacto','oportunida
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END; $$ LANGUAGE plpgsql;
 
+-- ===================== MULTI-TENANT: EMPRESAS =====================
+-- Empresa (tenant raíz). Un dominio de correo por empresa (jygasoft.com, …).
+CREATE TABLE empresas (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre             text NOT NULL,
+  nombre_normalizado text NOT NULL,
+  dominio            text NOT NULL,
+  rfc                text,
+  logo_url           text,
+  activa             boolean NOT NULL DEFAULT true,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX ux_empresas_nombre_norm ON empresas (nombre_normalizado);
+CREATE UNIQUE INDEX ux_empresas_dominio ON empresas (lower(dominio));
+CREATE TRIGGER trg_empresas_upd BEFORE UPDATE ON empresas FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 -- ===================== EQUIPO / PERSONAS / CATALOGO =====================
 CREATE TABLE usuarios (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   nombre text NOT NULL,
   email text NOT NULL,
+  empresa_id uuid REFERENCES empresas(id) ON DELETE SET NULL,  -- multi-tenant
   rol usuario_rol NOT NULL DEFAULT 'vendedor',
   folio_vendedor text UNIQUE,
   telefono text,
@@ -57,6 +75,7 @@ CREATE UNIQUE INDEX ux_usuarios_email ON usuarios (lower(email));
 CREATE INDEX ix_usuarios_reporta_a ON usuarios (reporta_a);
 CREATE INDEX ix_usuarios_area ON usuarios (area_id);
 CREATE INDEX ix_usuarios_cargo ON usuarios (cargo_id);
+CREATE INDEX ix_usuarios_empresa ON usuarios (empresa_id);
 CREATE TRIGGER trg_usuarios_upd BEFORE UPDATE ON usuarios FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- Áreas / departamentos (organigrama). Se crea tras `usuarios` (la referencia) y

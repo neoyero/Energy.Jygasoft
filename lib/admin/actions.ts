@@ -24,6 +24,8 @@ import {
   getCargosActivos,
   type CargosPage,
   type CargosFiltros,
+  getEmpresas,
+  type EmpresaRow,
   getDocumentosPage,
   type DocumentosPage,
   type DocumentosFiltros,
@@ -69,6 +71,7 @@ import { deleteDriveItem } from "@/lib/m365/sharepoint";
 import { chatwootConfigurado, listarAgentes, crearAgente } from "@/lib/chatwoot/client";
 import { REGISTRO, invalidarConfig, getIntegracion } from "@/lib/config/service";
 import { cifrarSecreto, esSecretoCifrado } from "@/lib/config/crypto";
+import { listarUsuariosM365, type M365User } from "@/lib/m365/graph-users";
 import { serverEnv, clientEnv } from "@/lib/env";
 import {
   renderCotizacionPdf,
@@ -406,6 +409,23 @@ function isUniqueEmailViolation(error: unknown): boolean {
   return msg.includes("ux_usuarios_email");
 }
 
+/** Resuelve la empresa por el dominio del correo; si no hay match, la primera. */
+async function empresaPorEmail(email: string): Promise<string | null> {
+  const dominio = (email.split("@")[1] ?? "").toLowerCase();
+  const [porDom] = await db
+    .select({ id: schema.empresas.id })
+    .from(schema.empresas)
+    .where(sql`lower(${schema.empresas.dominio}) = ${dominio}`)
+    .limit(1);
+  if (porDom) return porDom.id;
+  const [def] = await db
+    .select({ id: schema.empresas.id })
+    .from(schema.empresas)
+    .orderBy(asc(schema.empresas.nombre))
+    .limit(1);
+  return def?.id ?? null;
+}
+
 /**
  * Da de alta a un miembro del equipo (incluye posición en el organigrama:
  * cargo, jefe y área). No fija contraseña: entran por OTP al correo. NO escribe
@@ -421,10 +441,12 @@ export async function createUsuario(data: CreateUsuarioInput): Promise<ActionRes
   const d = parsed.data;
 
   const cargoNombre = await resolverCargoNombre(d.cargoId);
+  const empresaId = await empresaPorEmail(d.email);
   try {
     await db.insert(schema.usuarios).values({
       nombre: d.nombre,
       email: d.email,
+      empresaId,
       rol: d.rol,
       telefono: d.telefono,
       cargo: cargoNombre,
@@ -5666,6 +5688,99 @@ export async function fetchAreas(input: {
 export async function fetchAreasArbol(): Promise<AreaArbolRow[]> {
   await assertPerm("areas", "view");
   return getAreasArbol();
+}
+
+/* ── Empresas (multi-tenant) + importación de usuarios desde M365 ─────────── */
+
+export async function fetchEmpresas(): Promise<EmpresaRow[]> {
+  await assertPerm("usuarios", "view");
+  return getEmpresas();
+}
+
+/**
+ * Lista los usuarios de M365 del dominio de una empresa, marcando cuáles ya
+ * existen en el panel (por correo). Para el importador en Usuarios.
+ */
+export async function fetchUsuariosM365(
+  empresaId: string,
+): Promise<{ ok: true; data: (M365User & { yaExiste: boolean })[] } | { ok: false; error: string }> {
+  await assertPerm("usuarios", "edit");
+  const [emp] = await db
+    .select({ dominio: schema.empresas.dominio })
+    .from(schema.empresas)
+    .where(eq(schema.empresas.id, empresaId))
+    .limit(1);
+  if (!emp) return { ok: false, error: "Empresa no válida." };
+
+  const r = await listarUsuariosM365(emp.dominio);
+  if (!r.ok) return r;
+
+  const existentes = await db.select({ email: schema.usuarios.email }).from(schema.usuarios);
+  const set = new Set(existentes.map((x) => x.email.toLowerCase()));
+  return { ok: true, data: r.data.map((u) => ({ ...u, yaExiste: set.has(u.email) })) };
+}
+
+/**
+ * Importa (crea) los usuarios de M365 seleccionados (por correo) hacia una
+ * empresa, con un rol por defecto. Omite los que ya existen. Re-consulta Graph
+ * para tomar los datos autoritativos (no confía en el cliente).
+ */
+export async function importarUsuariosM365(
+  empresaId: string,
+  correos: string[],
+  rol: string,
+): Promise<ActionResult & { creados?: number; omitidos?: number }> {
+  await assertPerm("usuarios", "edit");
+
+  const rolParsed = rolSchema.safeParse(rol);
+  if (!rolParsed.success) return { ok: false, error: "Rol no válido." };
+
+  const [emp] = await db
+    .select({ dominio: schema.empresas.dominio })
+    .from(schema.empresas)
+    .where(eq(schema.empresas.id, empresaId))
+    .limit(1);
+  if (!emp) return { ok: false, error: "Empresa no válida." };
+
+  const r = await listarUsuariosM365(emp.dominio);
+  if (!r.ok) return { ok: false, error: r.error };
+
+  const sel = new Set((correos ?? []).map((c) => c.toLowerCase()));
+  const elegidos = r.data.filter((u) => sel.has(u.email));
+  if (elegidos.length === 0) return { ok: false, error: "No hay usuarios seleccionados válidos." };
+
+  const existentes = await db.select({ email: schema.usuarios.email }).from(schema.usuarios);
+  const existSet = new Set(existentes.map((x) => x.email.toLowerCase()));
+
+  let creados = 0;
+  let omitidos = 0;
+  for (const u of elegidos) {
+    if (existSet.has(u.email)) {
+      omitidos++;
+      continue;
+    }
+    try {
+      await db
+        .insert(schema.usuarios)
+        .values({
+          nombre: u.displayName,
+          email: u.email,
+          empresaId,
+          rol: rolParsed.data,
+          telefono: u.phone,
+          cargo: u.jobTitle,
+          activo: true,
+        })
+        .onConflictDoNothing();
+      creados++;
+    } catch {
+      omitidos++;
+    }
+  }
+
+  revalidatePath("/je-admin/usuarios");
+  revalidatePath("/je-admin/organigrama");
+  return { ok: true, creados, omitidos };
 }
 
 export async function crearArea(

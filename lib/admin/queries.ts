@@ -1231,6 +1231,28 @@ export async function getCargosPage(
   return { rows: rows.map((r) => ({ ...r, miembros: Number(r.miembros) })), total: Number(total) };
 }
 
+/* ── Empresas (multi-tenant) ──────────────────────────────────────────────── */
+
+export interface EmpresaRow {
+  id: string;
+  nombre: string;
+  dominio: string;
+  activa: boolean;
+}
+
+/** Empresas (tenants). Ordenadas por nombre. */
+export async function getEmpresas(): Promise<EmpresaRow[]> {
+  return db
+    .select({
+      id: schema.empresas.id,
+      nombre: schema.empresas.nombre,
+      dominio: schema.empresas.dominio,
+      activa: schema.empresas.activa,
+    })
+    .from(schema.empresas)
+    .orderBy(asc(schema.empresas.nombre));
+}
+
 /** Cargos activos para selects (id + nombre), ordenados. */
 export async function getCargosActivos(): Promise<{ id: string; nombre: string }[]> {
   return db

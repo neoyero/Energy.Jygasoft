@@ -24,6 +24,21 @@ export const usoInmueble = pgEnum("uso_inmueble", ['residencial', 'comercial', '
 export const usuarioRol = pgEnum("usuario_rol", ['admin', 'gerente', 'vendedor', 'preventa', 'ingenieria', 'lider_cuadrilla', 'cuadrilla', 'operaciones', 'finanzas', 'marketing', 'lectura'])
 
 
+// Multi-tenant: empresa (tenant raíz). Un dominio de correo por empresa.
+export const empresas = pgTable("empresas", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	nombre: text().notNull(),
+	nombreNormalizado: text("nombre_normalizado").notNull(),
+	dominio: text().notNull(),
+	rfc: text(),
+	logoUrl: text("logo_url"),
+	activa: boolean().default(true).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	uniqueIndex("ux_empresas_nombre_norm").using("btree", table.nombreNormalizado.asc().nullsLast().op("text_ops")),
+]);
+
 export const usuarios = pgTable("usuarios", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	nombre: text().notNull(),
@@ -33,6 +48,8 @@ export const usuarios = pgTable("usuarios", {
 	telefono: text(),
 	passwordHash: text("password_hash"),
 	activo: boolean().default(true).notNull(),
+	// Multi-tenant: empresa (tenant) a la que pertenece el usuario. FK en BD.
+	empresaId: uuid("empresa_id"),
 	// Estructura organizacional (Fase 1): línea de reporte + cargo + área.
 	reportaA: uuid("reporta_a"),
 	// `cargo` (texto) queda como valor denormalizado para mostrar; la fuente es
@@ -51,6 +68,7 @@ export const usuarios = pgTable("usuarios", {
 	index("ix_usuarios_reporta_a").using("btree", table.reportaA.asc().nullsLast().op("uuid_ops")),
 	index("ix_usuarios_area").using("btree", table.areaId.asc().nullsLast().op("uuid_ops")),
 	index("ix_usuarios_cargo").using("btree", table.cargoId.asc().nullsLast().op("uuid_ops")),
+	index("ix_usuarios_empresa").using("btree", table.empresaId.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
 			columns: [table.reportaA],
 			foreignColumns: [table.id],
